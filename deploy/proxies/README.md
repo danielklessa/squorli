@@ -151,7 +151,7 @@ location ~ ^/ {
 
 `traefik.labels.yml` as overlay: `docker compose --env-file ../.env -f compose.yml -f proxies/traefik.labels.yml --profile external up -d`. Adjust the network name and certresolver.
 
-The overlay expects Traefik on a Docker network named `proxy` with the entrypoint `websecure` and a certificate resolver `letsencrypt`; rename them to yours. Traefik passes WebSockets and sets `X-Forwarded-For` by itself and has no body size limit by default. `TRUSTED_PROXIES` can stay at the default (Traefik comes from a Docker network).
+The overlay expects Traefik on a Docker network named `proxy` with the entrypoint `websecure` and a certificate resolver `letsencrypt`; rename them to yours, the network in `traefik.docker.network` too (app and LiveKit sit in two networks, and without that label Traefik may pick the internal one it cannot reach: 502/504 or requests that hang for 30 seconds). Traefik passes WebSockets and sets `X-Forwarded-For` by itself and has no body size limit by default. `TRUSTED_PROXIES` can stay at the default (Traefik comes from a Docker network).
 
 ## Caddy
 

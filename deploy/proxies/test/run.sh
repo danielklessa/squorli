@@ -31,7 +31,7 @@ bad() { printf '  FAIL  %s\n' "$*"; FAILED=1; }
 
 dc() { (cd "$WORK/deploy" && docker compose -p "$PROJECT" --env-file ../.env -f compose.yml "${OVERLAYS[@]}" --profile external "$@"); }
 # curl as the browser: from the client container, trusting the test CA
-ccurl() { dc exec -T client curl -sS --cacert /certs/ca.pem "$@"; }
+ccurl() { dc exec -T client curl -sS --connect-timeout 5 --max-time 20 --cacert /certs/ca.pem "$@"; }
 
 cleanup() {
   if [ "${KEEP:-}" = 1 ]; then echo "KEEP=1: stack left running, work directory $WORK"; return; fi
@@ -134,13 +134,13 @@ check_proxy() {
   else bad "the app saw '$seen', the client has $client_ips (X-Forwarded-For or TRUSTED_PROXIES)"; fi
 
   # An attachment of MAX_UPLOAD_MB plus the multipart overhead must reach the app (401 without a session), not stop at the proxy (413).
-  code="$(dc exec -T client sh -c "head -c $((MAX_UPLOAD_MB * 1024 * 1024)) /dev/zero > /tmp/big && curl -sS --cacert /certs/ca.pem -o /dev/null -w '%{http_code}' -F file=@/tmp/big https://$DOMAIN/api/attachments" 2>/dev/null || true)"
+  code="$(dc exec -T client sh -c "head -c $((MAX_UPLOAD_MB * 1024 * 1024)) /dev/zero > /tmp/big && curl -sS --max-time 120 --cacert /certs/ca.pem -o /dev/null -w '%{http_code}' -F file=@/tmp/big https://$DOMAIN/api/attachments" 2>/dev/null || true)"
   case "$code" in 401) ok "an upload of $MAX_UPLOAD_MB MB passes the proxy" ;; *) bad "an upload of $MAX_UPLOAD_MB MB answered $code (413 = the proxy's body limit)" ;; esac
 
   # The server's own setup check (squorli doctor): it reaches https://chat.test through the proxy.
   local report
   report="$(dc exec -T app node -e '
-    fetch("http://127.0.0.1:3000/api/doctor").then((r) => r.json()).then((d) => {
+    fetch("http://127.0.0.1:3000/api/doctor", { signal: AbortSignal.timeout(90000) }).then((r) => r.json()).then((d) => {
       for (const c of d.checks) console.log(c.id + " " + c.status + " " + c.text.en);
     }).catch((e) => { console.log("request fail " + e.message); });' 2>&1 || true)"
   for i in self websocket rtc livekit; do

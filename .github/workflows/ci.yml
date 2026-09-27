@@ -39,6 +39,7 @@ jobs:
   # docker-in-docker has no socket for Traefik's docker provider.
   proxies:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - run: bash deploy/proxies/test/run.sh nginx traefik caddy

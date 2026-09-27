@@ -27,6 +27,7 @@ The user asked for it as the first item of `docs/PLAN.md` 2.1 ("Lass uns erst Pu
 ### Found and fixed
 
 - `nginx.conf` had `client_max_body_size 25m`: a 25 MB attachment (the default `MAX_UPLOAD_MB`) plus the form data around it is larger, so nginx answered 413. Now `30m`, like the Plesk directives already had.
+- `traefik.labels.yml` had no `traefik.docker.network`: app and LiveKit sit in `internal` and `proxy`, and Traefik may pick the address in `internal`, which it cannot reach. On Docker Desktop it happened to pick the right one, in GitHub's CI (Linux) every request through Traefik hung at the connect for 30 seconds and the test's wait loop never ended (the user saw the job stand after nginx). Both labels now name `proxy`; the test's curl calls got time limits and the job a 25-minute cap.
 - The Portainer stack still pulled the app image from the old GitLab registry by default (the user noticed it the same day); it now defaults to `ghcr.io/danielklessa/squorli-server:latest`.
 
 ### Caddy as an existing proxy

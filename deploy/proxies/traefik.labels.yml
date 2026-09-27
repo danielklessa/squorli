@@ -6,6 +6,8 @@ services:
     networks: [internal, proxy]
     labels:
       traefik.enable: "true"
+      # app and livekit sit in two networks; without this Traefik may pick the internal one it cannot reach (502/504).
+      traefik.docker.network: proxy   # <- the network of your Traefik, as below
       traefik.http.routers.chat.rule: "Host(`chat.example.org`)"
       traefik.http.routers.chat.entrypoints: websecure
       traefik.http.routers.chat.tls.certresolver: letsencrypt
@@ -15,6 +17,7 @@ services:
     networks: [internal, proxy]
     labels:
       traefik.enable: "true"
+      traefik.docker.network: proxy
       traefik.http.routers.chat-rtc.rule: "Host(`chat.example.org`) && PathPrefix(`/rtc`)"
       traefik.http.routers.chat-rtc.entrypoints: websecure
       traefik.http.routers.chat-rtc.tls.certresolver: letsencrypt
@@ -22,4 +25,4 @@ services:
       traefik.http.services.chat-rtc.loadbalancer.server.port: "7880"
 networks:
   proxy:
-    external: true   # the network your Traefik is attached to
+    external: true   # the network your Traefik is attached to (name it in traefik.docker.network above too)
