@@ -63,6 +63,21 @@ The directory's side of kinds two and three is planned in the directory's own re
 - Protocol: a new part in `packages/protocol` (copied to the directory, `AGENTS.md` section 2a), a directory feature flag so that clients show the entries only where the directory knows them.
 - After the report the client offers to block (section 6).
 
+### 5.1 What the client and the chat server still need (decisions of 27 September 2026)
+
+The directory's operator can act on a report since 27 September 2026: warn an account, remove its picture or display name, suspend it for a time, delete it; take a chat server out of the server directory or refuse it. What that means for this repository, all of it open:
+
+- **The receiver's choice in the report dialog** (decision 8 below): a report of a message on a chat server goes to "die Moderatoren von <Server>" or to the directory's operator, with the hint to take the second when the moderators do nothing or are the problem. The second is a report of the server with the message as evidence (text, author, channel, time, built by the reporter's client from what it shows). No third kind of report and no list of "my reports".
+- **Reporting a directory account** (name, avatar): an entry on a friend and on a member who has a handle. **Reporting a chat server:** an entry in the server rail's menu and in the server browser.
+- **Protocol:** one request shape for both kinds with the payload in a fixed order, as `directoryDmReportPayload` has it; `DirectoryHealth.features.reportKinds` tells the client which entries to show (a directory that only says `reports: true` takes direct messages only).
+- **A suspended account:** the directory refuses its socket (friends, direct messages, presence), profile changes, friend actions and reports with `account_suspended` and the date; the key backup, the account status and the deletion stay open. The client shows the notice and the suspended state instead of reconnecting. `DirectoryAccount.suspendedUntil` (nullable, default null, only in answers to a server's token) tells chat servers.
+- **Chat servers and suspended accounts** (decision 9 below): a server setting, on by default, that the operator of a server can switch off. While it is on, a directory account that is suspended cannot sign in until the suspension ends (403 `account_suspended` with the date), and its running sessions end at the next reconciliation with the directory (the push `/api/directory/notify` or the five-minute pass). Server accounts (`~name`) are not concerned.
+- **A refused chat server** (decision 10 below): the directory publishes the SHA-256 of every refused host. The client fetches the list with the directory's health, keeps it for an hour and checks every host before it connects, so the directory does not learn which servers a client opens. A match is refused with a page of its own. The list missing (the directory cannot be reached) refuses nothing; an older list stays in force. The home server of a web client is not checked: the refused operator serves that page anyway.
+- **A refused registration:** the directory answers a refused server's registration with 403 `server_blocked`; the server's log and `squorli doctor` need a text for it (today the hint about the proof URL is printed, which misleads).
+- **Notices:** the account's status carries the notices about measures (fixed wording in both languages, the reason from the reports' list, never who reported); the client shows them and marks them as read (`notice-read`).
+
+Order: the directory's side first, then the server, then the desktop app, then the website (a page with the rules of use, the privacy policy's lines, the guides).
+
 ## 6. Blocking members on servers (built 27 September 2026, `docs/features/reports.md`)
 
 - A list of blocked accounts per user, in the account's sealed settings (`SealedSettingsContent`, user's rule of 22 September 2026: new account-level settings are encrypted), so it follows the user across devices and servers and no server learns it. Server accounts (`~name`) keep theirs per device in their key's storage.
@@ -82,7 +97,7 @@ The directory's side of kinds two and three is planned in the directory's own re
 1. **Server reports:** permission, table, snapshot, queue, event, client menus and dialog, retention job. **Built 26 September 2026** (`docs/features/reports.md`).
 2. **Delete on ban** and the moderation log. **Built 26 September 2026.**
 3. **Blocking** in the sealed settings. **Built 27 September 2026** (`docs/features/reports.md`).
-4. **Reports to the directory** (direct messages, accounts, servers, passed-on reports), together with the directory's side. **Direct messages built 26 September 2026** (`docs/features/reports.md`); accounts, whole servers and passed-on server reports open.
+4. **Reports to the directory** (direct messages, accounts, servers, passed-on reports), together with the directory's side. **Direct messages built 26 September 2026** (`docs/features/reports.md`); accounts, whole servers and passed-on server reports open, with what section 5.1 lists (the suspension on chat servers, the refused servers, the notices).
 5. Offline notification with the push of `docs/PLAN-mobile.md`.
 
 The mobile app's store submission needs stages 1, 3 and 4 at least.
@@ -96,6 +111,13 @@ The mobile app's store submission needs stages 1, 3 and 4 at least.
 5. While offline before push exists: no mail; the count shows at the next sign-in (rail mark, Verwaltung).
 6. Direct message reports carry up to 20 preceding messages, checkbox on by default (opt-out).
 7. The migration grants `MANAGE_REPORTS` to every role with `MANAGE_MESSAGES`; owner and administrators always have it.
+
+Decisions of 27 September 2026 (the user, for section 5.1):
+
+8. A report passed on from a chat server is a choice of the receiver in the report dialog, not a kind of its own.
+9. Chat servers are told about a suspension and refuse suspended directory accounts by default; the operator of a server can switch that off.
+10. A chat server the directory refused is refused by the clients too, also when it is opened by its address; the check is local, against a list of hashed hosts.
+11. The notice to the person concerned has a fixed wording in both languages and never names the reporter; mails about measures are English.
 
 ## 10. Not checked
 
