@@ -1,4 +1,6 @@
 import { VideoStatsButton, VideoStatsOverlay } from "./VideoStatsOverlay";
+import { viewersOf } from "./voice/shareViewers";
+import { ShareViewers } from "./ShareViewers";
 import { FullscreenButton, TrackVideo } from "./VideoWindows";
 import { VideoAudioControls } from "./VideoAudioControls";
 import { Avatar } from "./Avatar";
@@ -86,6 +88,9 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
     const m = members.find((x) => x.userId === p.identity);
     return m ? { ...p, name: displayNameOf(m), avatarUrl: m.avatarUrl } : { ...p, avatarUrl: null };
   });
+  // Who watches my own screen share (shareViewers.ts), shown on its tile.
+  const myIdentity = participants.find((p) => p.isLocal)?.identity ?? null;
+  const myViewers = myIdentity ? viewersOf(participants, myIdentity) : [];
   const [layout, setLayout] = useState<Layout>("grid"); // always start with tiles
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
@@ -208,17 +213,17 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
         <div className="stage-grid" ref={grid.ref}>
           <div className="stage-grid-inner" style={{ gridTemplateColumns: `repeat(${grid.cols}, ${grid.tileWidth}px)` }}>
             {gridItems.map((i) => i.participant === null ? playerTileOf(i)
-              : <Tile key={i.key} item={i} client={client} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusOn(i.key)} />)}
+              : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusOn(i.key)} />)}
           </div>
         </div>
       ) : (
         <div className="stage-focus">
           <div className="stage-main">{focus.participant === null ? playerTileOf(focus, true)
-            : <Tile item={focus} client={client} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big pinned={pinned === focus.key} onClick={unfocus} />}</div>
+            : <Tile item={focus} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big pinned={pinned === focus.key} onClick={unfocus} />}</div>
           {rest.length > 0 && (
             <div className="stage-strip">
               {rest.map((i) => i.participant === null ? playerTileOf(i)
-                : <Tile key={i.key} item={i} client={client} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusOn(i.key)} />)}
+                : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusOn(i.key)} />)}
             </div>
           )}
         </div>
@@ -339,7 +344,7 @@ function PlayerOffTile({ big, kind, name, radio, onDismiss }: { big: boolean; ki
   );
 }
 
-function Tile({ item, client, big, pinned, onClick, onPopout, poppedIds, onRestore, onMenu }: { item: Extract<Item, { participant: StageParticipant }>; client: VoiceClient; big?: boolean; pinned: boolean; onClick: () => void; onPopout: (tile: VideoTile, opener?: Window) => void; poppedIds: Set<string>; onRestore: (id: string) => void; onMenu: (item: Item, event: ReactMouseEvent<HTMLElement>) => void }) {
+function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds, onRestore, onMenu }: { item: Extract<Item, { participant: StageParticipant }>; client: VoiceClient; viewers: StageParticipant[]; big?: boolean; pinned: boolean; onClick: () => void; onPopout: (tile: VideoTile, opener?: Window) => void; poppedIds: Set<string>; onRestore: (id: string) => void; onMenu: (item: Item, event: ReactMouseEvent<HTMLElement>) => void }) {
   const { participant: p, tile } = item;
   const ref = useRef<HTMLDivElement>(null);
   const target = useCallback(() => ref.current, []);
@@ -371,6 +376,7 @@ function Tile({ item, client, big, pinned, onClick, onPopout, poppedIds, onResto
         <button className="icon" title={t("stage.cameraOn")} aria-label={t("stage.cameraOn")} onClick={() => watch(true)}><Icon name="eye" /></button>
       </div>}
       {canStats && stats && !popped && <VideoStatsOverlay client={client} tileId={tile!.id} />}
+      {item.kind === "screen" && tile?.isLocal && <ShareViewers viewers={viewers} />}
       {tile && !popped && <div className="tile-window-actions" onClick={(event) => event.stopPropagation()}>
         {canStats && <VideoStatsButton on={stats} onToggle={() => setStats(!stats)} />}
         {!tile.isLocal && <button className="icon" title={t(item.kind === "screen" ? "stage.screenOff" : "stage.cameraOff")} aria-label={t(item.kind === "screen" ? "stage.screenOff" : "stage.cameraOff")} onClick={() => watch(false)}><Icon name="eye-off" /></button>}

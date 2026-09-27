@@ -248,17 +248,18 @@ choose_dir() {
   fi
 }
 
-# Sets DOMAIN SERVER_NAME SETUP IMAGE DIRECTORY OWNER NODE_IP BIND_IP PROXY_IP PG_PASSWORD
+# Sets DOMAIN SERVER_NAME SETUP IMAGE DIRECTORY OWNER OWNER_CODE NODE_IP BIND_IP PROXY_IP PG_PASSWORD
 configure() {
   local envf="$DIR/.env" c
   step "$(t "Einstellungen" "Settings")"
 
-  local d_domain d_name d_image d_dir d_owner d_node
+  local d_domain d_name d_image d_dir d_owner d_code d_node
   d_domain="$(env_get "$envf" PUBLIC_DOMAIN)"; [ "$d_domain" = chat.example.org ] && d_domain=""
   d_name="$(env_get "$envf" SERVER_NAME)"; d_name="${d_name:-Community}"
   d_image="$(env_get "$envf" APP_IMAGE)"; d_image="${d_image:-$DEFAULT_IMAGE}"
   d_dir="$DEFAULT_DIRECTORY"; [ "$MODE" = reconfigure ] && d_dir="$(env_get "$envf" DIRECTORY_URL)"
   d_owner="$(env_get "$envf" OWNER_PUBLIC_KEY)"
+  d_code="$(env_get "$envf" OWNER_SETUP_CODE)"
   d_node="$(env_get "$envf" LIVEKIT_NODE_IP)"
 
   while :; do
@@ -348,14 +349,34 @@ configure() {
       "A server on localhost cannot prove its host to the directory; signing in with a handle will not work.")"
   fi
 
+  # Who becomes the owner (docs/features/local-accounts.md): a Squorli account by its key (with a directory only), a server
+  # account that registers with a setup code this script makes, or whoever signs in first.
   say_owner_hint
-  while :; do
-    ask OWNER "$(t "Öffentlicher Schlüssel des Besitzers (64 Hex-Zeichen, leer = wer sich zuerst mit Konto anmeldet)" "Owner's public key (64 hex characters, empty = whoever signs in first with an account)")" "$d_owner"
-    OWNER="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
-    [ -z "$OWNER" ] && break
-    [[ "$OWNER" =~ ^[0-9a-f]{64}$ ]] && break
-    warn "$(t "Genau 64 Zeichen 0-9 und a-f." "Exactly 64 characters 0-9 and a-f.")"
-  done
+  local ow ow_def=2
+  [ -n "$d_owner" ] && [ -n "$DIRECTORY" ] && ow_def=1
+  [ "$MODE" = reconfigure ] && [ -z "$d_owner" ] && [ -z "$d_code" ] && ow_def=3
+  if [ -n "$DIRECTORY" ]; then
+    choose ow "$(t "Wer wird Besitzer?" "Who becomes the owner?")" "$ow_def" \
+      "$(t "Mein Squorli-Konto (@name): ich gebe seinen öffentlichen Schlüssel ein" "My Squorli account (@name): I enter its public key")" \
+      "$(t "Ein Serverkonto (~name): ich registriere es mit einem Einrichtungscode, den dieses Skript erzeugt" "A server account (~name): I register it with a setup code this script makes")" \
+      "$(t "Wer sich zuerst mit Konto anmeldet (dann gleich nach dem Start selbst anmelden)" "Whoever signs in first with an account (then sign in yourself right after the start)")"
+  else
+    [ "$ow_def" = 1 ] && ow_def=2
+    choose ow "$(t "Wer wird Besitzer?" "Who becomes the owner?")" "$((ow_def - 1))" \
+      "$(t "Ein Serverkonto (~name): ich registriere es mit einem Einrichtungscode, den dieses Skript erzeugt" "A server account (~name): I register it with a setup code this script makes")" \
+      "$(t "Wer als Erster ein Serverkonto erstellt (dann gleich nach dem Start selbst registrieren)" "Whoever creates the first server account (then register yourself right after the start)")"
+    ow=$((ow + 1))
+  fi
+  OWNER=""; OWNER_CODE=""
+  case "$ow" in
+    1) while :; do
+         ask OWNER "$(t "Öffentlicher Schlüssel deines Squorli-Kontos (64 Hex-Zeichen, im Client unter Einstellungen > Konto)" "Public key of your Squorli account (64 hex characters, in the client under Settings > Account)")" "$d_owner"
+         OWNER="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
+         [[ "$OWNER" =~ ^[0-9a-f]{64}$ ]] && break
+         warn "$(t "Genau 64 Zeichen 0-9 und a-f." "Exactly 64 characters 0-9 and a-f.")"
+       done ;;
+    2) OWNER_CODE="${d_code:-$(secret | cut -c1-24)}" ;;
+  esac
 
   while :; do
     ask NODE_IP "$(t "Öffentliche IP für Sprache und Video (leer = LiveKit ermittelt sie selbst)" "Public IP for voice and video (empty = LiveKit detects it itself)")" "$d_node"
@@ -380,10 +401,10 @@ say_owner_hint() {
   printf '\n'
   note "$(t "Jede Anmeldung braucht ein Konto: ein Squorli-Konto (@name) oder ein Serverkonto dieses Servers (~name)." \
     "Every sign-in needs an account: a Squorli account (@name) or a server account of this server (~name).")"
-  note "$(t "Wer sich als Erster mit Konto anmeldet oder als Erster ein Serverkonto erstellt, wird Besitzer. Den Schlüssel eines" \
-    "Whoever signs in first with an account, or creates the first server account, becomes the owner. The key of a")"
-  note "$(t "Squorli-Kontos zeigt der Client unter Einstellungen > Konto; ohne ihn bitte direkt nach dem Start selbst als Erster anmelden." \
-    "Squorli account is shown under Settings > Account; without it, sign in yourself first right after the start.")"
+  note "$(t "Den Besitzer legst du hier fest: dein Squorli-Konto über seinen Schlüssel, oder ein Serverkonto, das sich mit einem" \
+    "You choose the owner here: your Squorli account by its key, or a server account that registers with a setup code this")"
+  note "$(t "Einrichtungscode aus diesem Skript registriert. Ohne beides wird Besitzer, wer sich zuerst anmeldet." \
+    "script makes. Without either, whoever signs in first becomes the owner.")"
 }
 
 check_dns() {
@@ -487,7 +508,7 @@ summary() {
     remote) how="$(t "Proxy $PROXY_IP -> $BIND_IP:$APP_PORT und $BIND_IP:$LK_HTTP_PORT" "proxy $PROXY_IP -> $BIND_IP:$APP_PORT and $BIND_IP:$LK_HTTP_PORT")" ;;
   esac
   printf '  %-18s %s\n' "$(t "Verzeichnis" "Folder")" "$DIR" "Domain" "$DOMAIN" "$(t "Servername" "Server name")" "$SERVER_NAME" \
-    "HTTPS" "$how" "Directory" "${DIRECTORY:-$(t "keins" "none")}" "$(t "Besitzer" "Owner")" "${OWNER:-$(t "wer sich zuerst anmeldet" "whoever signs in first")}" \
+    "HTTPS" "$how" "Directory" "${DIRECTORY:-$(t "keins" "none")}" "$(t "Besitzer" "Owner")" "${OWNER:-$([ -n "$OWNER_CODE" ] && t "Serverkonto mit Einrichtungscode" "server account with setup code" || t "wer sich zuerst anmeldet" "whoever signs in first")}" \
     "LiveKit IP" "${NODE_IP:-$(t "automatisch" "automatic")}" "Image" "$IMAGE"
   printf '  %-18s %s\n' "$(t "Offene Ports" "Open ports")" "$([ "$SETUP" = bundled ] && printf '80/tcp 443/tcp ')$LK_TCP_PORT/tcp $LK_UDP_PORT/udp"
   confirm "$(t "So installieren?" "Install like this?")" y || exit 0
@@ -542,6 +563,7 @@ write_env() {
   env_set "$envf" PROXY_MODE "$([ "$SETUP" = bundled ] && printf bundled || printf external)"
   env_set "$envf" DIRECTORY_URL "$DIRECTORY"
   env_set "$envf" OWNER_PUBLIC_KEY "$OWNER"
+  env_set "$envf" OWNER_SETUP_CODE "$OWNER_CODE"
   env_set "$envf" LIVEKIT_NODE_IP "$NODE_IP"
   env_set "$envf" LIVEKIT_TCP_PORT "$LK_TCP_PORT"
   env_set "$envf" LIVEKIT_UDP_PORT "$LK_UDP_PORT"
@@ -722,7 +744,11 @@ finish() {
       "Voice and video use $LK_TCP_PORT/tcp and $LK_UDP_PORT/udp: open or forward these numbers in firewall and router (to the same number).")"
   fi
   [ "$DOMAIN" = localhost ] || printf '%s %shttps://%s%s\n' "$(t "Adresse:" "Address:")" "$B" "$DOMAIN" "$R"
-  if [ -z "$OWNER" ] && [ "$MODE" = fresh ]; then
+  if [ -n "$OWNER_CODE" ]; then
+    printf '%s%s%s\n' "$YEL" "$(t "Besitzer werden: auf https://$DOMAIN ein Serverkonto (~name) registrieren und dabei diesen Einrichtungscode eingeben:" "To become the owner: register a server account (~name) on https://$DOMAIN and enter this setup code:")" "$R"
+    printf '  %s%s%s\n' "$B" "$OWNER_CODE" "$R"
+    printf '%s\n' "$(t "Der Code steht auch in $DIR/.env (OWNER_SETUP_CODE); sobald es einen Besitzer gibt, wirkt er nicht mehr." "The code is also in $DIR/.env (OWNER_SETUP_CODE); once there is an owner it has no effect any more.")"
+  elif [ -z "$OWNER" ] && [ "$MODE" = fresh ]; then
     if [ -n "$DIRECTORY" ]; then
       printf '%s%s%s\n' "$YEL" "$(t "Wer sich als Erster mit Konto anmeldet, wird Besitzer: jetzt gleich selbst anmelden (mit @name, oder ein Serverkonto erstellen, wenn du es in der Verwaltung erlaubst)." "Whoever signs in first with an account becomes the owner: sign in yourself right now (with @name).")" "$R"
     else
@@ -751,7 +777,7 @@ main() {
 
   if [ "$MODE" = update ]; then
     local envf="$DIR/.env"
-    SETUP="$OLD_SETUP"; DOMAIN="$(env_get "$envf" PUBLIC_DOMAIN)"; OWNER="$(env_get "$envf" OWNER_PUBLIC_KEY)"
+    SETUP="$OLD_SETUP"; DOMAIN="$(env_get "$envf" PUBLIC_DOMAIN)"; OWNER="$(env_get "$envf" OWNER_PUBLIC_KEY)"; OWNER_CODE=""
     BIND_IP="$(env_get "$envf" PROXY_BIND_IP)"; PROXY_IP=""
     load_ports
     compose_args

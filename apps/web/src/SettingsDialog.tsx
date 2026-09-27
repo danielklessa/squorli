@@ -9,6 +9,7 @@ import { BLUR_OPTIONS } from "./CameraPicker";
 import { askConfirm } from "./dialogs";
 import { Icon } from "./Icon";
 import { LicensesTab } from "./LicensesTab";
+import { NotificationSettings } from "./NotificationSettings";
 import { GamesTab } from "./GamesTab";
 import { HotkeysTab } from "./HotkeysTab";
 import type { HotkeyAction, HotkeyStatus } from "./platform";
@@ -369,6 +370,15 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                   {t("settings.featureSelf")}
                 </label>
                 <span className="muted small">{t("settings.featureSelfHint")}</span>
+                {/* Direct messages exist with a directory account only (docs/features/link-previews.md). */}
+                {directoryAccount && <>
+                  <h3>{t("settings.dmPreviewsHead")}</h3>
+                  <label className="check">
+                    <input type="checkbox" checked={settings.dmLinkPreviews} onChange={(e) => update({ dmLinkPreviews: e.target.checked })} />
+                    {t("settings.dmPreviews")}
+                  </label>
+                  <span className="muted small">{t(platform.links.lookUp ? "settings.dmPreviewsHintApp" : "settings.dmPreviewsHint")}</span>
+                </>}
                 <h3>{t("settings.idle")}</h3>
                 {/* The desktop app detects input in the whole system by itself (platform.systemIdle): an explanation, no switch. */}
                 {platform.systemIdle === "always" ? <span className="muted small">{t("settings.idleHintApp")}{platform.systemActivity ? ` ${t("settings.idleHintAppSystem")}` : ""}</span> : <>
@@ -497,6 +507,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                     onChange={(e) => update({ sounds: { ...settingsRef.current.sounds, volume: Number(e.target.value) } })} />
                 </label>
                 <span className="muted small">{t("settings.soundsHint")}</span>
+                <NotificationSettings />
               </>
             )}
 

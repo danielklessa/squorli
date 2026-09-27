@@ -2,7 +2,7 @@ import { ChallengeRequest, VerifyRequest, challengeMessage, labelFromUserAgent, 
 import * as ed from "@noble/ed25519";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config } from "../config";
 import type { Db } from "../db";
 import { bans, invites, localAccounts, memberRoles, members, roles, serverSettings, sessions, users } from "../db/schema";
@@ -31,10 +31,22 @@ export async function signatureValid(publicKey: string, signature: string, messa
   return ed.verifyAsync(hexToBytes(signature), new TextEncoder().encode(message), hexToBytes(publicKey)).catch(() => false);
 }
 
-/** The first sign-in with an account becomes the owner, while none exists (and OWNER_PUBLIC_KEY, if set, matches). */
-export async function isFirstEver(db: Db, config: Config, publicKey: string): Promise<boolean> {
+/** Whether `code` is the server's owner setup code (OWNER_SETUP_CODE); compared in constant time. */
+export function ownerCodeMatches(config: Config, code: string | undefined): boolean {
+  if (config.OWNER_SETUP_CODE === undefined || code === undefined) return false;
+  const digest = (s: string) => createHash("sha256").update(s.trim()).digest();
+  return timingSafeEqual(digest(code), digest(config.OWNER_SETUP_CODE));
+}
+
+/**
+ * The first sign-in with an account becomes the owner, while none exists. OWNER_PUBLIC_KEY and OWNER_SETUP_CODE narrow who:
+ * the named key, or a server account's registration with the code (either, when both are set).
+ */
+export async function isFirstEver(db: Db, config: Config, publicKey: string, ownerCode?: string): Promise<boolean> {
   const settings = await loadSettings(db);
-  return settings.ownerId === null && (config.OWNER_PUBLIC_KEY === undefined || config.OWNER_PUBLIC_KEY === publicKey);
+  if (settings.ownerId !== null) return false;
+  if (config.OWNER_PUBLIC_KEY === undefined && config.OWNER_SETUP_CODE === undefined) return true;
+  return config.OWNER_PUBLIC_KEY === publicKey || ownerCodeMatches(config, ownerCode);
 }
 
 /**
@@ -44,7 +56,7 @@ export async function isFirstEver(db: Db, config: Config, publicKey: string): Pr
 export async function admit(
   db: Db, config: Config, hub: Hub, directory: DirectoryClient, req: FastifyRequest, reply: FastifyReply,
   user: { id: string; publicKey: string; displayName: string | null }, invite: string | undefined, registrationRequired = false,
-  proof: LoginProof | null = null,
+  proof: LoginProof | null = null, ownerCode?: string,
 ): Promise<VerifyResponse | null> {
   const [ban] = await db.select().from(bans).where(eq(bans.userId, user.id)).limit(1);
   if (ban) { await reply.code(403).send({ error: "banned", reason: ban.reason }); return null; }
@@ -52,7 +64,7 @@ export async function admit(
   const settings = await loadSettings(db);
   // The owner is claimed with one conditional update before anything else: of two first sign-ins at the same moment only
   // one gets it, the other is handled as an ordinary sign-in (invite, open server; security review, 25 September 2026).
-  let firstEver = await isFirstEver(db, config, user.publicKey);
+  let firstEver = await isFirstEver(db, config, user.publicKey, ownerCode);
   if (firstEver) {
     const claimed = await db.update(serverSettings).set({ ownerId: user.id })
       .where(and(eq(serverSettings.id, SETTINGS_ID), isNull(serverSettings.ownerId))).returning({ id: serverSettings.id });

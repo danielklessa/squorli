@@ -1,4 +1,5 @@
 import { useVideoWindows } from "./VideoWindows";
+import { viewersOf } from "./voice/shareViewers";
 import { useStageWindow } from "./StageWindow";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -38,6 +39,7 @@ import { ScreenPicker } from "./ScreenPicker";
 import { quickSharePick } from "./screenPick";
 import { TitleBar } from "./TitleBar";
 import { loadVoiceSettings, saveVoiceSettings } from "./voice/settings";
+import { loadNotificationSettings, notificationFor, parseNotificationTag } from "./notifications";
 import { useVoiceSettings } from "./voice/useVoiceSettings";
 import { Permission, directoryAvatarUrl, directoryServerIconUrl, directoryServerUrl, displayNameOf, handleLabel, hasPermission, type Member, type ServerState } from "@squorli/protocol";
 import { joinErrorText, voteKickErrorText } from "./apiErrorText";
@@ -273,8 +275,24 @@ export function App() {
   // Cue settings reach the voice client from here, whether the user changed them or the directory account supplied them.
   useEffect(() => client.setSoundSettings(voiceSettings.sounds), [client, voiceSettings.sounds]);
   useEffect(() => client.setCueOutput(voiceSettings.outputDeviceId), [client, voiceSettings.outputDeviceId]);
-  // A new direct message or a mention the user does not see right now (store.ts `incoming`): the cue, in every client.
-  useEffect(() => { store.onIncoming = () => client.playSound("message"); return () => { store.onIncoming = null; }; }, [store, client]);
+  // A new direct message or a mention the user does not see right now (store.ts `incoming`): the cue, in every client, and a
+  // notification of the operating system where this device allows it (docs/features/notifications.md).
+  useEffect(() => {
+    store.onIncoming = (note) => {
+      client.playSound("message");
+      const settings = loadNotificationSettings(platform.kind === "desktop");
+      if (settings.on && platform.notifications.permission() === "granted") platform.notifications.show(notificationFor(note, settings.preview, t("notify.hidden")));
+    };
+    return () => { store.onIncoming = null; };
+  }, [store, client]);
+  // A click on such a notification opens the conversation or the channel.
+  useEffect(() => platform.notifications.onClick((tag) => {
+    const target = parseNotificationTag(tag);
+    if (!target) return;
+    if (target.kind === "dm") store.selectPeer(target.peer);
+    else { store.openServer(target.host); store.connection(target.host)?.selectChannel(target.channelId); }
+    setStageOpen(false); setMobileContent(true);
+  }), [store]);
   useEffect(() => {
     const clear = () => { if (document.visibilityState === "visible" && document.hasFocus()) store.clearMissed(); };
     window.addEventListener("focus", clear);
@@ -379,10 +397,16 @@ export function App() {
   }, [store, voiceHost, voice.status, voice.micMuted, voice.deafened, voice.cameraOn, voice.screenOn]);
 
   const voiceServer = voiceHost ? state.servers[voiceHost] ?? null : null;
+  // Who watches the own screen share (voice/shareViewers.ts), for its pop-out window; the stage works it out itself.
+  const localIdentity = voice.participants.find((p) => p.isLocal)?.identity ?? null;
+  const shareViewers = localIdentity ? viewersOf(voice.participants, localIdentity).map((p) => {
+    const member = voiceServer?.server?.members.find((m) => m.userId === p.identity);
+    return { identity: p.identity, name: member ? displayNameOf(member) : p.name, avatarUrl: member?.avatarUrl ?? null };
+  }) : [];
   const videoWindows = useVideoWindows(voice.tiles.map((tile) => {
     const member = voiceServer?.server?.members.find((member) => member.userId === tile.identity);
     return member ? { ...tile, name: displayNameOf(member) } : tile;
-  }), client);
+  }), client, shareViewers);
   const voiceChannel = voiceServer?.server?.channels.find((c) => c.id === voice.channelId) ?? null;
   // The whole stage in a window of its own; the main window then shows no stage (`showStage` below).
   const stageWindow = useStageWindow(client, voiceChannel !== null, `${voiceChannel?.name ?? ""} | Squorli`);
@@ -572,6 +596,9 @@ export function App() {
   const homeOpen = homeAvailable && state.homeOpen;
   // The stage belongs to the voice connection's server; on another server or in the home view the dock shows "view" and switches there.
   const showStage = stageOpen && voiceChannel !== null && voiceHost === activeHost && !homeOpen && !stageWindow.popped && (!mobile || mobileContent);
+  // The stage is in its own window: where it would be, the main window keeps a place holder that brings it back with a click
+  // (user's wish, 27 September 2026). A text channel chosen in the sidebar shows the chat as before.
+  const stageAway = stageOpen && voiceChannel !== null && voiceHost === activeHost && !homeOpen && stageWindow.popped && (!mobile || mobileContent);
   // The stage shows the voice connection's server, which in its own window need not be the one on screen.
   const voiceApi = voiceHost ? store.connection(voiceHost)?.api ?? null : null;
   // Hanging up on a phone's stage goes back to the channel list (user's wish, 22 September 2026), not to the text channel
@@ -729,7 +756,7 @@ export function App() {
         onOpen={homeless ? (host) => { setShowBrowser(false); setStageOpen(false); void store.addServer(host); } : null} />}
       <div className="left" id="app-navigation">
         {homeOpen ? <HomeSidebar state={state} store={store} members={server?.members ?? []} onOpenChat={() => setMobileContent(true)} /> : view ? <Sidebar
-          server={view.server} api={view.conn.api} currentChannelId={showStage && voiceChannel ? voiceChannel.id : view.active.currentChannelId} voice={view.active.voice}
+          server={view.server} api={view.conn.api} currentChannelId={(showStage || stageAway) && voiceChannel ? voiceChannel.id : view.active.currentChannelId} voice={view.active.voice}
           voiceState={voiceHost === activeHost ? voice : null} client={client} radioTitles={view.active.radioTitles} unread={view.active.unread} mentions={view.active.mentions} muted={view.active.muted} canMute={view.active.readSync}
           onMuteChannel={(id, muted) => { void view.conn.setChannelMuted(id, muted).catch(() => {}); }} onOpenChannelDialog={setChannelEdit}
           connection={view.active.connection} onSelect={(id) => { view.conn.selectChannel(id); setStageOpen(false); setMobileContent(true); }}
@@ -739,7 +766,7 @@ export function App() {
         /> : <nav className="sidebar"><header className="server-head"><img className="brand-mark" src="/brand/squorli-icon-small.svg" alt="" width="22" height="22" /><strong>{active ? active.serverName ?? (state.accountServers ?? []).find((a) => store.hostFor(a.host) === active.host)?.name ?? active.host : "Squorli"}</strong></header></nav>}
         <VoiceDock client={client} voice={voice} channel={voiceChannel} serverName={voiceHost && voiceHost !== activeHost ? voiceServer?.server?.settings.name ?? voiceHost : null}
           displayName={me?.displayName ?? active?.me?.displayName ?? home?.me?.displayName ?? state.directoryAccount?.displayName ?? (active?.me ? handleLabel(active.me) : null) ?? (state.directoryAccount ? `@${state.directoryAccount.handle}` : "…")} avatarUrl={myAvatarUrl} onLeave={leaveVoice} onOpenProfile={setMiniProfile} onOpenSettings={() => setSettingsTab("profile")} pttSuspended={capturingPttKey}
-          onOpenStage={stageWindow.popped ? stageWindow.focus : voiceChannel && !showStage && voiceHost ? () => { store.openServer(voiceHost === state.homeHost ? homeDirHost : voiceHost); setStageOpen(true); setMobileContent(true); } : null}
+          onOpenStage={stageWindow.popped ? () => { if (voiceHost) store.openServer(voiceHost === state.homeHost ? homeDirHost : voiceHost); setStageOpen(true); setMobileContent(true); stageWindow.focus(); } : voiceChannel && !showStage && voiceHost ? () => { store.openServer(voiceHost === state.homeHost ? homeDirHost : voiceHost); setStageOpen(true); setMobileContent(true); } : null}
           canStream={!!voiceServer?.server && hasPermission(permsIn(voiceServer.server, voice.channelId), Permission.STREAM_VIDEO) && (voiceChannel?.allowVideo ?? true)} locked={!!voiceLock} onToggleCamera={toggleCamera}
           quickShare={runningGame && voice.status === "connected" && !voice.screenOn ? { name: runningGame.name, onShare: () => { quickShare.current = runningGame.id; void client.setScreenShareEnabled(true).finally(() => { quickShare.current = null; }); } } : null}
           afkReturn={afkReturn && voice.afkRoom ? { name: afkReturnChannel?.name ?? null, onReturn: () => { void joinVoice(afkReturn.host, afkReturn.channelId).catch(() => {}); } } : null} />
@@ -758,6 +785,18 @@ export function App() {
             join={homeless && !active.me ? state.joinInvites[active.host] ?? "" : null} />
         ) : showStage && voiceChannel ? (
           stage(false)
+        ) : stageAway && voiceChannel ? (
+          <section className="stage-empty stage-away">
+            <div className="stage-away-box">
+              <Icon name="external-link" />
+              <strong>{voiceChannel.name}</strong>
+              <p className="muted">{t("stage.awayText")}</p>
+              <div className="row">
+                <button onClick={stageWindow.close}><Icon name="undo-2" /> {t("stage.awayRestore")}</button>
+                <button className="secondary" onClick={stageWindow.focus}>{t("stage.awayShow")}</button>
+              </div>
+            </div>
+          </section>
         ) : current ? (
           <ChatView
             channel={current} messages={view.active.messages[current.id] ?? { list: [], hasMore: true, loaded: false, loading: false }}
@@ -849,7 +888,7 @@ function ServerStatus({ s, store, state, rail, onRetry, onClose, onOpen, join }:
   const accountForms = !busy && !claim && !s.removed && !offline && (join !== null || s.accountNeeded);
   const directoryHere = !!s.directoryUrl && s.directoryUrl === state.directoryUrl;
   const handle = directoryHere ? state.directoryAccount?.handle ?? null : null;
-  const localAccounts = s.localAccounts || (!s.directoryUrl && s.serverVersion !== null);
+  const localAccounts = s.localAccounts || (!s.directoryUrl && s.serverVersion !== null) || s.ownerSetup;
   const code = () => invite.trim() || undefined;
   const conn = store.connection(s.host);
   // The centred notice with the countdown and the other servers (ServerUnreachable.tsx) instead of the status page; the
@@ -882,7 +921,7 @@ function ServerStatus({ s, store, state, rail, onRetry, onClose, onOpen, join }:
             onDirectory={async () => {}} onLocal={(h, pw) => store.loginLocal(s.host, h, pw, code())} onEmailCode={null} />}
           <CreateAccount directoryUrl={s.directoryUrl} localAccounts={localAccounts} busy={busy}
             openExternal={platform.home ? null : (url) => platform.links.openExternal(url)}
-            local={<LocalRegisterForm idPrefix={`join-${s.host}`} busy={busy} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} onRegister={(h, pw) => store.registerLocal(s.host, h, pw, code())} />} />
+            local={<LocalRegisterForm idPrefix={`join-${s.host}`} busy={busy} ownerSetup={s.ownerSetup} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} onRegister={(h, pw, ownerCode) => store.registerLocal(s.host, h, pw, code(), ownerCode)} />} />
         </>}
         {!busy && (
           <div className="row">

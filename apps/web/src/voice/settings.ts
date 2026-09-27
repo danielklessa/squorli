@@ -49,6 +49,8 @@ export type VoiceSettings = {
   games: GameDisplaySettings;
   /** The server rail as the user arranged it (serverOrder.ts): directory hosts, first at the top. Follows the account inside the sealed settings only. */
   serverOrder: string[];
+  /** Link previews in direct messages (docs/features/link-previews.md); false = none made for what I send, none shown of what I receive. Follows the account inside the sealed settings only. */
+  dmLinkPreviews: boolean;
   /**
    * Global shortcuts of the desktop app (platform/hotkeys.ts, docs/features/hotkeys.md). Per device like the microphone boost
    * and NOT part of the directory account: a key combination that is free on this computer may be taken on another, and
@@ -88,6 +90,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   featureSelfInSpeakerView: true,
   games: { ...DEFAULT_GAME_DISPLAY },
   serverOrder: [],
+  dmLinkPreviews: true,
   hotkeys: { ...NO_HOTKEYS },
   mobileDefaults: false,
 };
@@ -109,7 +112,7 @@ function readStored(): VoiceSettings {
     if (!raw) return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS }, detectMobile());
     const stored = JSON.parse(raw) as Partial<VoiceSettings>;
     // `sounds` is nested, so it needs its own merge: settings stored before the cues existed have no such field.
-    return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS, ...stored, sounds: normalizeSoundSettings(stored.sounds), micBoost: normalizeMicBoost(stored.micBoost), games: normalizeGameDisplay(stored.games), serverOrder: normalizeServerOrder(stored.serverOrder), hotkeys: normalizeHotkeys(stored.hotkeys) }, detectMobile());
+    return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS, ...stored, sounds: normalizeSoundSettings(stored.sounds), micBoost: normalizeMicBoost(stored.micBoost), games: normalizeGameDisplay(stored.games), serverOrder: normalizeServerOrder(stored.serverOrder), dmLinkPreviews: stored.dmLinkPreviews !== false, hotkeys: normalizeHotkeys(stored.hotkeys) }, detectMobile());
   } catch {
     return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS }, detectMobile());
   }

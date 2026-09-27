@@ -9,6 +9,7 @@ import { findControl } from "./controlArgs";
 import { findDeepLink } from "./deepLinkArgs";
 import { E0_FLAG, keysLine, scanCodeOf } from "./keyCodes";
 import { isAllowedExternal, windowOpenDecision } from "./navigation";
+import { readNotification } from "./notifications";
 import { SPLASH_SKIP_URL, mayInstallAtStart, splashHtml, splashScript, splashView } from "./splashPage";
 import { updateMode } from "./updateMode";
 import { desktopUserAgent } from "./userAgent";
@@ -40,7 +41,7 @@ describe("contentTypeOf", () => {
 
 describe("CONTENT_SECURITY_POLICY", () => {
   it("keeps scripts to the app and the blur's WASM host, frames to the two players", () => {
-    expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;");
+    expect(CONTENT_SECURITY_POLICY).toContain("script-src 'self' 'wasm-unsafe-eval';");
     expect(CONTENT_SECURITY_POLICY).not.toContain("'unsafe-eval'");
     expect(CONTENT_SECURITY_POLICY).toContain("frame-src https://player.twitch.tv https://www.youtube-nocookie.com;");
     expect(CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
@@ -304,5 +305,17 @@ describe("scanCodeOf", () => {
   it("writes the helper's keys line", () => {
     expect(keysLine([])).toBe("keys");
     expect(keysLine([0x39, 0x1d | E0_FLAG])).toBe("keys	39	11d");
+  });
+});
+
+describe("readNotification", () => {
+  it("takes strings, cuts them and refuses anything else", () => {
+    expect(readNotification({ title: "Anna", body: "Hi", tag: "dm:abc" })).toEqual({ title: "Anna", body: "Hi", tag: "dm:abc" });
+    const long = readNotification({ title: "t", body: "x".repeat(1000), tag: "dm:abc" });
+    expect(long?.body).toHaveLength(300);
+    expect(readNotification({ title: " ", body: "", tag: "dm:abc" })).toBeNull();
+    expect(readNotification({ title: "t", body: "", tag: "" })).toBeNull();
+    expect(readNotification({ title: "t", body: 1, tag: "x" })).toBeNull();
+    expect(readNotification("dm:abc")).toBeNull();
   });
 });

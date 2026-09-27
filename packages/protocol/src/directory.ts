@@ -384,6 +384,8 @@ export const SealedSettingsContent = z.object({
   serverOrder: z.array(z.string().min(1).max(SERVER_HOST_MAX)).max(SERVER_ORDER_MAX).optional(),
   /** People this user has blocked, by public key (their messages folded, their voice silent, their mentions not counted). Left out = the account says nothing (the device's list stays). */
   blockedUsers: z.array(PublicKey).max(BLOCKED_USERS_MAX).optional(),
+  /** Link previews in direct messages (false = none are made for what this user sends, and none are shown of what they receive). Left out = the account says nothing (the device's choice stays). */
+  dmLinkPreviews: z.boolean().optional(),
 });
 export type SealedSettingsContent = z.infer<typeof SealedSettingsContent>;
 export const SealedSettingsUpdateRequest = SignedActionRequest.extend({ sealed: z.string().min(2).max(SEALED_SETTINGS_MAX_LENGTH) });
@@ -420,7 +422,7 @@ export async function sealSettings(key: CryptoKey, publicKeyHex: string, content
 export async function openSettings(key: CryptoKey, publicKeyHex: string, sealed: SealedSettings): Promise<SealedSettingsContent | null> {
   try {
     const pt = await globalThis.crypto.subtle.decrypt({ name: "AES-GCM", iv: hexToBytes(sealed.iv), additionalData: sealedAad(publicKeyHex) }, key, base64ToBytes(sealed.ciphertext));
-    const parsed = JSON.parse(new TextDecoder().decode(pt)) as { settings?: unknown; hiddenGames?: unknown; serverOrder?: unknown; blockedUsers?: unknown };
+    const parsed = JSON.parse(new TextDecoder().decode(pt)) as { settings?: unknown; hiddenGames?: unknown; serverOrder?: unknown; blockedUsers?: unknown; dmLinkPreviews?: unknown };
     const settings = AccountSettings.safeParse(parsed.settings);
     if (!settings.success) return null;
     const hiddenGames = Array.isArray(parsed.hiddenGames)
@@ -429,7 +431,7 @@ export async function openSettings(key: CryptoKey, publicKeyHex: string, sealed:
       ? [...new Set(parsed.serverOrder.filter((h): h is string => typeof h === "string").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0 && h.length <= SERVER_HOST_MAX))].slice(0, SERVER_ORDER_MAX) : undefined;
     const blockedUsers = Array.isArray(parsed.blockedUsers)
       ? [...new Set(parsed.blockedUsers.filter((k): k is string => typeof k === "string").map((k) => k.toLowerCase()).filter((k) => PublicKey.safeParse(k).success))].slice(0, BLOCKED_USERS_MAX) : undefined;
-    return { settings: settings.data, ...(hiddenGames ? { hiddenGames } : {}), ...(serverOrder ? { serverOrder } : {}), ...(blockedUsers ? { blockedUsers } : {}) };
+    return { settings: settings.data, ...(hiddenGames ? { hiddenGames } : {}), ...(serverOrder ? { serverOrder } : {}), ...(blockedUsers ? { blockedUsers } : {}), ...(typeof parsed.dmLinkPreviews === "boolean" ? { dmLinkPreviews: parsed.dmLinkPreviews } : {}) };
   } catch { return null; }
 }
 /** A chat server that has looked up the key (a sign-in there), with the display name that applies there (account page). `verified` = registered with the directory. */

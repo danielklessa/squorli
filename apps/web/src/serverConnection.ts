@@ -82,6 +82,8 @@ export type ServerConnState = {
   accountNeeded: boolean;
   /** New members need an invite code (from /api/health; false for servers that do not say). */
   inviteRequired: boolean;
+  /** The server waits for its owner, who registers a server account with the setup code (from /api/health). */
+  ownerSetup: boolean;
   serverVersion: string | null;
   /** Directory service named by this server; null = none. */
   directoryUrl: string | null;
@@ -104,7 +106,7 @@ export type ConnectionHooks = {
   onVoiceGone: () => void;
   onVoiceStop: (what: { camera: boolean; screen: boolean }, by: string) => void;
   /** A live message of someone else mentions me (also in the channel that is open: the store knows whether the user looks at it). */
-  onMention: (channelId: string) => void;
+  onMention: (message: Message) => void;
   /** Blocked people (docs/features/reports.md, stage 3): by public key; their messages neither mark unread nor count as mentions here. */
   isBlocked: (publicKey: string) => boolean;
 };
@@ -174,7 +176,7 @@ export class ServerConnection {
     this.state = {
       host, base, me: null, userId: null, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
       voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
-      serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, serverVersion: null, directoryUrl: null,
+      serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, ownerSetup: false, serverVersion: null, directoryUrl: null,
     };
     // Token rejected by the server (expired, signed out from another device): do not keep running with a dead token.
     // Back in front of this tab: another device may have read channels meanwhile (normally `read.update` says so right away).
@@ -194,7 +196,7 @@ export class ServerConnection {
     const health = await this.api.getHealth().catch(() => null);
     this.set({
       serverName: health?.serverName ?? null, iconUrl: health?.iconUrl ? this.api.abs(health.iconUrl) : null, serverDomain: health?.domain?.toLowerCase() ?? null,
-      directoryUrl: health?.directoryUrl ?? null, requireAccount: !!health?.directoryUrl && health?.requireAccount === true, localAccounts: health?.localAccounts === true, inviteRequired: health?.inviteRequired === true, serverVersion: health?.version ?? null,
+      directoryUrl: health?.directoryUrl ?? null, requireAccount: !!health?.directoryUrl && health?.requireAccount === true, localAccounts: health?.localAccounts === true, inviteRequired: health?.inviteRequired === true, ownerSetup: health?.ownerSetup === true, serverVersion: health?.version ?? null,
     });
     return health;
   }
@@ -560,7 +562,7 @@ export class ServerConnection {
         if (unread) this.liveLatest = { ...this.liveLatest, [e.message.channelId]: e.message.seq };
         const mentionsMe = !blockedAuthor && e.message.authorId !== this.state.userId && this.state.userId !== null && mentionsUser(e.message.content, this.state.userId);
         const mentioned = unread && mentionsMe;
-        if (mentionsMe) this.hooks.onMention(e.message.channelId);
+        if (mentionsMe) this.hooks.onMention(e.message);
         this.set({
           typing: { ...this.state.typing, [e.message.channelId]: typing },
           unread: unread ? { ...this.state.unread, [e.message.channelId]: true } : this.state.unread,

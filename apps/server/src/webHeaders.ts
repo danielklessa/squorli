@@ -1,14 +1,14 @@
 /**
  * Headers of the web client's pages (security review, 25 September 2026). The policy is the desktop app's
- * (apps/desktop/src/main/appFiles.ts, CONTENT_SECURITY_POLICY): keep the two in step. Scripts only from this server plus
- * jsdelivr (MediaPipe WASM of the background blur); connections go anywhere, because the client talks to every chat server
+ * (apps/desktop/src/main/appFiles.ts, CONTENT_SECURITY_POLICY): keep the two in step. Scripts only from this server (the
+ * background blur's MediaPipe WASM ships with the client since 27 September 2026); connections go anywhere, because the client talks to every chat server
  * the user adds; frames only to the web radio's two players; no page may frame the client. One difference: `http:` and
  * `ws:` connections are allowed to any host, for a server run over plain http in a LAN (LiveKit at ws://<address>:7880);
  * a page served over https cannot use them anyway (mixed content).
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' https: http: data: blob:",
   "media-src 'self' https: http: blob: data:",

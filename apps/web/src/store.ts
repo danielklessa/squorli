@@ -16,6 +16,7 @@ import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSe
 import { loadBlockedLists, sameBlocked, saveBlockedLists, saveBlockedName, withBlocked, type BlockedLists } from "./blocked";
 import { sameServerOrder } from "./serverOrder";
 import { seesIncoming } from "./attention";
+import { notificationBody, type IncomingNote } from "./notifications";
 import { accountLocalePreference, detectLocale, locale, localePreference, markAccountLocalePreference, storeLocalePreference, t, type LocalePreference } from "./i18n";
 import { loadVoiceSettings, sameSoundSettings, saveVoiceSettings, subscribeVoiceSettings } from "./voice/settings";
 import { normalizeSoundSettings } from "./voice/sounds";
@@ -164,8 +165,8 @@ export class Store {
   onVoiceStop: ((host: string, what: { camera: boolean; screen: boolean }, by: string) => void) | null = null;
   /** The voice channel one sits in vanished from the channel list (channel permissions): App.tsx hangs up. */
   onVoiceGone: ((host: string) => void) | null = null;
-  /** A direct message or a mention arrived that the user does not see right now (App.tsx plays the cue). */
-  onIncoming: ((kind: "dm" | "mention") => void) | null = null;
+  /** A direct message or a mention arrived that the user does not see right now (App.tsx plays the cue and shows the notification). */
+  onIncoming: ((note: IncomingNote) => void) | null = null;
   /** Settings as the directory account holds them (null = none there or no account); user changes are pushed when they differ. */
   private accountSettings: AccountSettings | null = null;
   /** The directory stores all settings (features.settings); false = one that predates them, then only the cue settings follow the account. */
@@ -184,6 +185,8 @@ export class Store {
   private accountOrder: string[] | null = null;
   /** The blocked people as the account's sealed blob has them (null = it says nothing); the same rule. */
   private accountBlocked: string[] | null = null;
+  /** The switch for link previews in direct messages as the account holds it (null = the blob says nothing). */
+  private accountDmPreviews: boolean | null = null;
   private settingsKey: { publicKey: string; key: Promise<CryptoKey> } | null = null;
   private settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -223,7 +226,7 @@ export class Store {
       onVoiceMoved: (channelId, by, reason, until) => this.onVoiceMoved?.(host, channelId, by, reason, until),
       onVoiceStop: (what, by) => this.onVoiceStop?.(host, what, by),
       onVoiceGone: () => this.onVoiceGone?.(host),
-      onMention: (channelId) => this.incoming("mention", this.state.activeHost === host && !this.state.homeOpen && this.conns.get(host)?.state.currentChannelId === channelId),
+      onMention: (message) => this.incoming(() => this.mentionNote(host, message), this.state.activeHost === host && !this.state.homeOpen && this.conns.get(host)?.state.currentChannelId === message.channelId),
       // Blocked people (stage 3): their messages neither mark the channel unread nor count as mentions.
       isBlocked: (publicKey) => this.blockedFor(host).includes(publicKey),
     });
@@ -303,14 +306,14 @@ export class Store {
    * Register a server account on `host` with a fresh key and sign in with it (docs/features/local-accounts.md). The main
    * identity stays as it is; the new key belongs to this server only. Throws with `code` after setting the server's error.
    */
-  async registerLocal(host: string, handle: string, password: string, invite?: string): Promise<void> {
+  async registerLocal(host: string, handle: string, password: string, invite?: string, ownerCode?: string): Promise<void> {
     const conn = this.conns.get(host);
     if (!conn) return;
     conn.state = { ...conn.state, connection: "logging-in", error: null, removed: null };
     this.publish(conn);
     try {
       const id = await newIdentity();
-      const session = await conn.api.localRegister(id, await this.signDomainOf(conn), handle, password, invite);
+      const session = await conn.api.localRegister(id, await this.signDomainOf(conn), handle, password, invite, ownerCode);
       this.rememberServerAccount(host, id, handle.trim().toLowerCase(), null);
       await conn.adopt(session);
     } catch (err) { this.failed(conn, err); }
@@ -754,7 +757,7 @@ export class Store {
         const unread = m.from === me || viewing ? 0 : (prev?.unread ?? 0) + 1;
         this.set({ conversations: { ...this.state.conversations, [peer]: { peer, lastSeq: m.seq, lastAt: m.sentAt, unread } } });
         if (viewing && m.from !== me) this.link?.send({ type: "dm.read", peer, seq: m.seq });
-        if (m.from !== me) this.incoming("dm", this.state.homeOpen && this.state.currentPeer === peer);
+        if (m.from !== me) this.incoming(() => this.dmNote(peer, dm.text ?? ""), this.state.homeOpen && this.state.currentPeer === peer);
         break;
       }
       case "dm.history": {
@@ -792,12 +795,29 @@ export class Store {
    * A direct message or a mention came in live (attention.ts). Seen at once = nothing happens; otherwise the cue sounds, and
    * what arrives while the window does not have the focus is counted for the desktop app's task bar mark until it has.
    */
-  private incoming(kind: "dm" | "mention", showing: boolean) {
+  private incoming(note: () => IncomingNote, showing: boolean) {
     const visible = document.visibilityState === "visible";
     const focused = visible && document.hasFocus();
     if (seesIncoming({ visible, focused }, showing)) return;
     if (!focused) this.set({ missed: this.state.missed + 1 });
-    this.onIncoming?.(kind);
+    this.onIncoming?.(note());
+  }
+  /** Who wrote a direct message, for its notification: the friend's name as the friends list shows it. */
+  private dmNote(peer: string, text: string): IncomingNote {
+    const f = this.state.friends?.find((x) => x.publicKey === peer);
+    return { kind: "dm", peer, from: f ? f.displayName ?? `@${f.handle}` : `${peer.slice(0, 8)}…`, text: notificationBody(text) };
+  }
+  /** Server, channel and author of a message that mentions the user, with mention tokens as names. */
+  private mentionNote(host: string, message: { channelId: string; authorId: string; content: string }): IncomingNote {
+    const server = this.conns.get(host)?.state.server ?? null;
+    const names = new Map((server?.members ?? []).map((m) => [m.userId.toLowerCase(), m.displayName] as const));
+    return {
+      kind: "mention", host, channelId: message.channelId,
+      server: server?.settings.name ?? host,
+      channel: server?.channels.find((c) => c.id === message.channelId)?.name ?? "?",
+      from: names.get(message.authorId.toLowerCase()) ?? t("chat.formerMember"),
+      text: notificationBody(message.content, names),
+    };
   }
   /** The window has the focus again. */
   clearMissed() { if (this.state.missed !== 0) this.set({ missed: 0 }); }
@@ -884,7 +904,8 @@ export class Store {
     if (!id) return;
     const msgId = crypto.randomUUID();
     const key = await this.dmKey(peer);
-    const previews = await buildDmPreviews(text, this.previewDeps()).catch(() => []);
+    // Switched off (Einstellungen > Ansicht): the links are never looked up, neither here nor at the directory.
+    const previews = loadVoiceSettings().dmLinkPreviews ? await buildDmPreviews(text, this.previewDeps()).catch(() => []) : [];
     let sealed = await sealDm(key, id.publicKey, peer, msgId, previews.length > 0 ? { text, previews } : { text });
     // A long text plus long descriptions may not fit into one message: the text matters, the previews go.
     if (sealed.ciphertext.length > DM_MAX_CIPHERTEXT_CHARS && previews.length > 0) sealed = await sealDm(key, id.publicKey, peer, msgId, { text });
@@ -981,16 +1002,16 @@ export class Store {
   private async adoptAccountSettings(status: AccountStatus): Promise<void> {
     const id = this.state.identity;
     let remote = this.settingsSupported ? status.settings : null;
-    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null;
+    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null; let dmPreviews: boolean | null = null;
     const blob = this.sealedSupported ? status.settingsSealed : null;
     if (id && blob) {
       const content = await this.settingsKeyOf(id).then((key) => openSettings(key, id.publicKey, blob), () => null);
       if (this.state.identity !== id) return;
       // A blob this key does not open counts as none: the device's settings make a new one.
-      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; sealed = true; }
+      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; dmPreviews = content.dmLinkPreviews ?? null; sealed = true; }
     }
     const first = !this.settingsLoaded;
-    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.settingsLoaded = true;
+    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmPreviews; this.settingsLoaded = true;
     // A change the user just made here is newer than what the status says; the pending push brings the account in step.
     if (this.settingsPushTimer || this.pushWanted) {
       // The hide list too, with one exception: a push that waited for this first status knows nothing of the account's list
@@ -1007,6 +1028,8 @@ export class Store {
     let local = loadVoiceSettings();
     // The server rail's order from the blob: the account's wins on this device (a device that reordered just now is the pending-push case above).
     if (order && !sameServerOrder(order, local.serverOrder)) { local = { ...local, serverOrder: order }; saveVoiceSettings(local, "directory"); }
+    // The switch for link previews in direct messages the same way.
+    if (dmPreviews !== null && dmPreviews !== local.dmLinkPreviews) { local = { ...local, dmLinkPreviews: dmPreviews }; saveVoiceSettings(local, "directory"); }
     // The blocked people the same way: the account's list wins on this device; a device that blocked somebody just now is the pending-push case.
     if (blocked && id && !sameBlocked(blocked, this.state.blocked[id.publicKey])) this.storeBlockedList(id.publicKey, blocked);
     if (!remote) {
@@ -1020,7 +1043,7 @@ export class Store {
     this.accountSettings = remote;
     if (!sameAccountSettings(toAccountSettings(local, remote.locale), remote, true)) saveVoiceSettings(applyAccountSettings(local, remote), "directory");
     // Settings still in the open, or a hide list, a server order or a block list the account lacks: the push seals them.
-    if (this.sealedSupported && (!sealed || !sameHiddenGames(this.hiddenForAccount(), hidden) || !sameServerOrder(order ?? [], local.serverOrder) || !sameBlocked(this.mainBlocked(), blocked))) this.scheduleSettingsPush(0);
+    if (this.sealedSupported && (!sealed || !sameHiddenGames(this.hiddenForAccount(), hidden) || !sameServerOrder(order ?? [], local.serverOrder) || !sameBlocked(this.mainBlocked(), blocked) || dmPreviews !== local.dmLinkPreviews)) this.scheduleSettingsPush(0);
     // Language: a choice made on this device since it was last in step with the account (login footer) wins and is pushed;
     // otherwise the account's applies, with a reload only when the texts actually change.
     const pref = localePreference(); const synced = accountLocalePreference();
@@ -1060,14 +1083,14 @@ export class Store {
     const next = this.localAccountSettings(); const known = this.accountSettings;
     try {
       if (this.sealedSupported) {
-        const hidden = this.hiddenForAccount(); const order = loadVoiceSettings().serverOrder; const blocked = this.mainBlocked();
-        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked)) return;
+        const local = loadVoiceSettings(); const hidden = this.hiddenForAccount(); const order = local.serverOrder; const blocked = this.mainBlocked(); const dmLinkPreviews = local.dmLinkPreviews;
+        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked) && dmLinkPreviews === this.accountDmPreviews) return;
         // The block list always goes along, an empty one too: "nobody" must win over a device's stale list after an unblock elsewhere
         // (only a blob from before the feature says nothing about it).
-        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked });
+        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked, dmLinkPreviews });
         await api.directorySetSealedSettings(url, id, blob);
         markAccountLocalePreference(next.locale);
-        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked;
+        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmLinkPreviews;
         this.set({ settingsSealed: true, accountHiddenGames: hidden });
       } else if (this.settingsSupported) {
         if (known && sameAccountSettings(known, next)) return;

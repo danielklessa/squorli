@@ -72,7 +72,7 @@ describe("account settings", () => {
 
 describe("sealed settings", () => {
   const seed = "11".repeat(32); const publicKey = "a".repeat(64);
-  const content = { settings: AccountSettings.parse({ locale: "de", stage: { featureSelf: false } }), hiddenGames: ["steam:730", "epic:Fortnite"], serverOrder: ["b.example", "a.example"], blockedUsers: ["c".repeat(64), "d".repeat(64)] };
+  const content = { settings: AccountSettings.parse({ locale: "de", stage: { featureSelf: false } }), hiddenGames: ["steam:730", "epic:Fortnite"], serverOrder: ["b.example", "a.example"], blockedUsers: ["c".repeat(64), "d".repeat(64)], dmLinkPreviews: false };
   it("opens what it sealed, on every device that has the seed", async () => {
     const sealed = await sealSettings(await deriveSettingsKey(seed, publicKey), publicKey, content);
     expect(SealedSettings.safeParse(sealed).success).toBe(true);
@@ -119,6 +119,15 @@ describe("sealed settings", () => {
     expect((await openSettings(key, publicKey, odd))?.blockedUsers).toEqual(["c".repeat(64)]);
     const none = await sealSettings(key, publicKey, { settings: content.settings });
     expect((await openSettings(key, publicKey, none))?.blockedUsers).toBeUndefined();
+  });
+  it("carries the switch for direct message previews only as a boolean", async () => {
+    const key = await deriveSettingsKey(seed, publicKey);
+    const on = await sealSettings(key, publicKey, { settings: content.settings, dmLinkPreviews: true });
+    expect((await openSettings(key, publicKey, on))?.dmLinkPreviews).toBe(true);
+    const none = await sealSettings(key, publicKey, { settings: content.settings });
+    expect((await openSettings(key, publicKey, none))?.dmLinkPreviews).toBeUndefined();
+    const odd = await sealSettings(key, publicKey, { settings: content.settings, dmLinkPreviews: "no" as unknown as boolean });
+    expect((await openSettings(key, publicKey, odd))?.dmLinkPreviews).toBeUndefined();
   });
   it("drops a hidden id that does not fit and keeps the rest; settings that do not fit open as nothing", async () => {
     const key = await deriveSettingsKey(seed, publicKey);

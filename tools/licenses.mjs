@@ -4,7 +4,9 @@
  * license files of the packages inside it are gone; the Apache, MIT, ISC, BSD and OFL licenses all ask that their text and
  * copyright notice travel with a distribution. This walks the production dependencies of @squorli/web (including those of
  * @squorli/protocol) through node_modules, plus the packages whose assets are shipped although they are no runtime
- * dependency (ASSETS: emoji data) and the emoji font that is no package at all (FONT_DIR), and writes
+ * dependency (ASSETS: emoji data), the emoji font and the background blur's model that are no packages at all (FONT_DIR,
+ * MODELS), and the desktop app's main process bundle (DESKTOP_ROOTS: electron-updater and what the shell's own workspace
+ * packages pull in; since 27 September 2026, apps/desktop/AGENTS.md), and writes
  *   apps/web/src/licenses/thirdParty.ts   loaded by the settings dialog when the tab opens
  *   THIRD-PARTY-NOTICES.md                the same for readers of the repository and of the container image
  * The walk lists every package that can end up in the bundle (a superset: a package the bundler drops is listed anyway).
@@ -27,6 +29,17 @@ const NOTES = {
 };
 /** Shipped files that are no npm package: the emoji font, downloaded by tools/emoji.mjs together with its license and font.json. */
 const FONT_DIR = join(webDir, "src", "emoji", "font");
+/** Models shipped as files (apps/web/public/mediapipe/, apps/web/src/voice/AGENTS.md); their license text is Apache-2.0 = our LICENSE. */
+const MODELS = [
+  { name: "MediaPipe Selfie Segmenter (model)", version: "float16, 2023-05-07", license: "Apache-2.0", url: "https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter", author: "Google LLC", note: "Camera background blur, delivered by this server" },
+];
+/**
+ * The desktop app's main process is one bundle of everything but electron (apps/desktop/tsup.config.ts): electron-updater
+ * plus the dependencies of the workspace packages it imports. Electron itself ships its own LICENSE.electron.txt and
+ * LICENSES.chromium.html next to the program.
+ */
+const desktopDir = join(root, "apps", "desktop");
+const DESKTOP_ROOTS = ["electron-updater", "@squorli/protocol", "@squorli/link-preview"];
 
 /** Directory of `name` as seen from the package in `fromDir` (Node's lookup, which also follows pnpm's layout). */
 function locate(name, fromDir) {
@@ -46,24 +59,27 @@ function webUrl(value) {
 }
 
 const found = new Map();
-function visit(name, fromDir) {
+/** `origin`: "web" (the client, in the browser and the app) or "desktop" (the app's shell only). */
+function visit(name, fromDir, origin = "web") {
   const dir = locate(name, fromDir);
   if (!dir) { console.error(`[licenses] ${name} nicht gefunden (von ${fromDir}); pnpm install ausgeführt?`); process.exit(1); }
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   const key = `${pkg.name}@${pkg.version}`;
-  if (found.has(key)) return;
-  found.set(key, { dir, pkg });
+  const seen = found.get(key);
+  if (seen?.origins.has(origin)) return;
+  if (seen) seen.origins.add(origin); else found.set(key, { dir, pkg, origins: new Set([origin]) });
   for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
-    if (locate(dep, dir)) visit(dep, dir);   // optional packages for other platforms are simply not installed
+    if (locate(dep, dir)) visit(dep, dir, origin);   // optional packages for other platforms are simply not installed
   }
 }
 
 const webPkg = JSON.parse(readFileSync(join(webDir, "package.json"), "utf8"));
 for (const name of [...Object.keys(webPkg.dependencies), ...Object.keys(ASSETS)]) visit(name, webDir);
+for (const name of DESKTOP_ROOTS) visit(name, desktopDir, "desktop");
 
 const texts = [];
 const packages = [];
-for (const { dir, pkg } of [...found.values()].sort((a, b) => a.pkg.name.localeCompare(b.pkg.name))) {
+for (const { dir, pkg, origins } of [...found.values()].sort((a, b) => a.pkg.name.localeCompare(b.pkg.name))) {
   if (pkg.name.startsWith("@squorli/")) continue;   // our own workspace packages
   const license = typeof pkg.license === "string" ? pkg.license : pkg.license?.type ?? (pkg.licenses ?? []).map((l) => l.type).join(" OR ");
   if (!license) { console.error(`[licenses] ${pkg.name}@${pkg.version} nennt keine Lizenz; bitte prüfen und hier eintragen`); process.exit(1); }
@@ -76,13 +92,18 @@ for (const { dir, pkg } of [...found.values()].sort((a, b) => a.pkg.name.localeC
   const repo = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
   const url = webUrl(pkg.homepage) ?? webUrl(repo) ?? `https://www.npmjs.com/package/${pkg.name}`;
   const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name ?? null;
-  packages.push({ name: pkg.name, version: pkg.version, license, url, author: author?.replace(/\s*<[^>]*>|\s*\([^)]*\)/g, "") ?? null, note: NOTES[pkg.name] ?? null, text: textIndex });
+  const note = [NOTES[pkg.name], origins.has("web") ? null : "desktop app only"].filter(Boolean).join("; ") || null;
+  packages.push({ name: pkg.name, version: pkg.version, license, url, author: author?.replace(/\s*<[^>]*>|\s*\([^)]*\)/g, "") ?? null, note, text: textIndex });
 }
 
 {
   const font = JSON.parse(readFileSync(join(FONT_DIR, "font.json"), "utf8"));
   const text = readFileSync(join(FONT_DIR, "OFL.txt"), "utf8").replace(/\r\n?/g, "\n").trim();
   packages.push({ name: font.name, version: font.version, license: font.license, url: font.source, author: "Google Inc.", note: "Emoji font, delivered by this server", text: texts.push(text) - 1 });
+  const apache = readFileSync(join(root, "LICENSE"), "utf8").replace(/\r\n?/g, "\n").trim();
+  let apacheIndex = texts.indexOf(apache);
+  if (apacheIndex < 0) apacheIndex = texts.push(apache) - 1;
+  for (const model of MODELS) packages.push({ ...model, text: apacheIndex });
   packages.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 }
 
@@ -103,8 +124,10 @@ writeFileSync(join(root, "THIRD-PARTY-NOTICES.md"), [
   "GENERATED by `tools/licenses.mjs` (`pnpm run licenses`, also part of `pnpm build`), do not edit by hand.",
   "",
   "The Squorli web client (`apps/web`) is distributed as a bundle that contains the following third-party packages and",
-  "assets. The same list with the full license texts is shown in the client under Settings > Licenses. The packages of the",
-  "app server are installed unmodified, with their license files, in `node_modules` of the container image.",
+  "assets; the desktop app (`apps/desktop`) adds its shell's bundle (marked \"desktop app only\"), and Electron ships its own",
+  "LICENSE.electron.txt and LICENSES.chromium.html next to the program. The same list with the full license texts is shown",
+  "in the client under Settings > Licenses. The packages of the app server are installed unmodified, with their license",
+  "files, in `node_modules` of the container image.",
   "",
   "| Package | Version | License | Source |",
   "|---|---|---|---|",

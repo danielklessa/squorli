@@ -34,14 +34,14 @@ export function resolveAppFile(root: string, pathname: string): string | null {
 }
 
 /**
- * Content-Security-Policy of the client's pages. Scripts only from the app itself plus jsdelivr (MediaPipe WASM of the
- * background blur, apps/web/src/voice/AGENTS.md); connections go anywhere, because the client talks to whatever chat
+ * Content-Security-Policy of the client's pages. Scripts only from the app itself (MediaPipe's WASM of the background blur
+ * ships with the client since 27 September 2026, apps/web/src/voice/AGENTS.md); connections go anywhere, because the client talks to whatever chat
  * server the user adds; frames only to the two embedded players of the web radio. The server's web client sends the same
  * policy (apps/server/src/webHeaders.ts): keep the two in step.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' https: http: data: blob:",
   "media-src 'self' https: http: blob: data:",

@@ -79,8 +79,8 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
     try { await store.loginLocal(home.host, handle, password, inviteCode()); afterLogin(); }
     catch (err) { onLoginError(err); }
   }
-  async function registerLocal(handle: string, password: string) {
-    try { await store.registerLocal(home.host, handle, password, inviteCode()); afterLogin(); }
+  async function registerLocal(handle: string, password: string, ownerCode?: string) {
+    try { await store.registerLocal(home.host, handle, password, inviteCode(), ownerCode); afterLogin(); }
     catch (err) { onLoginError(err); }
   }
   async function backup() {
@@ -103,7 +103,8 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
   const showInvite = needInvite || !!invite || home.inviteRequired;
   const claim = home.me?.registrationRequired === true;
   // Without a directory every account here is a server account; the server reports it as allowed then.
-  const localAccounts = home.localAccounts || !state.directoryUrl;
+  // The owner registers a server account with the setup code even where server accounts are off (health `ownerSetup`).
+  const localAccounts = home.localAccounts || !state.directoryUrl || home.ownerSetup;
 
   const savedBox = saved && !claim && (
     <div className="stack handle-box">
@@ -176,7 +177,7 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
               catch (err) { return api.explainDirectoryError(err); }
             } : null} />
           <CreateAccount directoryUrl={state.directoryUrl} localAccounts={localAccounts} busy={busy} openExternal={null}
-            local={<LocalRegisterForm idPrefix="login" busy={busy} checkFree={(h) => store.home!.api.localHandleFree(h)} onRegister={registerLocal} />} />
+            local={<LocalRegisterForm idPrefix="login" busy={busy} ownerSetup={home.ownerSetup} checkFree={(h) => store.home!.api.localHandleFree(h)} onRegister={registerLocal} />} />
           {state.directoryError && <p className="error small">{state.directoryError}</p>}
           <details className="login-details">
             <summary>{t("login.deviceKey")}</summary>

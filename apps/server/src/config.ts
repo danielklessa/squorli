@@ -32,6 +32,13 @@ const Env = z.object({
    * who signs in while no owner exists yet.
    */
   OWNER_PUBLIC_KEY: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /**
+   * The owner as a server account (~name; docs/features/local-accounts.md, 27 September 2026): while no owner exists, the
+   * registration of a server account that carries this code becomes the owner, also where server accounts are off. A
+   * name alone would not do: on a fresh server anybody could register it first. Set with OWNER_PUBLIC_KEY, either way works;
+   * set alone, a sign-in without the code never becomes the owner. The installer makes one (`openssl rand`).
+   */
+  OWNER_SETUP_CODE: z.string().trim().min(12).max(128).optional(),
   /** Initial name of the server; changeable later in the settings. */
   SERVER_NAME: z.string().min(1).max(64).default("Community"),
   /**

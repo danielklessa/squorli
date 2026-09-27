@@ -56,6 +56,8 @@ export const LocalRegisterRequest = z.object({
   handle: LocalHandle,
   backup: LocalBackup,
   invite: z.string().regex(/^[A-Za-z0-9_-]{6,32}$/).optional(),
+  /** The server's owner setup code (OWNER_SETUP_CODE): this registration becomes the owner while none exists. */
+  ownerCode: z.string().trim().min(1).max(128).optional(),
 });
 export type LocalRegisterRequest = z.infer<typeof LocalRegisterRequest>;
 

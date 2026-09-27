@@ -74,12 +74,7 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 ### 3.3 Clients
 
-- **Desktop notifications** (operating system notifications for mentions and direct messages; today only the taskbar mark and a sound), and browser notifications as an opt-in.
 - **macOS desktop app** (user: medium): a mac build target and signing in CI, system audio through ScreenCaptureKit or a documented limitation (open decision 6.1).
-- **Self-hosted MediaPipe** for the camera background blur (user's decision, 25 September 2026): ship the model and wasm files instead of loading them from jsDelivr and Google Cloud Storage (`apps/web/src/voice/AGENTS.md`), then shorten section 4 of the privacy policy on the website. Needs a desktop app release.
-- **A switch "no link previews in direct messages"** (user's decision, 25 September 2026) in the sealed settings (`docs/features/link-previews.md`). Needs a desktop app release.
-- **The owner as a server account** (user's decision, 25 September 2026): today `OWNER_PUBLIC_KEY` can only name a directory account; allow `~name` too, and a question in the installer (`docs/features/local-accounts.md`).
-- **The licenses list misses the desktop bundle** (electron-updater and others; `tools/licenses.mjs`, `apps/desktop/AGENTS.md`).
 
 ### 3.4 A screen share that adapts by itself (user: medium)
 

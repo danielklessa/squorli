@@ -11,6 +11,7 @@ import { friendName } from "./Home";
 import { Icon } from "./Icon";
 import { DmPreviews } from "./LinkPreviews";
 import { visibleDms } from "./dmPreviews";
+import { useVoiceSettings } from "./voice/useVoiceSettings";
 import { MessageText } from "./MessageText";
 import { ReportDialog, type DmReportTarget } from "./ReportDialog";
 import type { DmThread, Store } from "./store";
@@ -33,6 +34,8 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const stickToBottom = useRef(true);
   const name = friendName(friend);
+  // Switched off (Einstellungen > Ansicht): no previews at all, sent or received; their pictures are not even fetched.
+  const previewsOn = useVoiceSettings().dmLinkPreviews;
   // Instructions (a preview taken away) are no messages, and what their author removed is not shown.
   const list = useMemo(() => visibleDms(thread.list), [thread.list]);
 
@@ -113,7 +116,7 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
                   {m.text === null
                     ? <p className="muted"><Icon name="lock" /> {t("dm.undecryptable")}</p>
                     : <MessageText text={m.text} />}
-                  <DmPreviews messageId={m.id} peer={friend.publicKey} previews={m.shown} mine={mine} store={store} onError={setErr} />
+                  {previewsOn && <DmPreviews messageId={m.id} peer={friend.publicKey} previews={m.shown} mine={mine} store={store} onError={setErr} />}
                 </div>
                 <div className="msg-actions">
                   {!mine && m.text !== null && reportHost && <button className="icon" title={t("report.reportMessage")} onClick={() => setReportTarget({ kind: "dm", peer: friend.publicKey, name, messageId: m.id, excerpt: m.text?.slice(0, 200) ?? "" })}><Icon name="flag" /></button>}

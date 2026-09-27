@@ -92,13 +92,13 @@ export class ServerApi {
     return LocalHandleResponse.parse(await this.request("GET", `/api/local/handles/${encodeURIComponent(handle)}`, undefined, { auth: false })).available;
   }
   /** Register a server account for `id` (a fresh key) and sign in with it; the signature binds handle and ciphertext to `domain`. */
-  async localRegister(id: Identity, domain: string, rawHandle: string, password: string, invite?: string): Promise<VerifyResponse> {
+  async localRegister(id: Identity, domain: string, rawHandle: string, password: string, invite?: string, ownerCode?: string): Promise<VerifyResponse> {
     const handle = LocalHandle.parse(rawHandle);
     const backup = await createBackup(password, id.privateKey, undefined, this.bindHost);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
     const signature = await sign(id, localRegisterMessage(domain, challenge.nonce, handle, backup.ciphertext));
     return VerifyResponse.parse(await this.request("POST", "/api/local/register",
-      { challengeId: challenge.challengeId, publicKey: id.publicKey, signature, handle, backup, ...(invite ? { invite } : {}) }, { auth: false }));
+      { challengeId: challenge.challengeId, publicKey: id.publicKey, signature, handle, backup, ...(invite ? { invite } : {}), ...(ownerCode ? { ownerCode } : {}) }, { auth: false }));
   }
   /**
    * The keys of a password (derived with the account's stored salt and iterations), bound to this server's host where the
@@ -291,6 +291,8 @@ export type Health = {
   localAccounts?: boolean;
   /** New members need an invite code (the server is not open). Missing on servers older than 19 September 2026. */
   inviteRequired?: boolean;
+  /** No owner yet, and the owner registers as a server account with the setup code from the installation (OWNER_SETUP_CODE). */
+  ownerSetup?: boolean;
   /** Server version (package.json), shown at the bottom of the login next to the Squorli note. */
   version: string;
 };
@@ -466,7 +468,7 @@ export async function directoryAccountStatus(dirUrl: string, id: Identity): Prom
 export function explainLocalError(err: unknown): string {
   if (err instanceof ApiError) {
     switch (err.code) {
-      case "handle_taken": case "local_accounts_off": case "has_account": case "auth_invalid": case "unknown_account": case "rate_limited": case "founder": case "bad_handle": case "use_directory": case "too_large": case "bad_type":
+      case "handle_taken": case "local_accounts_off": case "has_account": case "auth_invalid": case "unknown_account": case "rate_limited": case "founder": case "bad_handle": case "use_directory": case "too_large": case "bad_type": case "owner_code_invalid":
         return t(`local.${err.code}`);
       case "invite_required": return t("err.inviteRequired");
       case "invite_invalid": return t("err.inviteInvalid");

@@ -96,6 +96,7 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 |---|---|
 | `SERVER_NAME` | Initial name of the server (changeable in the admin panel) |
 | `OWNER_PUBLIC_KEY` | Public key (64 hex) of a Squorli account that becomes owner on its first login; empty = the first user who signs in with an account |
+| `OWNER_SETUP_CODE` | The owner as a server account (`~name`): while there is no owner, whoever registers a server account with this code becomes the owner (the form shows a field for it), also where server accounts are off. The installer makes one. Set alone, nobody becomes owner without it; with `OWNER_PUBLIC_KEY` either works |
 | `MAX_UPLOAD_MB` | Upper limit for attachments, default 25 |
 | `LINK_PREVIEWS` | `true` (default): links in messages get a preview (title, description, picture; YouTube videos play in the chat). The server fetches the linked pages itself, from public hosts only, and serves the pictures from its data volume, so readers never contact the linked host. `false` turns previews and these outgoing requests off |
 | `LOG_LEVEL` | Log level of the app server: `fatal`, `error`, `warn`, `info` (default), `debug` |

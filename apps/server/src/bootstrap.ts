@@ -51,8 +51,11 @@ export async function bootstrap(db: Db, config: Config, log: FastifyBaseLogger) 
   // Multiple owners (2026-09-14): the first owner gets members.is_owner once, so list and permissions have a single source.
   if (s?.ownerId) await db.update(members).set({ isOwner: true }).where(and(eq(members.userId, s.ownerId), eq(members.isOwner, false)));
   if (!s?.ownerId) {
+    const byCode = config.OWNER_SETUP_CODE ? " Oder: wer ein ~Serverkonto mit dem Einrichtungscode (OWNER_SETUP_CODE) registriert." : "";
     log.warn(config.OWNER_PUBLIC_KEY
-      ? `Kein Eigentuemer: der Schluessel ${config.OWNER_PUBLIC_KEY.slice(0, 8)}... wird es beim naechsten Login (mit Verzeichnis-Handle oder nach der Registrierung eines ~Serverkontos).`
-      : "Kein Eigentuemer: wer sich als Erstes mit Verzeichnis-Handle anmeldet oder ein ~Serverkonto registriert, wird Eigentuemer (OWNER_PUBLIC_KEY setzt das fest).");
+      ? `Kein Eigentuemer: der Schluessel ${config.OWNER_PUBLIC_KEY.slice(0, 8)}... wird es beim naechsten Login (mit Verzeichnis-Handle oder nach der Registrierung eines ~Serverkontos).${byCode}`
+      : config.OWNER_SETUP_CODE
+        ? "Kein Eigentuemer: wer ein ~Serverkonto mit dem Einrichtungscode (OWNER_SETUP_CODE) registriert, wird Eigentuemer."
+        : "Kein Eigentuemer: wer sich als Erstes mit Verzeichnis-Handle anmeldet oder ein ~Serverkonto registriert, wird Eigentuemer (OWNER_PUBLIC_KEY oder OWNER_SETUP_CODE setzen das fest).");
   }
 }

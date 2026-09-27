@@ -13,6 +13,7 @@ files:
   - build/tray.png
   - build/tray-alert.png
   - build/badge-*.png
+  - build/icon.png   # notifications on Linux (main/index.ts showNotification)
   - package.json
   - "!node_modules"
 npmRebuild: false

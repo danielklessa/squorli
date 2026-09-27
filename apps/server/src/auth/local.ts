@@ -19,7 +19,7 @@ import { deleteUserAccount } from "../users/deleteUser";
 import type { VoicePresence } from "../voice/presence";
 import { ipKey } from "../rateLimits";
 import { ChallengeStore, RateLimiter } from "./challenges";
-import { admit, checkChallenge, signatureValid } from "./routes";
+import { admit, checkChallenge, isFirstEver, ownerCodeMatches, signatureValid } from "./routes";
 import { hasAccount, requireMember, requireSession } from "./session";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -83,8 +83,11 @@ export async function registerLocalAccountRoutes(
     if (!registerByIp.allow(ipKey(req.ip))) return reply.code(429).send({ error: "rate_limited" });
     const body = LocalRegisterRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request", detail: body.error.issues[0]?.message ?? null });
-    const { challengeId, publicKey, signature, handle, backup, invite } = body.data;
-    if (!(await allowed())) return reply.code(403).send({ error: "local_accounts_off" });
+    const { challengeId, publicKey, signature, handle, backup, invite, ownerCode } = body.data;
+    // The owner's setup code (OWNER_SETUP_CODE): a wrong one, or one after the owner exists, is said as such; the right one
+    // opens the registration even where server accounts are off, until the owner exists.
+    if (ownerCode !== undefined && (!ownerCodeMatches(config, ownerCode) || !(await isFirstEver(db, config, publicKey, ownerCode)))) return reply.code(403).send({ error: "owner_code_invalid" });
+    if (ownerCode === undefined && !(await allowed())) return reply.code(403).send({ error: "local_accounts_off" });
     if (!(await checkChallenge(challenges, config, reply, challengeId, publicKey, signature, (domain, nonce) => localRegisterMessage(domain, nonce, handle, backup.ciphertext)))) return;
 
     const [existing] = await db.select({ id: users.id, handle: users.handle, localHandle: localAccounts.handle }).from(users)
@@ -100,7 +103,7 @@ export async function registerLocalAccountRoutes(
       if (isUniqueViolation(err)) return reply.code(409).send({ error: "handle_taken" });
       throw err;
     }
-    const res = await admit(db, config, hub, directory, req, reply, user, invite);
+    const res = await admit(db, config, hub, directory, req, reply, user, invite, false, null, ownerCode);
     if (!res) {
       // Refused (invite, ban): no account stays behind that would hold the handle.
       await db.delete(localAccounts).where(eq(localAccounts.userId, user.id));

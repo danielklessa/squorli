@@ -97,11 +97,15 @@ export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onL
 }
 
 /** The fields of a new server account: `~handle` (checked while typing), the password twice, the warning that nobody can reset it. */
-export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, idPrefix }: {
+export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, idPrefix, ownerSetup = false }: {
   busy: boolean; checkFree: ((handle: string) => Promise<boolean>) | null;
-  onRegister: (handle: string, password: string) => Promise<void>; submitLabel?: string; idPrefix: string;
+  /** `ownerCode`: the setup code the owner typed (only with `ownerSetup`); empty = none, an ordinary registration. */
+  onRegister: (handle: string, password: string, ownerCode?: string) => Promise<void>; submitLabel?: string; idPrefix: string;
+  /** The server waits for its owner (health `ownerSetup`): a field for the setup code from the installation. */
+  ownerSetup?: boolean;
 }) {
   const [handle, setHandle] = useState("");
+  const [ownerCode, setOwnerCode] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [taken, setTaken] = useState<string | null>(null);
@@ -115,7 +119,7 @@ export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, id
   }
   async function submit() {
     if (!valid || pw.length < BACKUP_MIN_PASSWORD || pw !== pw2) return;
-    try { await onRegister(clean, pw); setPw(""); setPw2(""); }
+    try { await onRegister(clean, pw, ownerSetup && ownerCode.trim() ? ownerCode.trim() : undefined); setPw(""); setPw2(""); }
     catch (err) { if ((err as { code?: string | null }).code === "handle_taken") setTaken(clean); }
   }
   return (
@@ -136,6 +140,12 @@ export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, id
           <PasswordInput value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" disabled={busy} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
           {mismatch && <small className="error">{t("login.passwordMismatch")}</small>}
         </label>
+        {ownerSetup && (
+          <label className="stack"><span>{t("login.ownerCode")}</span>
+            <input value={ownerCode} onChange={(e) => setOwnerCode(e.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={128} disabled={busy} aria-describedby={`${idPrefix}-owner-code`} />
+            <small id={`${idPrefix}-owner-code`} className="muted">{t("login.ownerCodeHint")}</small>
+          </label>
+        )}
       </div>
       <p className="muted small">{t("login.localPasswordWarning")}</p>
       <button className="login-primary" onClick={() => void submit()} disabled={busy || !valid || taken === clean || pw.length < BACKUP_MIN_PASSWORD || pw !== pw2}>{busy ? t("login.registering") : submitLabel ?? t("login.createLocal")}</button>

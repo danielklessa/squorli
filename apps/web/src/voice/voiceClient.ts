@@ -20,7 +20,7 @@ import {
   type RemoteTrack,
   type TrackPublishOptions,
 } from "livekit-client";
-import { BackgroundBlur, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
+import { BackgroundProcessor, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
 import { VoiceGate, contextNeedsResume, rmsLevel } from "./gate";
 import { boostLimits, type MicBoostSettings } from "./micBoost";
 import { MicPipeline, openMic, type GateMode, type OpenedMic } from "./micPipeline";
@@ -33,8 +33,18 @@ import { USER_VOLUME_MAX, clampUserVolume, loadUserVolumes, saveUserVolumes, wit
 import { screenSharePublish } from "./screenShareOptions";
 import { subscriptionPermissions, type VideoAccess } from "./videoAccess";
 import { VideoWatch, parseFeedId, type VideoSource } from "./videoWatch";
+import { parseWatchingAttribute, watchingAttribute } from "./shareViewers";
 import { t } from "../i18n";
 import type { PlatformMedia } from "../platform/types";
+
+/**
+ * MediaPipe's files for the background blur, from the origin this client was loaded from (the chat server, or app://squorli
+ * in the desktop app) instead of jsdelivr and Google Storage: the WASM is copied there by vite.config.ts, the model lives in
+ * public/mediapipe/ (apps/web/src/voice/AGENTS.md).
+ */
+function blurAssets(): { tasksVisionFileSet: string; modelAssetPath: string } {
+  return { tasksVisionFileSet: new URL("/mediapipe/wasm", location.href).href, modelAssetPath: new URL("/mediapipe/selfie_segmenter.tflite", location.href).href };
+}
 
 /**
  * Voice channel client without a UI dependency (UI-free core, apps/web/AGENTS.md): LiveKit room, microphone pipeline,
@@ -53,6 +63,8 @@ export type VoiceParticipant = {
   cameraOn: boolean;
   screenOn: boolean;
   quality: string;
+  /** Whose screen shares this participant watches, by identity (LiveKit attribute `watching`, shareViewers.ts): the sharer sees who looks. */
+  watching: string[];
 };
 
 /** One video feed for the stage: a participant's camera or screen. The track object is displayed via attach(). */
@@ -242,6 +254,8 @@ export class VoiceClient {
   private mayViewVideo = true;
   /** Which feeds of others the user watches: cameras until turned off, screen shares once turned on (videoWatch.ts). */
   private readonly videoWatch = new VideoWatch();
+  /** The `watching` attribute as last sent (shareViewers.ts); null = not sent in this room yet. */
+  private watchingSent: string | null = null;
   /** Last subscription permissions sent to LiveKit, to skip identical updates. */
   private sentVideoAccess = "";
   /** Playback volume per person (0..2), keyed by public key and stored per device (userVolumes.ts). */
@@ -612,6 +626,7 @@ export class VoiceClient {
     this.videoAudioHosts.clear();
     this.screenListening.clear();
     this.videoWatch.clear();
+    this.watchingSent = null;
     this.audioHost.replaceChildren();
     this.micMutedByUser = false;
     // Switching rooms (join() while in one) never shows "disconnected": App.tsx takes that for the end of voice and closes
@@ -666,6 +681,22 @@ export class VoiceClient {
         if (pub.isDesired !== want) pub.setSubscribed(want);
       }
     }
+    this.publishWatching();
+  }
+  /** The screen shares the user watches right now: turned on ("Ansehen") and still running, with VIEW_VIDEO. */
+  private watchedScreens(): string[] {
+    const room = this.room;
+    if (!room || !this.mayViewVideo) return [];
+    return [...room.remoteParticipants.values()].filter((p) => p.isScreenShareEnabled && this.videoWatch.watching(p.identity, "screen")).map((p) => p.identity);
+  }
+  /** Tell the room whose shares the user watches (shareViewers.ts), when that changed. */
+  private publishWatching(): void {
+    const room = this.room;
+    if (!room || room.state !== ConnectionState.Connected) return;
+    const value = watchingAttribute(this.watchedScreens());
+    if (value === this.watchingSent) return;
+    this.watchingSent = value;
+    room.localParticipant.setAttributes({ watching: value }).catch(() => { this.watchingSent = null; });
   }
 
   /**
@@ -736,7 +767,7 @@ export class VoiceClient {
   /** Can this browser blur the background (WebGL2/WASM, MediaStreamTrackProcessor)? */
   static supportsBlur(): boolean { try { return supportsBackgroundProcessors(); } catch { return false; } }
 
-  /** Set the background blur of the running camera (0 = off). The model/WASM is downloaded on first use (jsdelivr, Google Storage). */
+  /** Set the background blur of the running camera (0 = off). Model and WASM come from the client's own origin on first use (blurAssets). */
   async setCameraBlur(radius: number): Promise<void> {
     this.camera.blur = radius;
     const track = this.room?.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
@@ -747,7 +778,7 @@ export class VoiceClient {
       } else if (this.blur) {
         await this.blur.switchTo({ mode: "background-blur", blurRadius: radius });
       } else {
-        this.blur = BackgroundBlur(radius);
+        this.blur = BackgroundProcessor({ mode: "background-blur", blurRadius: radius, assetPaths: blurAssets() });
         await track.setProcessor(this.blur);
       }
       this.patch({ cameraBlur: radius, error: null });
@@ -1404,8 +1435,10 @@ export class VoiceClient {
       cameraOn: p.isCameraEnabled,
       screenOn: p.isScreenShareEnabled,
       quality: String(p.connectionQuality),
+      watching: p === room.localParticipant ? this.watchedScreens() : parseWatchingAttribute(p.attributes?.watching),
     }));
     this.patch({ participants });
+    this.publishWatching();
   }
 }
 

@@ -39,6 +39,9 @@ export interface PlatformMedia {
   readonly setChatPlayerOutput: ((label: string | null) => void) | null;
 }
 
+/** Whether this client may show notifications of the operating system (Platform.notifications). */
+export type NotifyPermission = "granted" | "default" | "denied" | "unsupported";
+
 /**
  * Where the client runs. One build serves both: the browser (served by a chat server) and the desktop app (the same files
  * from `app://squorli`, recognised by the bridge of its preload script). Everything that differs between the two goes
@@ -101,6 +104,18 @@ export interface Platform {
     suspend(on: boolean): void;
     onControl(cb: (event: ControlEvent) => void): () => void;
   };
+  /**
+   * Notifications of the operating system for direct messages and mentions (docs/features/notifications.md). The desktop app
+   * shows them through its shell ("granted" at once); a browser through the Notification API after asking inside a click.
+   */
+  readonly notifications: {
+    /** "granted" = can show; "default" = must ask first (`request`, inside a click); "denied" = the user or the system refused; "unsupported" = no way here (an older app, a browser without the API or an insecure page). */
+    permission(): NotifyPermission;
+    request(): Promise<NotifyPermission>;
+    show(notification: { title: string; body: string; tag: string }): void;
+    /** A notification was clicked (the window is in front again); `tag` as shown. */
+    onClick(cb: (tag: string) => void): () => void;
+  };
   readonly media: PlatformMedia;
   readonly links: {
     /** Open an address outside the client (desktop: the system's browser). */
@@ -131,6 +146,8 @@ export interface Platform {
     ready(): void;
     /** Mark on the app's task bar and tray icon: how many direct messages and mentions wait; null = no such mark (browser, older app). */
     readonly attention: null | { set(count: number): void };
+    /** Bring a window opened with this name to the front (desktop shell); null = the page tries itself (StageWindow.tsx). */
+    readonly focusPopout: ((name: string) => void) | null;
     /** The window has no system title bar and the client draws its own (desktop); null = the browser's or system's frame. */
     readonly frame: null | { state(): WindowFrameState; subscribe(cb: (state: WindowFrameState) => void): () => void; control(action: WindowControl): void };
   };

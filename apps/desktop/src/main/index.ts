@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeImage, screen, session, type IpcMainEvent, type IpcMainInvokeEvent, type Tray } from "electron";
+import { app, BrowserWindow, ipcMain, nativeImage, Notification, screen, session, type IpcMainEvent, type IpcMainInvokeEvent, type Tray } from "electron";
 import { randomBytes } from "node:crypto";
 import { release } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { INFO_ARGUMENT, IPC, type AppearanceState, type DesktopInfo, type Platfo
 import { APP_ORIGIN } from "./appFiles";
 import { appearanceState, normalizeAppearance, supportedMaterials } from "./appearance";
 import { attentionText, badgeFile, readAttentionCount } from "./attention";
+import { readNotification } from "./notifications";
 import { readAutostartBackground, startsInBackground } from "./autostart";
 import { autostartEnabled, autostartSupported, setAutostart } from "./autostartSystem";
 import { loadConfig, saveConfig } from "./config";
@@ -21,7 +22,7 @@ import { handleDisplayMedia } from "./displayMedia";
 import { registerAppScheme, serveApp } from "./scheme";
 import { PlayerAudioOutput } from "./playerAudio";
 import { readPlayerOutputLabel } from "./playerAudioScript";
-import { applyPermissions, letPlayersEmbed, lockDownContents, openExternal } from "./security";
+import { applyPermissions, focusPopout, letPlayersEmbed, lockDownContents, openExternal } from "./security";
 import { createSplash, type Splash } from "./splash";
 import { createTray, setTrayAttention, setTrayLanguage } from "./tray";
 import { startSystemWatch, systemWatchPath } from "./systemWatch";
@@ -104,6 +105,28 @@ function showAttention(): void {
     const image = file ? nativeImage.createFromPath(join(__dirname, "..", "build", file)) : null;
     win.setOverlayIcon(image && !image.isEmpty() ? image : null, attention > 0 ? text : "");
   } else app.setBadgeCount(attention); // the dock on macOS, the launcher of some Linux desktops; nothing elsewhere
+}
+
+// Notifications of the operating system (docs/features/notifications.md). Kept referenced until they are gone: a
+// notification the garbage collector takes loses its click handler on Windows.
+const notifications = new Set<Notification>();
+function showNotification(value: unknown): void {
+  const n = readNotification(value);
+  if (!n || !Notification.isSupported()) return;
+  const note = new Notification({ title: n.title, body: n.body, silent: true, ...(process.platform === "win32" ? {} : { icon: join(__dirname, "..", "build", "icon.png") }) });
+  const forget = () => { notifications.delete(note); };
+  note.on("click", () => {
+    forget();
+    const win = mainWindow;
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show(); win.focus();
+    win.webContents.send(IPC.notificationClick, n.tag);
+  });
+  note.on("close", forget);
+  note.on("failed", forget);
+  notifications.add(note);
+  note.show();
 }
 
 /** The key of control links that could open the microphone (controlArgs.ts), made once per installation. */
@@ -286,6 +309,8 @@ else {
       return autostartBackground;
     });
     ipcMain.on(IPC.attention, (event, count: unknown) => { if (isClientFrame(event)) { attention = readAttentionCount(count); showAttention(); } });
+    ipcMain.on(IPC.notify, (event, value: unknown) => { if (isClientFrame(event)) showNotification(value); });
+    ipcMain.on(IPC.focusPopout, (event, name: unknown) => { if (isClientFrame(event)) focusPopout(name); });
     ipcMain.on(IPC.language, (event, value: unknown) => { if (isClientFrame(event)) { language = readShellLanguage(value, language); setTrayLanguage(tray, language); } });
     ipcMain.on(IPC.openExternal, (event, url: unknown) => { if (isClientFrame(event) && typeof url === "string") openExternal(url); });
     tray = createTray(() => mainWindow, () => { quitting = true; app.quit(); }, language);

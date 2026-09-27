@@ -1,4 +1,5 @@
 import { VideoStatsButton, VideoStatsOverlay } from "./VideoStatsOverlay";
+import { ShareViewers, type ShareViewer } from "./ShareViewers";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { VoiceClient, VideoTile } from "./voice/voiceClient";
@@ -54,8 +55,8 @@ export function isOpen(entry: Entry) {
  * the client's styles, React renders into its body through a portal. Must run synchronously inside the user's click,
  * before any asynchronous work. `opener` = the window that click happened in: a browser lets only that one open a window.
  */
-export function openPopoutWindow(size: { width: number; height: number }, bodyClass: string, opener: Window = window): Window {
-  const popup = opener.open("about:blank", "_blank", platform.window.popoutFeatures(size));
+export function openPopoutWindow(size: { width: number; height: number }, bodyClass: string, opener: Window = window, name = "_blank"): Window {
+  const popup = opener.open("about:blank", name, platform.window.popoutFeatures(size));
   if (!popup) throw new Error(t("stage.popupBlocked"));
   try {
     const base = popup.document.createElement("base"); base.href = document.baseURI; popup.document.head.appendChild(base);
@@ -71,7 +72,8 @@ export function openPopoutWindow(size: { width: number; height: number }, bodyCl
 }
 
 /** Lives at App level so windows survive switching between the stage and text channels. */
-export function useVideoWindows(tiles: VideoTile[], client: VoiceClient) {
+/** `viewers`: who watches the user's own screen share, shown in its pop-out (ShareViewers.tsx). */
+export function useVideoWindows(tiles: VideoTile[], client: VoiceClient, viewers: readonly ShareViewer[] = []) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
@@ -110,12 +112,12 @@ export function useVideoWindows(tiles: VideoTile[], client: VoiceClient) {
   };
   const windows = entries.map((entry) => {
     const tile = tiles.find((tile) => tile.id === entry.id);
-    return tile && isOpen(entry) ? <VideoWindow key={entry.id} entry={entry} tile={tile} client={client} onClose={() => restore(entry.id)} /> : null;
+    return tile && isOpen(entry) ? <VideoWindow key={entry.id} entry={entry} tile={tile} client={client} viewers={viewers} onClose={() => restore(entry.id)} /> : null;
   });
   return { open, windows, restore, poppedIds: new Set(entries.filter(isOpen).map((entry) => entry.id)) };
 }
 
-function VideoWindow({ entry, tile, client, onClose }: { entry: Entry; tile: VideoTile; client: VoiceClient; onClose: () => void }) {
+function VideoWindow({ entry, tile, client, viewers, onClose }: { entry: Entry; tile: VideoTile; client: VoiceClient; viewers: readonly ShareViewer[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLDivElement>(null);
   const target = useCallback(() => ref.current, []);
@@ -162,6 +164,7 @@ function VideoWindow({ entry, tile, client, onClose }: { entry: Entry; tile: Vid
       {tile.name}{tile.isLocal && ` ${t("members.you")}`}
     </div>
     {canStats && stats && <VideoStatsOverlay client={client} tileId={tile.id} />}
+    {tile.source === "screen" && tile.isLocal && <ShareViewers viewers={viewers} />}
     <div className="tile-window-actions" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
       {canStats && <VideoStatsButton on={stats} onToggle={() => setStats(!stats)} />}
       <button className="icon" title={t("common.close")} aria-label={t("common.close")} onClick={onClose}><Icon name="x" /></button>

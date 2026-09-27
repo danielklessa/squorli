@@ -178,6 +178,12 @@ export interface DesktopBridge {
   clientReady(): void;
   /** How many direct messages and mentions wait (0 = none): the mark on the task bar icon and the tray icon. */
   setAttention(count: number): void;
+  /** Show a notification of the operating system (docs/features/notifications.md); the shell plays no sound, the client has its own. An app from before it has no such member. */
+  notify(notification: BridgeNotification): void;
+  /** A notification was clicked: the shell brought the window to the front and names the notification's tag. */
+  onNotificationClick(cb: (tag: string) => void): () => void;
+  /** Bring a window the client opened with this name (`window.open(url, name)`) to the front; a page cannot do that itself on every system. An app from before it has no such member. */
+  focusPopout(name: string): void;
   /** The client's language ("de" or "en") for what the shell draws itself: the window's context menu, the tray's menu. An app from before it has no such member. */
   setLanguage(language: string): void;
   /** Register the global shortcuts and watch the push-to-talk key; answers with what the shell could do. Replaces the previous request. */
@@ -200,6 +206,9 @@ export interface DesktopBridge {
 
 /** What the shell keeps encrypted for the client (identity.ts): the identity key, and the server accounts' keys and tokens. */
 export const SECRET_KEYS = ["chat.identity.v1", "chat.serverAccounts.v1"] as const;
+
+/** A notification the client asks the shell to show; `tag` comes back when it is clicked. */
+export type BridgeNotification = { title: string; body: string; tag: string };
 
 /** IPC channel names, shared by main and preload. */
 export const IPC = {
@@ -228,6 +237,9 @@ export const IPC = {
   setAutostart: "squorli:set-autostart",
   setAutostartBackground: "squorli:set-autostart-background",
   attention: "squorli:attention",
+  notify: "squorli:notify",
+  focusPopout: "squorli:focus-popout",
+  notificationClick: "squorli:notification-click",
   language: "squorli:language",
   hotkeysSet: "squorli:hotkeys-set",
   hotkeysSuspend: "squorli:hotkeys-suspend",

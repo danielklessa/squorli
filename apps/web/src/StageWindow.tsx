@@ -4,6 +4,10 @@ import type { VoiceClient } from "./voice/voiceClient";
 import { activity, watchActivity } from "./activity";
 import { usePushToTalk } from "./usePushToTalk";
 import { isOpen, openPopoutWindow, type Entry } from "./VideoWindows";
+import { platform } from "./platform";
+
+/** The stage window's name: the desktop shell finds it by that to bring it to the front, a browser by `window.open("", name)`. */
+const STAGE_WINDOW = "squorli-stage";
 
 /**
  * The whole voice stage in a window of its own (user's wish: the stage on one monitor, the chat in the main window).
@@ -42,11 +46,21 @@ export function useStageWindow(client: VoiceClient, available: boolean, title: s
       const current = entryRef.current;
       if (current && isOpen(current)) { current.window.focus(); return; }
       const size = { width: Math.min(1280, window.screen.availWidth), height: Math.max(1, Math.min(800, window.screen.availHeight - 120)) };
-      const popup = openPopoutWindow(size, "stage-window-body");
+      const popup = openPopoutWindow(size, "stage-window-body", window, STAGE_WINDOW);
       setEntry({ id: "stage", window: popup, document: popup.document });
     },
     close,
-    focus: () => { entryRef.current?.window.focus(); },
+    /**
+     * Bring the window to the front ("Fenster zeigen"). `focus()` on another window is ignored by most systems; the desktop
+     * shell does it for the client, a browser raises a named window that `open` targets inside the user's click.
+     */
+    focus: () => {
+      const current = entryRef.current;
+      if (!current || !isOpen(current)) return;
+      if (platform.window.focusPopout) { platform.window.focusPopout(STAGE_WINDOW); return; }
+      try { window.open("", STAGE_WINDOW)?.focus(); } catch { /* the browser refused: the plain focus below */ }
+      current.window.focus();
+    },
     /** The stage's window while the user is working in it, else null: dialogs the stage asks for are shown there. */
     focusedWindow: (): Window | null => { const current = entryRef.current; return current && isOpen(current) && current.document.hasFocus() ? current.window : null; },
     render: (stage: ReactNode) => entry && popped ? <StageWindow entry={entry} client={client} title={title}>{stage}</StageWindow> : null,

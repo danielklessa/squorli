@@ -1,4 +1,4 @@
-import { app, session, shell, type Session, type WebContents } from "electron";
+import { app, session, shell, type BrowserWindow, type Session, type WebContents } from "electron";
 import { isAllowedExternal, isAppNavigation, windowOpenDecision } from "./navigation";
 import { PLAYER_ORIGINS } from "./playerAudioScript";
 
@@ -34,9 +34,27 @@ export function applyPermissions(ses: Session, origins: readonly string[], playe
   });
 }
 
+/**
+ * Windows the client opened with a name (the stage's own window, `squorli-stage`): the client asks to bring one to the
+ * front (`IPC.focusPopout`), which `window.focus()` from another window does not do on Windows.
+ */
+const namedPopouts = new Map<string, BrowserWindow>();
+export function focusPopout(name: unknown): void {
+  const win = typeof name === "string" ? namedPopouts.get(name) : undefined;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+}
+
 /** Every window and frame host: no foreign navigation, no webviews, own windows only. */
 export function lockDownContents(origins: readonly string[]): void {
   app.on("web-contents-created", (_event, contents: WebContents) => {
+    contents.on("did-create-window", (win, details) => {
+      const name = details.frameName;
+      if (!name || name === "_blank") return;
+      namedPopouts.set(name, win);
+      win.on("closed", () => { if (namedPopouts.get(name) === win) namedPopouts.delete(name); });
+    });
     contents.setWindowOpenHandler(({ url }) => {
       const decision = windowOpenDecision(url, origins);
       if (decision === "external") openExternal(url);

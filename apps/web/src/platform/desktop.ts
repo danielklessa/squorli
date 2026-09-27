@@ -67,6 +67,13 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
       set: (request) => bridge.setHotkeys(request), suspend: (on) => bridge.suspendHotkeys(on), onControl: (cb) => bridge.onControl(cb),
     } : null,
     // app:// is a secure scheme; only the development window (Vite over http) may load http resources.
+    // An app older than this client has no notify member: then no notifications (its shell refuses the browser's API too).
+    notifications: typeof bridge.notify === "function" ? {
+      permission: () => "granted",
+      request: async () => "granted",
+      show: (notification) => bridge.notify(notification),
+      onClick: (cb) => bridge.onNotificationClick(cb),
+    } : { permission: () => "unsupported", request: async () => "unsupported", show: () => {}, onClick: () => () => {} },
     media: { mobile: false, blocksInsecureMedia: window.location.protocol !== "http:", screenSharePublishOverrides: () => (pickedCodec === "vp8" ? null : { videoCodec: pickedCodec }), takeScreenAudio: () => audio.take(), stopScreenAudio: () => audio.stop(),
       // An app older than this client has no such member.
       setPlayerOutput: typeof bridge.setPlayerOutput === "function" ? (label) => bridge.setPlayerOutput(label) : null,
@@ -94,6 +101,7 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
       } : null,
       ready: () => { if (typeof bridge.clientReady === "function") bridge.clientReady(); },
       attention: typeof bridge.setAttention === "function" ? { set: (count) => bridge.setAttention(count) } : null,
+      focusPopout: typeof bridge.focusPopout === "function" ? (name) => bridge.focusPopout(name) : null,
       frame: {
         state: () => frame,
         subscribe: (cb) => { frameListeners.add(cb); cb(frame); return () => { frameListeners.delete(cb); }; },

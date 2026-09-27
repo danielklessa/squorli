@@ -609,6 +609,11 @@ button.dock-stage:hover { background: var(--sel); }
 .stage-hint { margin: 0.5rem 1rem 0; }
 .warn-box { background: rgba(255,197,104,.12); border: 1px solid rgba(255,197,104,.5); border-radius: var(--r); padding: 0.5rem 0.8rem; color: var(--text); }
 .stage-empty { flex: 1; display: grid; place-items: center; }
+/* The stage is in its own window (App.tsx `stageAway`): a place holder where it would be, with the way back. */
+.stage-away-box { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 2rem 1.5rem; max-width: 26rem; text-align: center; }
+.stage-away-box > .ic { font-size: 2rem; color: var(--muted); }
+.stage-away-box > p { margin: 0; }
+.stage-away-box > .row { flex-wrap: wrap; justify-content: center; margin-top: 0.5rem; }
 .stage-grid { flex: 1; min-height: 0; display: grid; place-items: center; padding: 0.75rem; overflow: hidden; }
 .stage-grid-inner { display: grid; gap: 8px; justify-content: center; }
 .stage-focus { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; }
@@ -1006,6 +1011,13 @@ button.icon.on { color: var(--brand); }
 .tile-window-actions { position: absolute; top: 0.5rem; right: 0.5rem; display: flex; gap: 0.25rem; padding: 0.125rem; border-radius: 10px; background: var(--bg); }
 .tile-window-actions button.icon { min-width: 2rem; min-height: 2rem; color: var(--text); }
 /* The viewer's statistics of a share (VideoStatsOverlay.tsx): a box in the top left corner that takes no clicks, so the tile behind it still enlarges. */
+/* Who watches the own screen share (VoiceStage.tsx ShareViewers): overlapping avatars in the top left; the one under the pointer grows. */
+.share-viewers { position: absolute; left: 0.5rem; top: 0.5rem; display: flex; align-items: center; padding: 0.2rem 0.2rem 0.2rem 0.55rem; border-radius: 999px; background: rgba(12,20,36,.72); z-index: 2; }
+.share-viewer { position: relative; display: inline-grid; margin-left: -0.45rem; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg); transform-origin: top left; transition: transform 120ms ease; cursor: default; }
+.share-viewer:hover { transform: scale(2.6); z-index: 3; }
+.share-viewer-more { place-items: center; width: 1.5rem; height: 1.5rem; background: var(--bg4); color: var(--text); font-size: 0.625rem; font-weight: 600; }
+.share-viewer-more:hover { transform: none; }
+@media (prefers-reduced-motion: reduce) { .share-viewer { transition: none; } }
 .tile-stats { position: absolute; left: 0.5rem; top: 0.5rem; max-width: calc(100% - 1rem); padding: 0.35rem 0.6rem; border-radius: var(--r); background: rgba(12,20,36,.82); color: var(--text); font-size: 0.75rem; line-height: 1.4; font-variant-numeric: tabular-nums; pointer-events: none; overflow: hidden; }
 .tile-stats > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile-stats .dx-ok { color: var(--ok); }
