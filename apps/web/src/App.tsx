@@ -7,6 +7,8 @@ import { AdminPanel } from "./AdminPanel";
 import { ChatView } from "./ChatView";
 import { DebugPanel } from "./DebugPanel";
 import { HomeMain, HomeSidebar } from "./Home";
+import { NoticesDialog } from "./AccountNotices";
+import { ReportDialog, type DirectoryReportTarget } from "./ReportDialog";
 import { DesktopLogin } from "./DesktopLogin";
 import { LoginScreen } from "./LoginScreen";
 import { ServerOffline } from "./ServerOffline";
@@ -159,6 +161,9 @@ export function App() {
   /** Stage (tiles/screen) instead of chat in the main area; voice keeps running independently. */
   const [stageOpen, setStageOpen] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
+  // Reports to the directory's operator (an account, a chat server) and the notices about its measures (docs/features/reports.md).
+  const [directoryReport, setDirectoryReport] = useState<DirectoryReportTarget | null>(null);
+  const [noticesLater, setNoticesLater] = useState(false);
   /** Widths of the two side columns, dragged by the user; kept per device (layout.ts). */
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const resizeColumn = (column: ColumnId, width: number, keep: boolean) => setLayout((prev) => { const next = { ...prev, [column]: width }; if (keep) saveLayout(next); return next; });
@@ -592,7 +597,8 @@ export function App() {
     : me ? me.avatarUrl : active?.me?.avatarUrl ?? null;
   const canStream = !!server && hasPermission(server.myPermissions, Permission.STREAM_VIDEO);
   // M7: home view with friends and direct messages as soon as the directory socket exists (an account at the directory).
-  const homeAvailable = state.friends !== null || state.directoryLink !== "idle";
+  // A suspended account has no socket, but the view is where the suspension is explained.
+  const homeAvailable = state.friends !== null || state.directoryLink !== "idle" || state.suspendedUntil !== null;
   const homeOpen = homeAvailable && state.homeOpen;
   // The stage belongs to the voice connection's server; on another server or in the home view the dock shows "view" and switches there.
   const showStage = stageOpen && voiceChannel !== null && voiceHost === activeHost && !homeOpen && !stageWindow.popped && (!mobile || mobileContent);
@@ -671,6 +677,12 @@ export function App() {
     // The member list's small profile: send, then show the conversation in the friends view (user's wish, 24 September 2026).
     onSend: async (pk: string, text: string) => { await store.sendDm(pk, text); store.selectPeer(pk); setMobileContent(true); },
   } : null;
+  // Reports to the directory's operator (docs/features/reports.md): only with the directory account, never with a server
+  // account's key (it has no account there), and only for the kinds the directory takes.
+  const directoryHost = (() => { try { return state.directoryUrl ? new URL(state.directoryUrl).host : null; } catch { return null; } })();
+  const mayReport = (kind: "account" | "server", host: string | null) => !!state.directoryAccount && !!directoryHost && state.suspendedUntil === null && state.reportKinds.includes(kind) && !(host !== null && state.serverAccounts[host]);
+  const reportAccount = (host: string | null) => (mayReport("account", host) ? (publicKey: string, name: string) => setDirectoryReport({ kind: "account", publicKey, name }) : null);
+  const reportServer = mayReport("server", null) ? (host: string, name: string) => setDirectoryReport({ kind: "server", host, name }) : null;
   // Blocking people (docs/features/reports.md, stage 3): per server the identity used there decides whose list applies (store.ts).
   const blockControlsFor = (host: string): BlockControls => ({
     has: (pk) => store.blockedFor(host).includes(pk),
@@ -715,6 +727,7 @@ export function App() {
     people: voiceActivity(s.voice, s.server?.settings.afkChannelId ?? null),
     reports: s.server?.openReports ?? 0,
     unreachable: s.waiting === "unreachable",
+    refused: s.refused,
   }]));
   // Rail context menu: delete your account on that server, requested through the directory (own confirmation dialog, no browser dialogs).
   const leaveServer = async (host: string, name: string) => {
@@ -751,11 +764,13 @@ export function App() {
         onMute={(key, muted) => { void store.connection(key)?.setServerMuted(muted).catch(() => {}); }}
         onReorder={(hosts) => { saveVoiceSettings({ ...loadVoiceSettings(), serverOrder: hosts }); }}
         home={homeAvailable ? { open: homeOpen, badge: homeBadge, onToggle: () => { setMobileContent(false); store.openHome(!homeOpen); } } : null}
-        serverAccounts={state.serverAccounts} onSignOutAccount={(key) => { if (key === voiceHost) void client.leave(); store.logoutServerAccount(key); }} />}
+        serverAccounts={state.serverAccounts} onSignOutAccount={(key) => { if (key === voiceHost) void client.leave(); store.logoutServerAccount(key); }} onReport={reportServer}
+        onRemoveRefused={(key) => store.removeRefused(key)} />}
       {showBrowser && state.directoryUrl && <ServerBrowser directoryUrl={state.directoryUrl} currentHost={homeless ? active?.serverDomain ?? null : home?.serverDomain ?? null} onClose={() => setShowBrowser(false)}
-        onOpen={homeless ? (host) => { setShowBrowser(false); setStageOpen(false); void store.addServer(host); } : null} />}
+        onOpen={homeless ? (host) => { setShowBrowser(false); setStageOpen(false); void store.addServer(host); } : null}
+        onReport={reportServer ? (host, name) => { setShowBrowser(false); reportServer(host, name); } : null} />}
       <div className="left" id="app-navigation">
-        {homeOpen ? <HomeSidebar state={state} store={store} members={server?.members ?? []} onOpenChat={() => setMobileContent(true)} /> : view ? <Sidebar
+        {homeOpen ? <HomeSidebar state={state} store={store} members={server?.members ?? []} onOpenChat={() => setMobileContent(true)} onReportAccount={reportAccount(null)} /> : view ? <Sidebar
           server={view.server} api={view.conn.api} currentChannelId={(showStage || stageAway) && voiceChannel ? voiceChannel.id : view.active.currentChannelId} voice={view.active.voice}
           voiceState={voiceHost === activeHost ? voice : null} client={client} radioTitles={view.active.radioTitles} unread={view.active.unread} mentions={view.active.mentions} muted={view.active.muted} canMute={view.active.readSync}
           onMuteChannel={(id, muted) => { void view.conn.setChannelMuted(id, muted).catch(() => {}); }} onOpenChannelDialog={setChannelEdit}
@@ -780,7 +795,7 @@ export function App() {
         ) : !active ? (
           <NoServers directoryUrl={state.directoryUrl} account={state.directoryAccount ?? null} onDiscover={() => setShowBrowser(true)} onAdd={() => { void addServer(); }} onLogout={() => { void client.leave(); store.logout(); }} />
         ) : !view ? (
-          <ServerStatus s={active} store={store} state={state} rail={railServers} onRetry={(invite) => store.retryServer(active.host, invite)} onClose={() => store.closeServer(active.host)}
+          <ServerStatus s={active} store={store} state={state} rail={railServers} onRetry={(invite) => store.retryServer(active.host, invite)} onClose={() => { if (active.refused) store.removeRefused(active.host); else store.closeServer(active.host); }}
             onOpen={(key) => { setMobileContent(false); setVoicePreview(null); store.openServer(key === state.homeHost ? homeDirHost : key); }}
             join={homeless && !active.me ? state.joinInvites[active.host] ?? "" : null} />
         ) : showStage && voiceChannel ? (
@@ -803,6 +818,7 @@ export function App() {
             members={view.server.members} myUserId={view.active.userId!} myPermissions={permsIn(view.server, current.id)}
             typing={view.active.typing[current.id] ?? {}} conn={view.conn}
             canReport={view.server.openReports !== undefined} serverName={view.server.settings.name} blocked={blockControlsFor(view.active.host)}
+            passOn={mayReport("server", view.active.host) && directoryHost ? { store, host: directoryHost, serverHost: view.active.host === state.homeHost ? homeDirHost : view.active.serverDomain ?? view.active.host } : null}
           />
         ) : (
           <section className="chat empty"><p className="muted">{t("app.noTextChannel")}</p></section>
@@ -834,9 +850,14 @@ export function App() {
       {voteKick && votePerson && voteKick.canVote && voteAsked !== voteKick.vote.id && <VoteKickModal state={voteKick} person={votePerson} onVote={castVote} onClose={() => setVoteAsked(voteKick.vote.id)} />}
       {!homeOpen && view && <MemberList api={view.conn.api} members={view.server.members} roles={view.server.roles} myUserId={view.active.userId!} myPermissions={view.server.myPermissions} channelPermissions={view.server.myChannelPermissions} ownerId={view.server.settings.ownerId} canReport={view.server.openReports !== undefined} serverName={view.server.settings.name}
         voice={view.active.voice} channels={view.server.channels} friends={state.serverAccounts[view.active.host] ? null : friendsMenu} blocked={blockControlsFor(view.active.host)} onClose={mobile ? () => setMobileMembers(false) : null}
+        onReportAccount={reportAccount(view.active.host)}
         voteKickAllowed={view.active.voteKickAllowed} onVoteKick={(userId, channelId) => startVoteKick(view.active.host, channelId, userId)}
         voteKickBox={voiceHost === activeHost ? <VoteKickPanel state={voteKick} result={voteKickResult} person={votePerson} onVote={castVote} /> : null} />}
 
+      {directoryReport && directoryHost && <ReportDialog target={directoryReport} directory={{ store, host: directoryHost }} onClose={() => setDirectoryReport(null)} />}
+      {!noticesLater && state.directoryUrl && state.directoryAccount && state.notices.some((n) => n.readAt === null) && (
+        <NoticesDialog notices={state.notices} handle={state.directoryAccount.handle} directoryUrl={state.directoryUrl} onRead={(id) => store.readNotice(id)} onClose={() => setNoticesLater(true)} />
+      )}
       {showAdmin && view && <AdminPanel api={view.conn.api} server={view.server} myUserId={view.active.userId!} directoryUrl={view.active.directoryUrl} onClose={() => setShowAdmin(false)} onEditChannel={setChannelEdit} />}
       {channelEdit && view && <ChannelDialog api={view.conn.api} server={view.server} target={channelEdit} myUserId={view.active.userId!} onClose={() => setChannelEdit(null)} />}
       {screenPick && inPickWindow(<ScreenPicker sources={screenPick.sources} h265={VoiceClient.supportsH265()} win={pickWindow ?? window}
@@ -867,6 +888,9 @@ export function App() {
   );
 }
 
+/** The directory's host for a sentence ("refused by the operator of ..."). */
+const directoryName = (url: string | null): string => { try { return url ? new URL(url).host : "?"; } catch { return url ?? "?"; } };
+
 /** Main area for a foreign server that has no state (yet): connecting, error, removed. */
 /**
  * `join` (client without a home server, not signed in there): the invite code that came with the address, "" = none. The view
@@ -891,6 +915,22 @@ function ServerStatus({ s, store, state, rail, onRetry, onClose, onOpen, join }:
   const localAccounts = s.localAccounts || (!s.directoryUrl && s.serverVersion !== null) || s.ownerSetup;
   const code = () => invite.trim() || undefined;
   const conn = store.connection(s.host);
+  // Refused by the directory's operator (docs/features/reports.md): a page of its own. No retry, no "open directly", no
+  // account forms: the client does not connect to it, however it was opened.
+  if (s.refused) {
+    return (
+      <section className="chat empty server-status server-refused">
+        <div className="stack">
+          <h2><Icon name="ban" /> {t("refused.title")}</h2>
+          <p><strong>{name}</strong>{name !== s.host && <> <span className="muted small">{s.host}</span></>}</p>
+          <p>{t("refused.text", { directory: directoryName(state.directoryUrl) })}</p>
+          <p className="muted small">{t("refused.contact")}</p>
+          {(state.accountServers ?? []).some((a) => a.refused && store.hostFor(a.host) === s.host) && <p className="muted small">{t("refused.removeHint")}</p>}
+          <div className="row"><button className="secondary" onClick={onClose}>{t("refused.remove")}</button></div>
+        </div>
+      </section>
+    );
+  }
   // The centred notice with the countdown and the other servers (ServerUnreachable.tsx) instead of the status page; the
   // first contact ("Verbinde mit …", the stored session or the health request, a sign-in under way) is centred the same way.
   if (offline || (busy && !claim)) return <ServerUnreachable s={s} name={name} checking={!offline} others={reachableServers(state.servers, s.host, (key) => rail.find((r) => r.key === key)?.iconUrl ?? null)} onRetry={() => onRetry()} onOpen={onOpen} />;

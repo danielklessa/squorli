@@ -35,13 +35,16 @@ export function saveClientData(data: ClientData): void {
  * The server to show at start: the one viewed last while it is still the user's (on the account's list without a pending
  * account deletion, or added by address), otherwise the one the account was seen on most recently, otherwise the first
  * added one. `accountServers` null = the directory did not answer (offline): then the remembered server stands.
+ * A server the directory's operator refused is the one to start on only when there is no other: the rail marks it, and
+ * its page says why it is closed, which is more than "no server yet" would.
  */
 export function chooseInitialServer(o: { last: string | null; accountServers: readonly AccountServer[] | null; localHosts: readonly string[] }): string | null {
-  const mine = (o.accountServers ?? []).filter((s) => !s.leaveRequestedAt);
+  const listed = (o.accountServers ?? []).filter((s) => !s.leaveRequestedAt);
+  const mine = listed.filter((s) => !s.refused);
+  const newestOf = (list: readonly AccountServer[]) => list.slice().sort((a, b) => (a.lastSeenAt < b.lastSeenAt ? 1 : a.lastSeenAt > b.lastSeenAt ? -1 : 0))[0]?.host.toLowerCase() ?? null;
   const known = (host: string) => o.localHosts.includes(host) || o.accountServers === null || mine.some((s) => s.host.toLowerCase() === host);
   if (o.last && known(o.last)) return o.last;
-  const newest = mine.slice().sort((a, b) => (a.lastSeenAt < b.lastSeenAt ? 1 : a.lastSeenAt > b.lastSeenAt ? -1 : 0))[0];
-  return newest?.host.toLowerCase() ?? o.localHosts[0] ?? null;
+  return newestOf(mine) ?? o.localHosts[0] ?? newestOf(listed.filter((s) => s.refused));
 }
 
 /**

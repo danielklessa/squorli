@@ -1,6 +1,6 @@
 # Plan: reporting, blocking, and deleting with evidence
 
-Part of the project description (entry point: root `AGENTS.md`, section 0; open work `docs/PLAN.md` 3.1). Written on 25 September 2026. The question came from the mobile plan (`docs/PLAN-mobile.md`, open decision 4: the app stores require a way to report content and to block users), followed by the user's questions "wie muss das Löschen von Nachrichten funktionieren?" and "wie kann man melden (wenn es auf dem Server ist müsste ja der Servereigentümer benachrichtigt werden)"; the user asked for a plan of its own. **Stages 1 and 2 (section 8) were built on 26 September 2026: `docs/features/reports.md`; stage 4's direct messages later that day (the flag on a friend's message, the plain text inside the signed report, the directory's queue)** (server reports with snapshots, the queue in Verwaltung > Meldungen, the count on the rail, the notice to the reported person, delete on ban, the moderation log); sections 3 and 4 below describe what is built, with the choices Claude made listed in the feature note. Open here: stages 3 to 5 and the directory's side. **All seven decisions of section 9 were made by the user on 25 September 2026, each as proposed** (plan cleanup; priority 1 of product work, `docs/PLAN.md` 3.1). Proposals elsewhere in the text that section 9 does not list are still Claude's.
+Part of the project description (entry point: root `AGENTS.md`, section 0; open work `docs/PLAN.md` 3.1). Written on 25 September 2026. The question came from the mobile plan (`docs/PLAN-mobile.md`, open decision 4: the app stores require a way to report content and to block users), followed by the user's questions "wie muss das Löschen von Nachrichten funktionieren?" and "wie kann man melden (wenn es auf dem Server ist müsste ja der Servereigentümer benachrichtigt werden)"; the user asked for a plan of its own. **Stages 1 and 2 (section 8) were built on 26 September 2026: `docs/features/reports.md`; stage 4's direct messages later that day (the flag on a friend's message, the plain text inside the signed report, the directory's queue)** (server reports with snapshots, the queue in Verwaltung > Meldungen, the count on the rail, the notice to the reported person, delete on ban, the moderation log); sections 3 and 4 below describe what is built, with the choices Claude made listed in the feature note. **The rest of stage 4 (section 5.1: reports of accounts and chat servers, suspended accounts, refused servers, notices) was built on 27 September 2026.** Open here: stage 5 (push while offline) and the website (rules of use, guides). **All seven decisions of section 9 were made by the user on 25 September 2026, each as proposed** (plan cleanup; priority 1 of product work, `docs/PLAN.md` 3.1). Proposals elsewhere in the text that section 9 does not list are still Claude's.
 
 This revises the former decision 3 of `docs/PLAN.md` (provisional since M2: "no audit log, no report function"); the user confirmed the revision on 25 September 2026. Reporting is worth having without an app too: every server operator in the EU who stores other people's content needs some way to receive notices (Digital Services Act; an assessment, not legal advice).
 
@@ -65,7 +65,7 @@ The directory's side of kinds two and three is planned in the directory's own re
 
 ### 5.1 What the client and the chat server still need (decisions of 27 September 2026)
 
-The directory's operator can act on a report since 27 September 2026: warn an account, remove its picture or display name, suspend it for a time, delete it; take a chat server out of the server directory or refuse it. What that means for this repository, all of it open:
+The directory's operator can act on a report since 27 September 2026: warn an account, remove its picture or display name, suspend it for a time, delete it; take a chat server out of the server directory or refuse it. What that means for this repository, **all of it built on 27 September 2026** (`docs/features/reports.md`, the last section, with what differs from the plan below: the session on a chat server is refused while the suspension lasts instead of being ended):
 
 - **The receiver's choice in the report dialog** (decision 8 below): a report of a message on a chat server goes to "die Moderatoren von <Server>" or to the directory's operator, with the hint to take the second when the moderators do nothing or are the problem. The second is a report of the server with the message as evidence (text, author, channel, time, built by the reporter's client from what it shows). No third kind of report and no list of "my reports".
 - **Reporting a directory account** (name, avatar): an entry on a friend and on a member who has a handle. **Reporting a chat server:** an entry in the server rail's menu and in the server browser.
@@ -76,7 +76,7 @@ The directory's operator can act on a report since 27 September 2026: warn an ac
 - **A refused registration:** the directory answers a refused server's registration with 403 `server_blocked`; the server's log and `squorli doctor` need a text for it (today the hint about the proof URL is printed, which misleads).
 - **Notices:** the account's status carries the notices about measures (fixed wording in both languages, the reason from the reports' list, never who reported); the client shows them and marks them as read (`notice-read`).
 
-Order: the directory's side first, then the server, then the desktop app, then the website (a page with the rules of use, the privacy policy's lines, the guides).
+Order of the rollout: the directory first, then the server, then the desktop app, then the website (a page with the rules of use, the privacy policy's lines, the guides; open).
 
 ## 6. Blocking members on servers (built 27 September 2026, `docs/features/reports.md`)
 
@@ -97,7 +97,7 @@ Order: the directory's side first, then the server, then the desktop app, then t
 1. **Server reports:** permission, table, snapshot, queue, event, client menus and dialog, retention job. **Built 26 September 2026** (`docs/features/reports.md`).
 2. **Delete on ban** and the moderation log. **Built 26 September 2026.**
 3. **Blocking** in the sealed settings. **Built 27 September 2026** (`docs/features/reports.md`).
-4. **Reports to the directory** (direct messages, accounts, servers, passed-on reports), together with the directory's side. **Direct messages built 26 September 2026** (`docs/features/reports.md`); accounts, whole servers and passed-on server reports open, with what section 5.1 lists (the suspension on chat servers, the refused servers, the notices).
+4. **Reports to the directory** (direct messages, accounts, servers, passed-on reports), together with the directory's side. **Direct messages built 26 September 2026, the rest with section 5.1 on 27 September 2026** (`docs/features/reports.md`).
 5. Offline notification with the push of `docs/PLAN-mobile.md`.
 
 The mobile app's store submission needs stages 1, 3 and 4 at least.
@@ -121,4 +121,4 @@ Decisions of 27 September 2026 (the user, for section 5.1):
 
 ## 10. Not checked
 
-Nothing was built or run. The DSA's duties for a small self-hosted server and for the directory's operator are an assessment, not legal advice; they belong with the imprint/privacy task (`LEGAL_DATENVERARBEITUNG.md` in the workspace root).
+What was run per stage is in `docs/features/reports.md` and `docs/VERIFIED-STATE.md`. The DSA's duties for a small self-hosted server and for the directory's operator are an assessment, not legal advice; they belong with the imprint/privacy task (`LEGAL_DATENVERARBEITUNG.md` in the workspace root).

@@ -9,6 +9,7 @@ import { GameLine } from "./GameLine";
 import { Icon } from "./Icon";
 import type { State, Store } from "./store";
 import { t } from "./i18n";
+import { SuspendedNote } from "./AccountNotices";
 
 /**
  * Home view (M7, the Squorli mark in the server rail): friends, requests and search on the left, the conversation with the
@@ -19,7 +20,9 @@ export const friendName = (f: Friend) => f.displayName ?? `@${f.handle}`;
 /** Address of a friend's avatar at the directory (null = none, or no directory known). */
 export const friendAvatar = (directoryUrl: string | null, f: { publicKey: string; avatarUpdatedAt: string | null }) => (directoryUrl ? directoryAvatarUrl(directoryUrl, f.publicKey, f.avatarUpdatedAt) : null);
 
-export function HomeSidebar({ state, store, members, onOpenChat }: { state: State; store: Store; members: Member[]; onOpenChat: () => void }) {
+export function HomeSidebar({ state, store, members, onOpenChat, onReportAccount = null }: { state: State; store: Store; members: Member[]; onOpenChat: () => void;
+  /** A friend's account (name, picture) can be reported to the directory's operator; null = not offered. */
+  onReportAccount?: ((publicKey: string, name: string) => void) | null }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<FriendSearchResult[]>([]);
   // Right-click on a friend (a tap on the dots on a phone): write, remove, block (user's wish, 24 September 2026).
@@ -55,7 +58,9 @@ export function HomeSidebar({ state, store, members, onOpenChat }: { state: Stat
   const seen = new Set(localHits.map((m) => m.publicKey));
   const dirHits = hits.filter((h) => h.publicKey !== me && !seen.has(h.publicKey));
 
-  const linkText = state.directoryLink === "connected" ? null : state.directoryLink === "connecting" ? t("home.connecting") : state.directoryLinkError ?? t("home.noLink");
+  // A suspended account has no socket (docs/features/reports.md): the note says so instead of "no connection".
+  const suspended = state.suspendedUntil !== null;
+  const linkText = suspended || state.directoryLink === "connected" ? null : state.directoryLink === "connecting" ? t("home.connecting") : state.directoryLinkError ?? t("home.noLink");
 
   return (
     <div className="home-side">
@@ -64,6 +69,7 @@ export function HomeSidebar({ state, store, members, onOpenChat }: { state: Stat
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("home.searchPlaceholder")} spellCheck={false} aria-label={t("home.searchLabel")} />
         {q && <button className="icon" title={t("home.clearSearch")} onClick={() => setQ("")}><Icon name="x" /></button>}
       </div>
+      {suspended && <SuspendedNote until={state.suspendedUntil ?? ""} reason={state.suspendedReason} handle={state.directoryAccount?.handle ?? ""} directoryUrl={state.directoryUrl} onCheck={() => store.refreshDirectory()} />}
       {linkText && <p className="muted small home-note">{linkText}</p>}
       {state.friendsError && <p className="error small home-note">{state.friendsError}</p>}
       <div className="channel-list home-list">
@@ -116,6 +122,7 @@ export function HomeSidebar({ state, store, members, onOpenChat }: { state: Stat
               <button role="menuitem" onClick={() => { setMenu(null); store.selectPeer(f.publicKey); onOpenChat(); }}><Icon name="message-circle" /> {t("members.writeMessage")}</button>
               <button role="menuitem" className="danger" onClick={() => { setMenu(null); askRemoveFriend(store, f.publicKey, name); }}><Icon name="user-minus" /> {t("friends.remove")}</button>
               <button role="menuitem" className="danger" onClick={() => { setMenu(null); askBlockFriend(store, f.publicKey, name); }}><Icon name="ban" /> {t("friends.block")}</button>
+              {onReportAccount && <button role="menuitem" onClick={() => { setMenu(null); onReportAccount(f.publicKey, `@${f.handle}`); }}><Icon name="flag" /> {t("report.reportAccount")}</button>}
             </ContextMenu>
           );
         })()}

@@ -2,8 +2,8 @@ import type { AccountServer } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
 import { chooseInitialServer, parseClientData, parseServerAddress } from "./clientHome";
 
-const srv = (host: string, lastSeenAt: string, leaveRequestedAt: string | null = null): AccountServer =>
-  ({ host, name: host, displayName: null, lastSeenAt, verified: true, iconUpdatedAt: null, leaveRequestedAt });
+const srv = (host: string, lastSeenAt: string, leaveRequestedAt: string | null = null, refused = false): AccountServer =>
+  ({ host, name: host, displayName: null, lastSeenAt, verified: true, iconUpdatedAt: null, leaveRequestedAt, refused });
 
 describe("chooseInitialServer", () => {
   const account = [srv("a.example", "2026-09-01T10:00:00.000Z"), srv("b.example", "2026-09-10T10:00:00.000Z"), srv("gone.example", "2026-09-17T10:00:00.000Z", "2026-09-17T11:00:00.000Z")];
@@ -21,6 +21,14 @@ describe("chooseInitialServer", () => {
   it("never picks a server whose account deletion is pending", () => {
     expect(chooseInitialServer({ last: "gone.example", accountServers: account, localHosts: [] })).toBe("b.example");
     expect(chooseInitialServer({ last: null, accountServers: [account[2]!], localHosts: [] })).toBeNull();
+  });
+
+  it("starts on a server the directory refused only when there is no other", () => {
+    const withRefused = [...account, srv("bad.example", "2026-09-20T10:00:00.000Z", null, true)];
+    expect(chooseInitialServer({ last: "bad.example", accountServers: withRefused, localHosts: [] })).toBe("b.example");
+    expect(chooseInitialServer({ last: null, accountServers: withRefused, localHosts: [] })).toBe("b.example");
+    expect(chooseInitialServer({ last: null, accountServers: [withRefused[3]!], localHosts: ["local.example"] })).toBe("local.example");
+    expect(chooseInitialServer({ last: null, accountServers: [withRefused[3]!], localHosts: [] })).toBe("bad.example");
   });
 
   it("uses an added server when the account has none, and nothing when there is nothing", () => {

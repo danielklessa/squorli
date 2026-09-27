@@ -9,6 +9,10 @@ import { connectedHost } from "./serverHost";
  * device key (bound to the directory's host). Reconnect with growing backoff; the store receives
  * every event and the connection state. Like `ServerConnection` it notices a connection that died without a close: nothing
  * arrived between two of its pings = drop the socket and connect again (18 September 2026, docs/features/afk.md).
+ * A refusal that ends the connection for good (`version`, `unauthorized`, `unknown_account`, and `account_suspended`: the
+ * directory's operator suspended the account, docs/features/reports.md) stops the reconnecting, and its message stays in
+ * the status: the close that follows must not wipe it (until 27 September 2026 it did, and the friends view only ever said
+ * "no connection").
  */
 export type LinkStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -24,6 +28,8 @@ export class DirectoryLink {
   private game: GamePresence | null = null;
   private pingSentAt = 0;
   private lastHeard = 0;
+  /** The directory refused this connection for good: the status keeps saying why after the socket closed. */
+  private refused = false;
 
   constructor(private readonly url: string, private readonly identity: Identity,
     private readonly onEvent: (e: DirectoryServerEvent) => void, private readonly onStatus: (s: LinkStatus, error?: string) => void, private readonly reportsActivity = false) {}
@@ -43,6 +49,7 @@ export class DirectoryLink {
 
   connect() {
     this.want = true;
+    this.refused = false;
     this.onStatus("connecting");
     this.dropSocket(); // never two sockets of one client: an earlier one left open would keep the account present
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -74,9 +81,12 @@ export class DirectoryLink {
         this.ping = window.setInterval(() => this.heartbeat(), 25_000);
         if ((this.idle || this.game) && this.reportsActivity) this.send({ type: "activity", idle: this.idle, game: this.game });
       }
-      if (e.type === "error" && (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account")) {
-        // No reconnect: the client does not match the service, or the key has no account there.
+      if (e.type === "error" && (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account" || e.code === "account_suspended")) {
+        // No reconnect: the client does not match the service, the key has no account there, or the account is suspended.
+        // A suspended account gets two events (the second one for clients from before the first): the first one counts.
+        if (this.refused) return;
         this.want = false;
+        this.refused = true;
         this.onStatus("error", e.message);
       }
       this.onEvent(e);
@@ -84,7 +94,7 @@ export class DirectoryLink {
     ws.onclose = () => {
       if (this.ws === ws) this.ws = null;
       if (this.ping) { clearInterval(this.ping); this.ping = null; }
-      if (!this.want) { this.onStatus("idle"); return; }
+      if (!this.want) { if (!this.refused) this.onStatus("idle"); return; }
       this.onStatus("connecting");
       this.timer = window.setTimeout(() => this.connect(), this.delay);
       this.delay = Math.min(30_000, this.delay * 2);

@@ -8,11 +8,12 @@ import {
   LocalBackupBlob, LocalBackupParamsResponse, LocalHandle, LocalHandleResponse, localRegisterMessage,
   DmBlobPutResponse, LinkLookupResponse, directoryDmBlobUrl, directoryLinkLookupPayload, OverwritesResponse, type PermissionOverwrite, type ChannelNotification, type ChannelBlock, type ChannelBlockMinutes,
   localClaimMessage,
+  NoticeReadResponse, RefusedServersResponse, directoryRefusedServersUrl, directoryReportPayload, reportKindsOf, suspendedUntilOf, type AccountNotice, type DirectoryReportContent,
 } from "@squorli/protocol";
 import { z } from "zod";
 import { toBase64, type AvatarImage } from "./avatarImage";
 import { type Identity, identityFromPrivateKey, sign } from "./identity";
-import { t } from "./i18n";
+import { fmtDateTime, t } from "./i18n";
 import { connectedHost } from "./serverHost";
 
 /** How long /api/health and /api/me may take before a server counts as not answering (docs/features/offline.md). */
@@ -188,7 +189,7 @@ export class ServerApi {
   rtcToken(channelId: string) { return this.request<RtcTokenResponse>("POST", "/api/rtc-token", { channelId }).then((r) => RtcTokenResponse.parse(r)); }
 
   // ---------- Admin
-  updateSettings(patch: { name?: string; openJoin?: boolean; localAccounts?: boolean; listed?: boolean; description?: string | null; radioAutoStop?: boolean; afkChannelId?: string | null; statusApi?: StatusApiMode; statusApiRoleId?: string | null }) { return this.request("PATCH", "/api/settings", patch); }
+  updateSettings(patch: { name?: string; openJoin?: boolean; localAccounts?: boolean; listed?: boolean; description?: string | null; radioAutoStop?: boolean; afkChannelId?: string | null; statusApi?: StatusApiMode; statusApiRoleId?: string | null; refuseSuspended?: boolean }) { return this.request("PATCH", "/api/settings", patch); }
   /** Status API (docs/features/status-api.md): the key for mode "key" (MANAGE_SERVER), and a fresh one that replaces it. */
   getStatusApiKey() { return this.request<StatusApiKeyResponse>("GET", "/api/settings/status-api-key").then((r) => StatusApiKeyResponse.parse(r)); }
   regenerateStatusApiKey() { return this.request<StatusApiKeyResponse>("POST", "/api/settings/status-api-key").then((r) => StatusApiKeyResponse.parse(r)); }
@@ -260,6 +261,16 @@ export class ServerApi {
   revokeInvite(code: string) { return this.request("DELETE", `/api/invites/${encodeURIComponent(code)}`); }
 }
 
+/**
+ * The end of the suspension out of a refusal `account_suspended` (a chat server refusing a directory account the directory's
+ * operator suspended, docs/features/reports.md); null for any other error.
+ */
+export function suspendedUntilOfError(err: unknown): string | null {
+  return err instanceof ApiError && err.code === "account_suspended" ? suspendedUntilOf(err.body.until) ?? "" : null;
+}
+/** The sentence for a suspended account on a chat server; without a date (a server that names none) the sentence without one. */
+export const suspendedText = (until: string | null): string => (until ? t("err.accountSuspended", { until: fmtDateTime(until) }) : t("err.accountSuspendedNoDate"));
+
 /** Turns sign-in errors into a sentence that says what to do. */
 export async function explainLoginError(err: unknown, api: ServerApi, here: string): Promise<string> {
   if (err instanceof TypeError) return api.base ? t("err.serverUnreachableCors", { base: api.base }) : t("err.serverUnreachable");
@@ -276,6 +287,7 @@ export async function explainLoginError(err: unknown, api: ServerApi, here: stri
     case "invite_invalid": return t("err.inviteInvalid");
     case "account_required": return t("err.accountRequired");
     case "registration_required": return t("err.registrationRequired");
+    case "account_suspended": return suspendedText(suspendedUntilOfError(err) || null);
     case "banned": return `${t("err.banned")}${typeof err.body.reason === "string" && err.body.reason ? `: ${err.body.reason}` : "."}`;
     default: return err.message;
   }
@@ -401,13 +413,35 @@ export async function directoryLinkLookup(dirUrl: string, id: Identity, request:
   return LinkLookupResponse.parse(await directoryFetch(dirUrl, "POST", "/api/link-lookup", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, ...request }));
 }
 /** Store a picture the client has encrypted (dm.ts `sealDmBlob`) in the directory's blob store; the signature covers the hash of the bytes. */
-/** Report a direct message to the directory's operator (docs/features/reports.md): the plain text travels with the report, signed as a whole. */
-export async function directoryReportDm(dirUrl: string, id: Identity, content: DmReportContent): Promise<DmReportResponse> {
+/**
+ * Report something to the directory's operator (docs/features/reports.md): a direct message (its plain text travels with the
+ * report), a directory account, or a chat server (with a message of it as evidence when the report is passed on). Signed as
+ * a whole, per kind in its own fixed order. A directory that does not take the kind is told in words.
+ */
+export async function directoryReport(dirUrl: string, id: Identity, content: DirectoryReportContent): Promise<DmReportResponse> {
   const health = await signingHealth(dirUrl);
-  if (!health.features.reports) throw new Error(t("dir.reports_unsupported"));
+  if (!reportKindsOf(health.features).includes(content.kind)) throw new Error(t("dir.reports_unsupported"));
   const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "report", ch.nonce, directoryDmReportPayload(content)));
+  const signature = await sign(id, directoryActionMessage(health.host, "report", ch.nonce, directoryReportPayload(content)));
   return DmReportResponse.parse(await directoryFetch(dirUrl, "POST", "/api/reports", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, ...content }));
+}
+export const directoryReportDm = (dirUrl: string, id: Identity, content: DmReportContent): Promise<DmReportResponse> => directoryReport(dirUrl, id, content);
+/** A notice about a measure was read (signed `notice-read`, the notice's id is the payload); the answer is the list afterwards. */
+export async function directoryReadNotice(dirUrl: string, id: Identity, noticeId: string): Promise<AccountNotice[]> {
+  const health = await signingHealth(dirUrl);
+  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
+  const signature = await sign(id, directoryActionMessage(health.host, "notice-read", ch.nonce, noticeId));
+  return NoticeReadResponse.parse(await directoryFetch(dirUrl, "POST", "/api/notices/read", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, id: noticeId })).notices;
+}
+/**
+ * The chat servers the directory's operator refused, as hashes of their hosts (refusedServers.ts checks a host against them).
+ * `fresh` = past the browser's cache (the directory serves the list cacheable for an hour): asked when the account's own
+ * status contradicts the list at hand.
+ */
+export async function directoryRefusedServers(dirUrl: string, fresh = false): Promise<string[]> {
+  const res = await fetch(directoryRefusedServersUrl(dirUrl), fresh ? { cache: "reload" } : {});
+  if (!res.ok) throw new ApiError("GET", "/api/servers/refused", res.status, null, {});
+  return RefusedServersResponse.parse(await res.json()).hashes;
 }
 export async function directoryPutDmBlob(dirUrl: string, id: Identity, ciphertext: Uint8Array): Promise<string> {
   const health = await signingHealth(dirUrl);
@@ -488,7 +522,10 @@ export function explainDirectoryError(err: unknown): string {
       case "signature_invalid": case "challenge_invalid": case "totp_required": case "totp_invalid": case "totp_reused": case "server_unknown": case "totp_unavailable":
       case "founder": case "server_refused": case "email_unavailable": case "no_email": case "mail_failed": case "totp_disabled":
       case "email_required": case "email_code_invalid": case "email_taken": case "avatar_too_large": case "avatar_invalid":
+      case "own_account": case "own_message": case "already_reported": case "notice_unknown":
         return t(`dir.${err.code}`);
+      // The directory's operator suspended the account: the action works again when the suspension ends.
+      case "account_suspended": return typeof err.body.until === "string" && suspendedUntilOf(err.body.until) ? t("dir.account_suspended", { until: fmtDateTime(err.body.until) }) : t("dir.account_suspendedNoDate");
       case "key_registered": return t("dir.key_registered", { handle: String(err.body.handle ?? "?") });
       case "bad_request": return t("dir.bad_request", { detail: String(err.body.detail ?? t("dir.handleRules")) });
       default: return err.message;

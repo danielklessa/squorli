@@ -59,6 +59,21 @@ export const VerifyResponse = z.object({
 });
 /** Error codes from /api/auth/verify that the client handles specially. */
 export const VerifyErrorCode = z.enum(["challenge_invalid", "signature_invalid", "invite_required", "invite_invalid", "banned"]);
+/**
+ * A directory account the directory's operator suspended, on a server that refuses such accounts
+ * (`ServerSettings.refuseSuspended`): the sign-in and every request with a session answer 403 `account_suspended` with
+ * `until` (the end of the suspension). On the WebSocket the server sends `error` with the code `unauthorized` and
+ * `suspendedCloseReason(until)` as its message, then closes with this code: a client from before it stops on
+ * `unauthorized` and shows its login, a client that knows it reads the date (`suspendedUntilOf`) and says why.
+ */
+export const WS_CLOSE_ACCOUNT_SUSPENDED = 4014;
+const SUSPENDED_REASON = "account_suspended ";
+export const suspendedCloseReason = (until: string): string => `${SUSPENDED_REASON}${until}`;
+/** The end of the suspension out of a close reason (or an error body's `until`); null when it names none. */
+export function suspendedUntilOf(reason: unknown): string | null {
+  const text = typeof reason !== "string" ? "" : reason.startsWith(SUSPENDED_REASON) ? reason.slice(SUSPENDED_REASON.length) : reason;
+  return Iso.safeParse(text).success ? text : null;
+}
 
 /** What the client signs. The domain binding prevents reuse on other servers. */
 /** The same text as `chatLoginMessage` of directory.ts (the directory checks it as the proof of a sign-in). */
@@ -165,8 +180,15 @@ export const ServerSettings = z.object({
   statusApiRoleId: Uuid.nullable().optional(),
   /** The setup check exists (GET /api/doctor, POST /api/doctor/rtc-token; docs/features/doctor.md). Optional = feature flag. */
   doctor: z.boolean().optional(),
+  /**
+   * Suspended directory accounts (docs/features/reports.md, 27 September 2026): an account the directory's operator
+   * suspended cannot sign in here until the suspension ends, and its sessions end when the server learns of it (default
+   * on; the operator of a server can switch it off). Server accounts (`~name`) are never concerned. Optional = feature
+   * flag: a server from before it does not send the field, and one without a directory has nothing to refuse.
+   */
+  refuseSuspended: z.boolean().optional(),
 });
-export const UpdateSettingsRequest = ServerSettings.pick({ name: true, openJoin: true, localAccounts: true, listed: true, description: true, radioAutoStop: true, afkChannelId: true, statusApi: true, statusApiRoleId: true }).partial();
+export const UpdateSettingsRequest = ServerSettings.pick({ name: true, openJoin: true, localAccounts: true, listed: true, description: true, radioAutoStop: true, afkChannelId: true, statusApi: true, statusApiRoleId: true, refuseSuspended: true }).partial();
 /** The key of the status API in mode "key" (MANAGE_SERVER only); null = none yet (made when the mode is switched to "key"). */
 export const StatusApiKeyResponse = z.object({ key: z.string().nullable() });
 // ---- Setup self-diagnosis (docs/features/doctor.md, 25 September 2026): GET /api/doctor (MANAGE_SERVER, or from the

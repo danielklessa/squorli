@@ -3,6 +3,7 @@ import {
   ClientEvent, CreateMessageRequest, MarkReadRequest, MuteRequest, ReadStateResponse, DEFAULT_EVERYONE_PERMISSIONS, DEFAULT_MEMBER_PERMISSIONS, PERMISSION_GROUPS, Permission, RtcTokenRequest, ServerEvent,
   CHANNEL_OVERRIDABLE, CHANNEL_PERMISSION_GROUPS, channelOverridableFor,
   ServerSettings, ServerStatus, StatusApiMode, UpdateMeRequest, VerifyRequest, challengeMessage, displayNameOf, hasPermission, mentionedUserIds, permissionNames,
+  UpdateSettingsRequest, WS_CLOSE_ACCOUNT_SUSPENDED, suspendedCloseReason, suspendedUntilOf,
 } from "./index";
 
 const U1 = "6f1c2a4e-1b2c-4d3e-8f90-123456789abc";
@@ -138,5 +139,24 @@ describe("permissions", () => {
     expect(DEFAULT_EVERYONE_PERMISSIONS).toBe(1152);
     expect(DEFAULT_MEMBER_PERMISSIONS).toBe(7616 | 16384);
     expect(permissionNames(Permission.KICK_MEMBERS | Permission.BAN_MEMBERS)).toEqual(["KICK_MEMBERS", "BAN_MEMBERS"]);
+  });
+});
+
+describe("suspended directory accounts on a chat server", () => {
+  it("carries the end of the suspension in the close reason and reads it back", () => {
+    const until = "2026-10-04T10:00:00.000Z";
+    expect(WS_CLOSE_ACCOUNT_SUSPENDED).toBe(4014);
+    expect(suspendedUntilOf(suspendedCloseReason(until))).toBe(until);
+    expect(suspendedUntilOf(until)).toBe(until);
+    expect(suspendedUntilOf("account_suspended")).toBeNull();
+    expect(suspendedUntilOf("session_revoked")).toBeNull();
+    expect(suspendedUntilOf(undefined)).toBeNull();
+    expect(new TextEncoder().encode(suspendedCloseReason(until)).length).toBeLessThanOrEqual(123);
+  });
+  it("reads the switch as absent from a server that predates it and takes it in a settings change", () => {
+    const settings = { name: "S", openJoin: true, ownerId: null, iconUrl: null, requireAccount: true, requireAccountLocked: true, listed: false, description: null };
+    expect(ServerSettings.parse(settings).refuseSuspended).toBeUndefined();
+    expect(ServerSettings.parse({ ...settings, refuseSuspended: false }).refuseSuspended).toBe(false);
+    expect(UpdateSettingsRequest.parse({ refuseSuspended: true })).toEqual({ refuseSuspended: true });
   });
 });

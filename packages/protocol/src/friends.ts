@@ -127,12 +127,22 @@ export const DmDeletedEvent = z.object({ type: z.literal("dm.deleted"), peer: Pu
 export const DmClearedEvent = z.object({ type: z.literal("dm.cleared"), peer: PublicKey });
 /** A confirmed friend has come online, gone, or turned absent/active (`afk`, only ever true while online). */
 export const FriendPresenceEvent = z.object({ type: z.literal("friends.presence"), publicKey: PublicKey, online: z.boolean(), afk: z.boolean().default(false), game: GamePresence.nullable().default(null) });
-export const DirectoryErrorCode = z.enum(["version", "unauthorized", "bad_message", "unknown_account", "self", "not_friends", "blocked", "declined_recently", "rate_limited", "too_large", "duplicate", "not_found"]);
+/**
+ * `account_suspended` (27 September 2026): the directory's operator suspended the account, it gets no socket until `until`.
+ * The directory sends it right before an `unauthorized`: a client from before it drops the code it does not know and stops
+ * on the second one, a client that knows it stops on the first and shows the suspension.
+ */
+export const DirectoryErrorCode = z.enum(["version", "unauthorized", "bad_message", "unknown_account", "self", "not_friends", "blocked", "declined_recently", "rate_limited", "too_large", "duplicate", "not_found", "account_suspended"]);
 export type DirectoryErrorCode = z.infer<typeof DirectoryErrorCode>;
-/** `ref` = id of the message (dm.send) or key (friends.*) the error refers to. */
-export const DirectoryErrorEvent = z.object({ type: z.literal("error"), code: DirectoryErrorCode, message: z.string(), ref: z.string().nullable().default(null) });
+/** `ref` = id of the message (dm.send) or key (friends.*) the error refers to; `until` = the end of a suspension (`account_suspended`). */
+export const DirectoryErrorEvent = z.object({ type: z.literal("error"), code: DirectoryErrorCode, message: z.string(), ref: z.string().nullable().default(null), until: Iso.nullable().optional() });
+/**
+ * The account's notices changed (a measure of the operator's, directory.ts "Notices"): the client reads its status again.
+ * Nothing in it: what changed is read with the account's signature. A client from before it drops the event.
+ */
+export const NoticesChangedEvent = z.object({ type: z.literal("notices.changed") });
 export const DirectoryServerEvent = z.discriminatedUnion("type", [
-  DirectoryChallengeEvent, DirectoryWelcomeEvent, DirectoryPongEvent, FriendUpdateEvent, FriendPresenceEvent, DmMessageEvent, DmHistoryEvent, DmReadEvent, DmDeletedEvent, DmClearedEvent, DirectoryErrorEvent,
+  DirectoryChallengeEvent, DirectoryWelcomeEvent, DirectoryPongEvent, FriendUpdateEvent, FriendPresenceEvent, DmMessageEvent, DmHistoryEvent, DmReadEvent, DmDeletedEvent, DmClearedEvent, DirectoryErrorEvent, NoticesChangedEvent,
 ]);
 export type DirectoryServerEvent = z.infer<typeof DirectoryServerEvent>;
 

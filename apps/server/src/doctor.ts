@@ -114,6 +114,17 @@ function wsOpens(url: string, timeoutMs: number): Promise<{ ok: true; ms: number
 
 const describe = (p: ProbeResult) => p.error ?? (p.status !== null ? `HTTP ${p.status}` : "?");
 
+/** Why the directory's operator refused a server: the reasons of the reports' list (protocol `REPORT_REASONS`), in words. */
+const BLOCKED_REASONS: Record<string, { de: string; en: string }> = {
+  spam: { de: "Spam oder Werbung", en: "spam or advertising" },
+  harassment: { de: "Belästigung oder Mobbing", en: "harassment or bullying" },
+  hate: { de: "Hass oder Hetze", en: "hate speech" },
+  sexual: { de: "sexuelle Inhalte", en: "sexual content" },
+  violence: { de: "Gewalt oder Drohungen", en: "violence or threats" },
+  illegal: { de: "illegale Inhalte", en: "illegal content" },
+  other: { de: "ein Verstoß gegen die Regeln", en: "a violation of the rules" },
+};
+
 export class Doctor {
   private running: Promise<Omit<DoctorReport, "checks"> & { checks: DoctorCheck[] }> | null = null;
 
@@ -282,6 +293,13 @@ export class Doctor {
       return { registered: false, check: fail("directory", T(
         `Das Verzeichnis konnte diesen Server nicht unter ${proofUrl} erreichen oder fand dort einen anderen Schlüssel (${p.detail ?? "kein Detail"}). Der Server muss von außen unter https://${this.config.PUBLIC_DOMAIN} antworten (siehe die Prüfungen oben); DIRECTORY_PROOF_URL nur setzen, wenn die Adresse wirklich eine andere ist.`,
         `The directory could not reach this server at ${proofUrl} or found another key there (${p.detail ?? "no detail"}). The server has to answer from outside at https://${this.config.PUBLIC_DOMAIN} (see the checks above); set DIRECTORY_PROOF_URL only when the address really differs.`), detail) };
+    }
+    if (p.error === "server_blocked") {
+      // Refused by the directory's operator (docs/features/reports.md): nothing about this server's address is wrong.
+      const why = BLOCKED_REASONS[p.detail ?? ""] ?? BLOCKED_REASONS.other!;
+      return { registered: false, check: fail("directory", T(
+        `Der Betreiber des Verzeichnisses ${url} hat diesen Server abgelehnt (Grund: ${why.de}). An der Adresse dieses Servers liegt es nicht. Solange das gilt, übernimmt der Server keine Handles, Anzeigenamen und Profilbilder, er steht nicht im Serververzeichnis, und die Squorli-Clients öffnen ihn nicht. Wende dich an den Betreiber des Verzeichnisses; die Adresse steht in dessen Impressum (${url}/impressum).`,
+        `The operator of the directory ${url} refused this server (reason: ${why.en}). Nothing about this server's address is wrong. While that holds, the server takes over no handles, display names and profile pictures, it is not in the server directory, and the Squorli clients do not open it. Get in touch with the directory's operator; the address is in its legal notice (${url}/imprint).`), detail) };
     }
     if (p.status === 429) {
       return { registered: false, check: warn("directory", T(

@@ -267,6 +267,20 @@ button.rail-item { padding: 0; border: 0; cursor: pointer; font: inherit; positi
 .report-excerpt { margin: 0; padding: 0.4rem 0.8rem; border-left: 3px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
 .report-dialog.modal { width: min(34rem, 100%); }
 .report-dialog .dialog-body { padding: 0.9rem; overflow-y: auto; }
+/* Who gets a message's report: the server's moderators or the directory's operator (docs/features/reports.md). */
+.report-receiver { border: 1px solid var(--line); border-radius: var(--r); padding: 0.6rem 0.8rem; margin: 0; }
+.report-receiver legend { padding: 0 0.3rem; font-weight: 600; font-size: 0.875rem; }
+/* Notices about measures of the directory's operator, and the suspended state in the friends view. */
+.notice-dialog.modal { width: min(34rem, 100%); }
+.notice-dialog .dialog-body { padding: 0.9rem; overflow-y: auto; }
+.notice-text { margin: 0; overflow-wrap: anywhere; }
+.notice-text.suspended { border-left: 3px solid var(--danger); padding-left: 0.8rem; }
+.account-suspended { margin: 0.4rem 0.7rem; padding: 0.7rem 0.8rem; border: 1px solid var(--danger); border-radius: var(--r); background: var(--bg); }
+.account-suspended strong { display: flex; align-items: center; gap: 0.4rem; color: var(--danger); }
+.account-suspended p { margin: 0; overflow-wrap: anywhere; }
+.account-suspended button { align-self: flex-start; }
+/* A chat server the directory's operator refused: its own page instead of the chat. */
+.server-refused h2 { display: flex; align-items: center; gap: 0.5rem; color: var(--danger); }
 .mod-log-line { margin-top: 0; gap: 0.6rem; }
 /* Setup check (docs/features/doctor.md): one line per check, the mark in the state's colour */
 .doctor-sub { margin: calc(var(--u) * 2) 0 0; font-size: 0.95rem; }

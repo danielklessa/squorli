@@ -14,8 +14,18 @@ export const SETTINGS_ID = "server";
  * switch or the admin area decides (index.ts sets both at startup).
  */
 let localAccountsForced: boolean | null = null;
+/** The server names a directory (DIRECTORY_URL): only then is there anybody whose suspension it could learn of. */
+let directoryConfigured = false;
 export function setLocalAccountsConfig(opts: { directory: boolean; forced: boolean | null }): void {
   localAccountsForced = opts.directory ? opts.forced : true;
+  directoryConfigured = opts.directory;
+}
+
+/** Whether this server refuses directory accounts the directory's operator suspended (users/suspension.ts). */
+export async function refusesSuspended(db: Db): Promise<boolean> {
+  if (!directoryConfigured) return false;
+  const [row] = await db.select({ refuse: serverSettings.refuseSuspended }).from(serverSettings).where(eq(serverSettings.id, SETTINGS_ID)).limit(1);
+  return row?.refuse ?? true;
 }
 
 export async function loadSettings(db: Db): Promise<ServerSettings> {
@@ -31,6 +41,8 @@ export async function loadSettings(db: Db): Promise<ServerSettings> {
     iconUrl: row.iconMime && row.iconUpdatedAt ? `/api/server-icon?v=${row.iconUpdatedAt.getTime()}` : null,
     statusApi: row.statusApi, statusApiRoleId: row.statusApiRoleId,
     doctor: true, // the setup check exists (docs/features/doctor.md)
+    // Suspended directory accounts (users/suspension.ts): without a directory there is nothing to refuse and no switch.
+    ...(directoryConfigured ? { refuseSuspended: row.refuseSuspended } : {}),
   };
 }
 

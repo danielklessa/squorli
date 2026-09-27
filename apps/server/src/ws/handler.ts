@@ -1,8 +1,8 @@
-import { ClientEvent, PROTOCOL_VERSION, Permission, displayNameOf, type GamePresence, type ServerEvent } from "@squorli/protocol";
+import { ClientEvent, PROTOCOL_VERSION, Permission, WS_CLOSE_ACCOUNT_SUSPENDED, displayNameOf, suspendedCloseReason, type GamePresence, type ServerEvent } from "@squorli/protocol";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import { CLOSE_REGISTRATION_REQUIRED, hasAccount, resolveSession } from "../auth/session";
+import { CLOSE_REGISTRATION_REQUIRED, hasAccount, resolveSession, suspensionOf } from "../auth/session";
 import { can } from "../authz";
 import type { Db } from "../db";
 import { channels, users } from "../db/schema";
@@ -109,6 +109,13 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
         if (!hasAccount(session)) {
           send({ type: "error", code: "unauthorized", message: "registration required" });
           return socket.close(CLOSE_REGISTRATION_REQUIRED, "registration_required");
+        }
+        // A directory account the directory's operator suspended (users/suspension.ts): `unauthorized` for the clients from
+        // before it, the date in the message and the close code for the ones that know it.
+        const suspended = await suspensionOf(db, session);
+        if (suspended) {
+          send({ type: "error", code: "unauthorized", message: suspendedCloseReason(suspended.toISOString()) });
+          return socket.close(WS_CLOSE_ACCOUNT_SUSPENDED, "account_suspended");
         }
         userId = session.userId;
         clearTimeout(helloTimeout);

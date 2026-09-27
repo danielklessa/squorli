@@ -14,7 +14,7 @@ import { useMentionSuggest } from "./MentionSuggest";
 import { decodeMentions, encodeMentions, mentionsUser } from "./mentions";
 import { pastedFiles } from "./pasteFiles";
 import { safeHref } from "./safeHref";
-import { ReportDialog, type ReportTarget } from "./ReportDialog";
+import { ReportDialog, reportEvidence, type DirectorySide, type ReportTarget } from "./ReportDialog";
 import type { ChannelMessages } from "./store";
 import type { ServerConnection } from "./serverConnection";
 import { fmtDay, fmtTime, t } from "./i18n";
@@ -32,6 +32,11 @@ type Props = {
   serverName?: string;
   /** Blocked people (stage 3 of the reports): their messages fold, and the report dialog offers to block; null = not signed in here. */
   blocked?: BlockControls | null;
+  /**
+   * A message's report may go to the directory's operator instead of the server's moderators (docs/features/reports.md):
+   * the directory, and this server's host there. null = not offered (no directory account, or the directory takes none).
+   */
+  passOn?: (Omit<DirectorySide, "passOn"> & { serverHost: string }) | null;
 };
 
 const GROUP_MS = 5 * 60_000;
@@ -55,8 +60,10 @@ function PendingFile({ file, onRemove }: { file: File; onRemove: () => void }) {
   );
 }
 
-export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null }: Props) {
+export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null, passOn = null }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  /** The reported message as it shows here, in case the report is passed on to the directory's operator. */
+  const [reportedMessage, setReportedMessage] = useState<{ text: string; authorName: string; authorKey: string | null; channelName: string; sentAt: string } | null>(null);
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
@@ -237,7 +244,11 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
                 {(mine || canManage || canReport || fromBlocked) && editing?.id !== m.id && (
                   <div className="msg-actions">
                     {fromBlocked && <button className="icon" title={t("block.hide")} onClick={() => setRevealed((prev) => { const next = new Set(prev); next.delete(m.id); return next; })}><Icon name="eye-off" /></button>}
-                    {!mine && canReport && <button className="icon" title={t("report.reportMessage")} onClick={() => setReportTarget({ kind: "message", messageId: m.id, authorId: m.authorId, authorName: nameOf.get(m.authorId) ?? "?", excerpt: m.content ? decodeMentions(m.content, members).text.slice(0, 200) : t("chat.attachments", { n: m.attachments.length }) })}><Icon name="flag" /></button>}
+                    {!mine && canReport && <button className="icon" title={t("report.reportMessage")} onClick={() => {
+                      const text = m.content ? decodeMentions(m.content, members).text : t("chat.attachments", { n: m.attachments.length });
+                      setReportedMessage({ text, authorName: nameOf.get(m.authorId) ?? "?", authorKey: members.find((x) => x.userId === m.authorId)?.publicKey ?? null, channelName: channel.name, sentAt: m.createdAt });
+                      setReportTarget({ kind: "message", messageId: m.id, authorId: m.authorId, authorName: nameOf.get(m.authorId) ?? "?", excerpt: text.slice(0, 200) });
+                    }}><Icon name="flag" /></button>}
                     {mine && m.content && <button className="icon" title={t("chat.edit")} onClick={() => startEdit(m)}><Icon name="pencil" /></button>}
                     {(mine || canManage) && <button className="icon" title={t("common.delete")} onClick={() => { void askConfirm({ title: t("chat.deleteTitle"), text: m.content ? ((c) => c.slice(0, 160) + (c.length > 160 ? "…" : ""))(decodeMentions(m.content, members).text) : t("chat.attachments", { n: m.attachments.length }), confirmLabel: t("common.delete"), danger: true }).then((ok) => { if (ok) return conn.api.deleteMessage(m.id); }).catch((e) => setErr(String(e))); }}><Icon name="trash-2" /></button>}
                   </div>
@@ -248,8 +259,9 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
         })}
       </div>
       </MentionContext.Provider>
-      {reportTarget && <ReportDialog api={conn.api} target={reportTarget} serverName={serverName} onClose={() => setReportTarget(null)}
-        block={(() => { const a = blocked && reportTarget.kind === "message" ? members.find((x) => x.userId === reportTarget.authorId) : null; return a && blocked && !blocked.has(a.publicKey) ? { name: a.displayName, onBlock: () => blocked.onBlock(a.publicKey, a.displayName, !!a.handle) } : null; })()} />}
+      {reportTarget && <ReportDialog target={reportTarget} onClose={() => setReportTarget(null)}
+        directory={passOn && reportedMessage ? { store: passOn.store, host: passOn.host, passOn: { serverHost: passOn.serverHost, evidence: reportEvidence(reportedMessage) } } : null}
+        server={{ api: conn.api, name: serverName, block: (() => { const a = blocked && reportTarget.kind === "message" ? members.find((x) => x.userId === reportTarget.authorId) : null; return a && blocked && !blocked.has(a.publicKey) ? { name: a.displayName, onBlock: () => blocked.onBlock(a.publicKey, a.displayName, !!a.handle) } : null; })() }} />}
 
       <footer className="composer">
         {mention.popup}

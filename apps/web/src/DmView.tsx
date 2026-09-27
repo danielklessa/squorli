@@ -131,7 +131,7 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
         })}
       </div>
 
-      {reportTarget && reportHost && <ReportDialog target={reportTarget} store={store} directoryHost={reportHost} onClose={() => setReportTarget(null)} />}
+      {reportTarget && reportHost && <ReportDialog target={reportTarget} directory={{ store, host: reportHost }} onClose={() => setReportTarget(null)} />}
       <footer className="composer">
         {err && <p className="error">{err}</p>}
         <div className="typing" />

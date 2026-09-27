@@ -7,7 +7,8 @@ import type { Db } from "../db";
 import { directoryStale, type DirectoryClient } from "../directory";
 import { members, sessions, users } from "../db/schema";
 import type { Hub } from "../hub";
-import { broadcastStructure } from "../state";
+import { broadcastStructure, refusesSuspended } from "../state";
+import { refusedUntil, suspendedBody } from "./suspension";
 import type { VoicePresence } from "../voice/presence";
 
 /** Profile of the signed-in user (M2: display name) and their sessions (M6c: device management). Works without a membership too. */
@@ -21,6 +22,9 @@ export async function registerUserRoutes(app: FastifyInstance, db: Db, directory
       // A session without a membership (kicked): the lookup must not count as a sign-in on this server at the directory.
       const [member] = await db.select({ userId: members.userId }).from(members).where(eq(members.userId, s.userId)).limit(1);
       const fresh = await directory.refresh({ id: s.userId, publicKey: s.publicKey, displayName: s.displayName }, !!member);
+      // The lookup just told of a suspension: the same answer as for every request from now on.
+      const until = fresh ? refusedUntil({ handle: fresh.handle, localHandle: s.localHandle, suspendedUntil: fresh.suspendedUntil }, await refusesSuspended(db)) : null;
+      if (until) return reply.code(403).send(suspendedBody(until));
       if (fresh && (fresh.displayName !== s.displayName || fresh.handle !== s.handle || fresh.avatarUrl !== s.avatarUrl)) {
         ({ displayName, handle, avatarUrl } = fresh);
         presence.rename(s.userId, { displayName, publicKey: s.publicKey, handle, localHandle: s.localHandle });

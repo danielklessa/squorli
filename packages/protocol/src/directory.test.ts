@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DM_REPORT_CONTEXT_MAX, DirectoryGame, DmReportRequest, LibraryGameId, directoryDmReportPayload, directoryGameIconUrl, directoryGameUrl, splitGameId } from "./directory";
+import { AccountStatus, DirectoryAction, DirectoryReportRequest, NoticeReadRequest, RefusedServersResponse, SERVER_REPORT_EVIDENCE_TEXT_MAX, directoryReportPayload, refusedHostHash, reportKindsOf } from "./directory";
+import { DirectoryServerEvent } from "./friends";
 import {
   ACCOUNT_SETTINGS_MAX_LENGTH, AVATAR_MAX_BYTES, AccountSettings, AccountSettingsUpdateRequest, AvatarUpdateRequest, DirectoryAccount, DirectoryHealth, avatarDigest, directoryAvatarPayload, directoryAvatarUrl, sniffAvatarMime, DirectoryRegisterRequest, Handle, directoryRegisterMessage, parseAccountSettings,
   BLOCKED_USERS_MAX, HIDDEN_GAMES_MAX, HIDDEN_GAME_ID_MAX, SERVER_HOST_MAX, SERVER_ORDER_MAX, SEALED_SETTINGS_MAX_LENGTH, SealedSettings, SoundSettings, deriveSettingsKey, openSettings, parseSealedSettings, sealSettings,
@@ -120,6 +122,15 @@ describe("sealed settings", () => {
     const none = await sealSettings(key, publicKey, { settings: content.settings });
     expect((await openSettings(key, publicKey, none))?.blockedUsers).toBeUndefined();
   });
+  it("cleans the list of hidden servers and says nothing when the blob has none", async () => {
+    const key = await deriveSettingsKey(seed, publicKey);
+    const odd = await sealSettings(key, publicKey, { settings: content.settings, hiddenServers: ["Bad.example ", "", "bad.example", "x".repeat(SERVER_HOST_MAX + 1), "worse.example:8443"] });
+    expect((await openSettings(key, publicKey, odd))?.hiddenServers).toEqual(["bad.example", "worse.example:8443"]);
+    const empty = await sealSettings(key, publicKey, { settings: content.settings, hiddenServers: [] });
+    expect((await openSettings(key, publicKey, empty))?.hiddenServers).toEqual([]);
+    const none = await sealSettings(key, publicKey, { settings: content.settings });
+    expect((await openSettings(key, publicKey, none))?.hiddenServers).toBeUndefined();
+  });
   it("carries the switch for direct message previews only as a boolean", async () => {
     const key = await deriveSettingsKey(seed, publicKey);
     const on = await sealSettings(key, publicKey, { settings: content.settings, dmLinkPreviews: true });
@@ -211,5 +222,108 @@ describe("direct message reports", () => {
     expect(DmReportRequest.safeParse({ ...ok, context: [...ok.context, msg(50, key("c"))] }).success).toBe(false);
     expect(DmReportRequest.safeParse({ ...ok, reason: "rude" }).success).toBe(false);
     expect(DmReportRequest.safeParse({ ...ok, message: { ...ok.message, text: 5 } }).success).toBe(false);
+  });
+});
+
+describe("reports of accounts and chat servers", () => {
+  const key = (c: string) => c.repeat(64);
+  const base = { publicKey: key("a"), challengeId: "6f1c2a4e-1b2c-4d3e-8f90-123456789abc", signature: "b".repeat(128) };
+  const evidence = { text: "Das hier", authorName: "Mallory", authorKey: key("c"), channelName: "allgemein", sentAt: "2026-09-27T10:00:00.000Z" };
+  it("takes the three kinds through one schema and keeps a direct message's payload as it was", () => {
+    const dm = { kind: "dm" as const, reason: "spam" as const, peer: key("c"), message: { id: "6f1c2a4e-1b2c-4d3e-8f90-000000000001", from: key("c"), sentAt: "2026-09-26T10:00:00.000Z", text: "x" }, context: [] };
+    const parsed = DirectoryReportRequest.parse({ ...base, ...dm });
+    expect(parsed.kind).toBe("dm");
+    expect(directoryReportPayload(dm)).toBe(directoryDmReportPayload(dm));
+    expect(DirectoryReportRequest.parse({ ...base, kind: "account", reason: "hate", account: key("c") }).kind).toBe("account");
+    expect(DirectoryReportRequest.safeParse({ ...base, kind: "member", reason: "hate", account: key("c") }).success).toBe(false);
+  });
+  it("signs an account's report over the reported key, reason and text", () => {
+    const sent = { kind: "account" as const, reason: "sexual" as const, account: key("c") };
+    expect(directoryReportPayload(sent)).toBe(`{"kind":"account","reason":"sexual","text":"","account":"${key("c")}"}`);
+    expect(directoryReportPayload({ ...sent, account: key("d") })).not.toBe(directoryReportPayload(sent));
+    expect(directoryReportPayload({ ...sent, text: "Bild" })).not.toBe(directoryReportPayload(sent));
+  });
+  it("signs a server's report with its evidence in one order, whatever order the client's object had", () => {
+    const parsed = DirectoryReportRequest.parse({ ...base, kind: "server", reason: "illegal", host: " Chat.Example.org:8443 ", evidence: { sentAt: evidence.sentAt, channelName: evidence.channelName, extra: 1, authorKey: evidence.authorKey, authorName: evidence.authorName, text: evidence.text } });
+    if (parsed.kind !== "server") throw new Error("kind");
+    expect(parsed.host).toBe("chat.example.org:8443");
+    expect(directoryReportPayload(parsed)).toBe(directoryReportPayload({ kind: "server", reason: "illegal", host: "chat.example.org:8443", evidence }));
+    expect(directoryReportPayload({ kind: "server", reason: "illegal", host: "chat.example.org:8443", evidence: { ...evidence, text: "anders" } })).not.toBe(directoryReportPayload(parsed));
+    const bare = DirectoryReportRequest.parse({ ...base, kind: "server", reason: "illegal", host: "chat.example.org" });
+    if (bare.kind !== "server") throw new Error("kind");
+    expect(bare.evidence).toBeNull();
+    expect(directoryReportPayload(bare)).toContain('"evidence":null');
+  });
+  it("refuses a host that is none and evidence longer than a message", () => {
+    expect(DirectoryReportRequest.safeParse({ ...base, kind: "server", reason: "spam", host: "https://chat.example.org/" }).success).toBe(false);
+    expect(DirectoryReportRequest.safeParse({ ...base, kind: "server", reason: "spam", host: "chat.example.org", evidence: { ...evidence, text: "x".repeat(SERVER_REPORT_EVIDENCE_TEXT_MAX + 1) } }).success).toBe(false);
+    expect(DirectoryReportRequest.safeParse({ ...base, kind: "server", reason: "spam", host: "chat.example.org", evidence: { ...evidence, authorKey: null } }).success).toBe(true);
+  });
+  it("reads the kinds from a directory's health: direct messages only from one that names none", () => {
+    expect(reportKindsOf({ reports: false, reportKinds: ["dm", "account"] })).toEqual([]);
+    expect(reportKindsOf({ reports: true, reportKinds: [] })).toEqual(["dm"]);
+    expect(reportKindsOf({ reports: true, reportKinds: ["server", "later-kind", "dm"] })).toEqual(["dm", "server"]);
+    const h = DirectoryHealth.parse({ ok: true, service: "directory", host: "id.example.org", features: { backup: true, totp: true, email: true, reports: true }, time: new Date().toISOString() });
+    expect(h.features.reportKinds).toEqual([]);
+    expect(h.features.refusedServers).toBe(false);
+    expect(h.features.notices).toBe(false);
+  });
+});
+
+describe("refused chat servers", () => {
+  it("hashes a host the same whatever its case, and another host differently", async () => {
+    const a = await refusedHostHash("Chat.Example.org");
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(await refusedHostHash(" chat.example.org ")).toBe(a);
+    expect(await refusedHostHash("chat.example.org:8443")).not.toBe(a);
+    expect(RefusedServersResponse.safeParse({ hashes: [a] }).success).toBe(true);
+    expect(RefusedServersResponse.safeParse({ hashes: ["chat.example.org"] }).success).toBe(false);
+  });
+});
+
+describe("refused chat servers on an account's list", () => {
+  const status = { handle: "daniel", publicKey: "a".repeat(64), createdAt: "2026-09-01T10:00:00.000Z", totpEnabled: false, totpPending: false, recoveryCodesLeft: 0, fetches: [] };
+  const server = { host: "chat.example.org", name: "Beispiel", displayName: null, lastSeenAt: "2026-09-20T10:00:00.000Z" };
+  it("reads a status from a directory that predates the list as nothing refused", () => {
+    const s = AccountStatus.parse({ ...status, servers: [server] });
+    expect(s.refusedServers).toEqual([]);
+    expect(s.servers[0]?.refused).toBe(false);
+  });
+  it("keeps the refused servers apart from the ones a client connects to", () => {
+    const s = AccountStatus.parse({ ...status, servers: [server], refusedServers: [{ ...server, host: "bad.example.org", refused: true }] });
+    expect(s.servers.map((x) => x.host)).toEqual(["chat.example.org"]);
+    expect(s.refusedServers.map((x) => [x.host, x.refused])).toEqual([["bad.example.org", true]]);
+  });
+});
+
+describe("suspension and notices", () => {
+  const key = "a".repeat(64);
+  const account = { handle: "daniel", publicKey: key, createdAt: "2026-09-01T10:00:00.000Z" };
+  const status = { ...account, totpEnabled: false, totpPending: false, recoveryCodesLeft: 0, fetches: [], servers: [] };
+  const notice = { id: "6f1c2a4e-1b2c-4d3e-8f90-123456789abc", kind: "suspend", reason: "harassment", until: "2026-10-04T10:00:00.000Z", createdAt: "2026-09-27T10:00:00.000Z", readAt: null };
+  it("reads an account from a directory that predates the suspension as not suspended", () => {
+    expect(DirectoryAccount.parse(account).suspendedUntil).toBeNull();
+    expect(DirectoryAccount.parse({ ...account, suspendedUntil: notice.until }).suspendedUntil).toBe(notice.until);
+    const s = AccountStatus.parse(status);
+    expect(s.notices).toEqual([]);
+    expect(s.suspendedUntil).toBeNull();
+    expect(s.suspendedReason).toBeNull();
+  });
+  it("keeps the notices it can read and drops one of a kind or reason it does not know", () => {
+    const s = AccountStatus.parse({ ...status, suspendedUntil: notice.until, suspendedReason: "harassment", notices: [notice, { ...notice, kind: "later-kind" }, { ...notice, reason: "later-reason" }, "rubbish"] });
+    expect(s.notices).toEqual([notice]);
+    expect(s.suspendedReason).toBe("harassment");
+    expect(AccountStatus.parse({ ...status, suspendedReason: "later-reason" }).suspendedReason).toBeNull();
+  });
+  it("knows the action that marks a notice as read", () => {
+    expect(DirectoryAction.safeParse("notice-read").success).toBe(true);
+    expect(NoticeReadRequest.safeParse({ publicKey: key, challengeId: notice.id, signature: "b".repeat(128), id: notice.id }).success).toBe(true);
+    expect(NoticeReadRequest.safeParse({ publicKey: key, challengeId: notice.id, signature: "b".repeat(128), id: "1" }).success).toBe(false);
+  });
+  it("tells a suspended account's socket why, with the date, and says when the notices changed", () => {
+    const e = DirectoryServerEvent.parse({ type: "error", code: "account_suspended", message: "gesperrt", until: notice.until });
+    expect(e.type === "error" && e.until).toBe(notice.until);
+    expect(DirectoryServerEvent.parse({ type: "error", code: "unauthorized", message: "x" }).type).toBe("error");
+    expect(DirectoryServerEvent.parse({ type: "notices.changed" }).type).toBe("notices.changed");
   });
 });

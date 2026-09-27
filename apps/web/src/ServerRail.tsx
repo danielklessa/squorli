@@ -12,7 +12,9 @@ export type RailServer = { key: string; host: string; name: string; sub: string 
 /** `reports`: open reports on that server for me as a moderator (0 for everybody else; docs/features/reports.md). */
 export type RailState = Record<string, { unread: boolean; mentions: number; voice: boolean; people: number; connection: string; muted: boolean; canMute: boolean; reports: number;
   /** The server does not answer right now (docs/features/offline.md): a red mark on the entry, the tooltip says so. */
-  unreachable: boolean }>;
+  unreachable: boolean;
+  /** The directory's operator refused the server (docs/features/reports.md): the same red mark, the tooltip says that instead. */
+  refused?: boolean }>;
 
 type Menu = { key: string; host: string; name: string; index: number; x: number; y: number };
 
@@ -30,14 +32,15 @@ const DRAG_SCROLL_STEP_PX = 10;
  * the page; a running voice connection survives (green dot on the server it runs on). Icons come
  * exclusively from the directory (GET /api/servers/<host>/icon), never from the foreign server; without an icon, initials.
  * Right-click on a server opens a small menu: open, move up or down, mute (no unread mark for it), and delete your account on
- * that server (through the directory).
+ * that server (through the directory). A server the directory's operator refused stays in the rail with a red mark
+ * (docs/features/reports.md); its menu offers "Aus der Liste entfernen" instead of the report and the account deletion.
  * The order is the user's (22 September 2026): drag an entry with the mouse or pen to another place (a line shows where it
  * lands), or use the menu's "Nach oben"/"Nach unten" or Alt+arrow keys on a focused entry; `onReorder` gets the hosts in the
  * new order (serverOrder.ts, kept in the settings and the directory account). A touch cannot drag here (it scrolls the rail),
  * so the menu is the way on a phone.
  * At the bottom: "discover servers" opens the public server directory.
  */
-export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscover, onAdd, onLeave, onMute, onReorder, home, serverAccounts, onSignOutAccount }: {
+export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscover, onAdd, onLeave, onMute, onReorder, home, serverAccounts, onSignOutAccount, onReport = null, onRemoveRefused }: {
   servers: RailServer[]; serverState: RailState; activeKey: string | null; onSelect: (key: string, host: string) => void;
   /** Open the public server directory; null = the client knows no directory. */
   onDiscover: (() => void) | null;
@@ -55,6 +58,10 @@ export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscov
   serverAccounts: Record<string, string>;
   /** Sign out of the server account of `key` on this device (the key is forgotten, name and password bring it back). */
   onSignOutAccount: (key: string) => void;
+  /** Report the server `host` to the directory's operator (docs/features/reports.md); null = not offered. */
+  onReport?: ((host: string, name: string) => void) | null;
+  /** Remove the entry of a server the directory's operator refused (its menu offers that instead of reporting it or deleting the account there). */
+  onRemoveRefused: (key: string) => void;
 }) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -156,7 +163,7 @@ export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscov
       {servers.map((s, index) => {
         const st = serverState[s.key];
         return <RailEntry key={s.key} host={s.host} name={s.name} sub={s.sub} iconUrl={s.iconUrl} current={s.key === activeKey}
-          voice={st?.voice ?? false} people={st?.people ?? 0} unread={st?.unread ?? false} mentions={st?.mentions ?? 0} muted={st?.muted ?? false} reports={st?.reports ?? 0} unreachable={st?.unreachable ?? false}
+          voice={st?.voice ?? false} people={st?.people ?? 0} unread={st?.unread ?? false} mentions={st?.mentions ?? 0} muted={st?.muted ?? false} reports={st?.reports ?? 0} unreachable={st?.unreachable ?? false} refused={st?.refused ?? false}
           onOpen={() => { if (swallowClick.current) return; onSelect(s.key, s.host); }} onMenu={openMenu(s, index)} drop={dropOf(index)}
           attrs={sortable ? { "data-rail-index": index, onPointerDown: onPointerDown(index, s.key), onPointerMove, onPointerUp: (e) => endDrag(e, true), onPointerCancel: (e) => endDrag(e, false), onKeyDown: onKeyDown(index) } : { "data-rail-index": index }} />;
       })}
@@ -179,7 +186,15 @@ export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscov
             </button>
           )}
           {serverAccounts[menu.key] && <button role="menuitem" className="secondary small" onClick={() => { setMenu(null); onSignOutAccount(menu.key); }}><Icon name="log-out" /> {t("rail.signOutAccount")}</button>}
-          <button role="menuitem" className="danger small" onClick={() => { setMenu(null); onLeave(menu.host, menu.name); }}><Icon name="user-x" /> {t("rail.menuLeave")}</button>
+          {serverState[menu.key]?.refused ? (
+            // Refused by the directory's operator: the directory reaches it no more, so no account deletion there and no report.
+            <button role="menuitem" className="secondary small" onClick={() => { setMenu(null); onRemoveRefused(menu.key); }}><Icon name="x" /> {t("refused.remove")}</button>
+          ) : (
+            <>
+              {onReport && <button role="menuitem" className="secondary small" onClick={() => { setMenu(null); onReport(menu.host, menu.name); }}><Icon name="flag" /> {t("report.reportServer")}</button>}
+              <button role="menuitem" className="danger small" onClick={() => { setMenu(null); onLeave(menu.host, menu.name); }}><Icon name="user-x" /> {t("rail.menuLeave")}</button>
+            </>
+          )}
         </div>
       )}
     </nav>
@@ -196,7 +211,7 @@ export function initials(name: string): string {
 export type DropMark = "source" | "before" | "after" | null;
 
 /** Round server entry: icon from the directory or initials. With `onOpen` a button (switch within the client), otherwise a link to the server. */
-export function RailEntry({ host, name, sub, iconUrl, current, voice = false, people = 0, unread = false, mentions = 0, muted = false, reports = 0, unreachable = false, onOpen = null, onMenu, drop = null, attrs }: {
+export function RailEntry({ host, name, sub, iconUrl, current, voice = false, people = 0, unread = false, mentions = 0, muted = false, reports = 0, unreachable = false, refused = false, onOpen = null, onMenu, drop = null, attrs }: {
   host: string; name: string; sub: string | null; iconUrl: string | null; current: boolean; voice?: boolean;
   /** People in the server's voice channels: a speaker at the bottom left (the number only in the tooltip), so the rail shows where something is going on; not where my own voice connection runs. */
   people?: number; unread?: boolean; mentions?: number; muted?: boolean; onOpen?: (() => void) | null;
@@ -204,6 +219,8 @@ export function RailEntry({ host, name, sub, iconUrl, current, voice = false, pe
   reports?: number;
   /** The server does not answer right now (docs/features/offline.md): dimmed, a red mark at the bottom right, the tooltip says so. */
   unreachable?: boolean;
+  /** The directory's operator refused the server (docs/features/reports.md): marked like one that does not answer, the tooltip says why. */
+  refused?: boolean;
   /** Right-click: context menu (rail only). */
   onMenu?: (e: MouseEvent) => void;
   /** Drag and drop mark (rail only). */
@@ -213,7 +230,7 @@ export function RailEntry({ host, name, sub, iconUrl, current, voice = false, pe
 }) {
   // Where my own voice connection runs, the green speaker at the right says enough: no activity mark there (the tooltip keeps the count).
   const activity = people > 0 && !voice;
-  const title = `${name}${sub ? ` · ${sub}` : ""}\n${host}${people > 0 ? `\n${t("rail.inVoice", { n: people })}` : ""}${voice ? `\n${t("rail.voiceConnected")}` : ""}${muted ? `\n${t("rail.muted")}` : ""}${unreachable ? `\n${t("rail.unreachable")}` : ""}`;
+  const title = `${name}${sub ? ` · ${sub}` : ""}\n${host}${people > 0 ? `\n${t("rail.inVoice", { n: people })}` : ""}${voice ? `\n${t("rail.voiceConnected")}` : ""}${muted ? `\n${t("rail.muted")}` : ""}${refused ? `\n${t("rail.refused")}` : unreachable ? `\n${t("rail.unreachable")}` : ""}`;
   const content = (
     <>
       {iconUrl ? <img src={iconUrl} alt="" draggable={false} /> : <span className="rail-initials">{initials(name)}</span>}
@@ -221,11 +238,11 @@ export function RailEntry({ host, name, sub, iconUrl, current, voice = false, pe
       {voice && <span className="rail-voice" aria-label={t("rail.voiceConnected")}><Icon name="volume-2" /></span>}
       {unread && !current && <span className="rail-unread" aria-label={t("rail.unread")} />}
       {mentions > 0 && !current && <span className="rail-badge rail-mentions" aria-label={t("sidebar.mentions", { n: mentions })}>{mentions > 99 ? "99+" : mentions}</span>}
-      {unreachable && <span className="rail-badge rail-off" aria-label={t("rail.unreachable")}>!</span>}
+      {(unreachable || refused) && <span className="rail-badge rail-off" aria-label={t(refused ? "rail.refused" : "rail.unreachable")}>!</span>}
       {reports > 0 && <span className="rail-badge rail-reports" aria-label={t("report.railOpen", { n: reports })} title={t("report.railOpen", { n: reports })}>{reports > 99 ? "99+" : reports}</span>}
     </>
   );
-  const cls = `rail-item ${current ? "current" : ""} ${muted ? "muted" : ""} ${unreachable ? "unreachable" : ""} ${drop ? `drop-${drop}` : ""}`;
+  const cls = `rail-item ${current ? "current" : ""} ${muted ? "muted" : ""} ${unreachable || refused ? "unreachable" : ""} ${drop ? `drop-${drop}` : ""}`;
   return onOpen
     ? <button {...attrs} className={cls} title={title} aria-current={current ? "page" : undefined} onClick={onOpen} onContextMenu={onMenu}>{content}</button>
     : <a className={cls} href={directoryServerUrl(host)} title={title}>{content}</a>;

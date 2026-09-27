@@ -1,4 +1,4 @@
-import { DM_REPORT_CONTEXT_MAX, REPORT_REASONS, REPORT_TEXT_MAX, type ReportReason } from "@squorli/protocol";
+import { DM_REPORT_CONTEXT_MAX, REPORT_REASONS, REPORT_TEXT_MAX, SERVER_REPORT_EVIDENCE_TEXT_MAX, type ReportReason, type ServerReportEvidence } from "@squorli/protocol";
 import { useEffect, useState } from "react";
 import type { ServerApi } from "./api";
 import { ApiError } from "./api";
@@ -11,23 +11,38 @@ import type { Store } from "./store";
 export type ReportTarget = { kind: "message"; messageId: string; authorName: string; excerpt: string; authorId?: string } | { kind: "member"; userId: string; name: string };
 /** A friend's direct message, reported to the directory's operator (`peer` = the friend, the message's author). */
 export type DmReportTarget = { kind: "dm"; peer: string; name: string; messageId: string; excerpt: string };
-/** `block`: after the report the dialog offers to block the person (stage 3); null = not offered (already blocked, or no member to block). */
-type ServerProps = { target: ReportTarget; api: ServerApi; serverName: string; block?: { name: string; onBlock: () => void } | null };
-/** `directoryHost` names who gets it; the store sends the report (`reportDm`) and, afterwards, the dialog offers to block. */
-type DirectoryProps = { target: DmReportTarget; store: Store; directoryHost: string };
+/** A directory account as it shows (name, picture), reported to the directory's operator. */
+export type AccountReportTarget = { kind: "account"; publicKey: string; name: string };
+/** A chat server as a whole, by its host, reported to the directory's operator. */
+export type ServerReportTarget = { kind: "server"; host: string; name: string };
+export type DirectoryReportTarget = AccountReportTarget | ServerReportTarget;
+
+/** The chat server a message or a member is reported on. `block`: the offer to block afterwards (stage 3); null = not offered. */
+type ServerSide = { api: ServerApi; name: string; block?: { name: string; onBlock: () => void } | null };
+/**
+ * The directory: who gets a direct message's, an account's or a chat server's report (`host` names it). `passOn`: a message
+ * of a chat server may go to the directory's operator instead of the server's moderators; it then is a report of that
+ * server with the message as evidence, built by this client from what it shows.
+ */
+export type DirectorySide = { store: Store; host: string; passOn?: { serverHost: string; evidence: ServerReportEvidence } | null };
+
+/** The message a report passes on, as this client shows it (the text cut to what a report carries). */
+export const reportEvidence = (m: { text: string; authorName: string; authorKey: string | null; channelName: string; sentAt: string }): ServerReportEvidence =>
+  ({ text: m.text.slice(0, SERVER_REPORT_EVIDENCE_TEXT_MAX), authorName: m.authorName.slice(0, 80), authorKey: m.authorKey, channelName: m.channelName.slice(0, 80), sentAt: m.sentAt });
 
 /**
- * The report dialog (docs/features/reports.md): reason from the fixed list, a free text, and who gets it: this server's
- * moderators for a message or a member, the directory's operator for a direct message (stage 4; with the checkbox that
- * sends the preceding messages along, on by default). An own modal like every dialog of the client, no browser dialog.
+ * The report dialog (docs/features/reports.md): reason from the fixed list, a free text, and who gets it. A message or a
+ * member of a chat server goes to that server's moderators; a direct message, a directory account and a chat server go to
+ * the directory's operator. For a message of a chat server the reporter chooses (the user's decision of 27 September
+ * 2026): the moderators, or the directory's operator when they do nothing or are the problem. An own modal like every
+ * dialog of the client, no browser dialog.
  */
-export function ReportDialog(props: (ServerProps | DirectoryProps) & { onClose: () => void }) {
-  const { target, onClose } = props;
-  const server = "api" in props ? props : null;
-  const directory = "store" in props ? props : null;
+export function ReportDialog({ target, server = null, directory = null, onClose }: { target: ReportTarget | DmReportTarget | DirectoryReportTarget; server?: ServerSide | null; directory?: DirectorySide | null; onClose: () => void }) {
   const [reason, setReason] = useState<ReportReason>("spam");
   const [text, setText] = useState("");
   const [withContext, setWithContext] = useState(true);
+  const passOn = target.kind === "message" && server ? directory?.passOn ?? null : null;
+  const [receiver, setReceiver] = useState<"server" | "directory">("server");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -36,19 +51,38 @@ export function ReportDialog(props: (ServerProps | DirectoryProps) & { onClose: 
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
+  /** Where this report goes: a chat server's moderators, or the directory's operator. */
+  const toDirectory = target.kind === "dm" || target.kind === "account" || target.kind === "server" || (passOn !== null && receiver === "directory");
   const submit = async () => {
     setBusy(true); setErr(null);
     try {
       const free = text.trim() || undefined;
-      if (directory) await directory.store.reportDm(directory.target.peer, directory.target.messageId, withContext, reason, free);
-      else if (server) await server.api.createReport(server.target.kind === "message" ? { kind: "message", messageId: server.target.messageId, reason, text: free } : { kind: "member", userId: server.target.userId, reason, text: free });
+      if (target.kind === "dm") await directory?.store.reportDm(target.peer, target.messageId, withContext, reason, free);
+      else if (target.kind === "account") await directory?.store.reportAccount(target.publicKey, reason, free);
+      else if (target.kind === "server") await directory?.store.reportServer(target.host, reason, free, null);
+      else if (target.kind === "message" && passOn && receiver === "directory") await directory?.store.reportServer(passOn.serverHost, reason, free, passOn.evidence);
+      else if (server) await server.api.createReport(target.kind === "message" ? { kind: "message", messageId: target.messageId, reason, text: free } : { kind: "member", userId: target.userId, reason, text: free });
       setDone(true);
     } catch (e) {
-      setErr(e instanceof ApiError && e.code === "already_reported" ? t("report.alreadyReported") : e instanceof ApiError && e.code === "rate_limited" ? t("report.rateLimited") : e instanceof Error ? e.message : String(e));
+      const code = e instanceof ApiError ? e.code : null;
+      setErr(code === "already_reported" ? t(target.kind === "account" ? "report.alreadyReportedAccount" : target.kind === "server" || (toDirectory && target.kind === "message") ? "report.alreadyReportedServer" : "report.alreadyReported")
+        : code === "rate_limited" ? t("report.rateLimited") : code === "own_account" ? t("dir.own_account") : code === "account_suspended" ? t("report.suspended")
+          : e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
   };
-  const title = target.kind === "message" ? t("report.titleMessage", { name: target.authorName }) : target.kind === "dm" ? t("report.titleDm", { name: target.name }) : t("report.titleMember", { name: target.name });
-  const excerpt = target.kind === "member" ? "" : target.excerpt;
+  const dirHost = directory?.host ?? "";
+  const title = target.kind === "message" ? t("report.titleMessage", { name: target.authorName }) : target.kind === "dm" ? t("report.titleDm", { name: target.name })
+    : target.kind === "account" ? t("report.titleAccount", { name: target.name }) : target.kind === "server" ? t("report.titleServer", { name: target.name }) : t("report.titleMember", { name: target.name });
+  const excerpt = target.kind === "message" || target.kind === "dm" ? target.excerpt : "";
+  const goesTo = target.kind === "dm" ? t("report.goesToDirectory", { host: dirHost, name: target.name })
+    : target.kind === "account" ? t("report.goesToDirectoryAccount", { host: dirHost, name: target.name })
+      : target.kind === "server" ? t("report.goesToDirectoryServer", { host: dirHost, server: target.host })
+        : toDirectory ? t("report.goesToDirectoryPassOn", { host: dirHost, server: passOn?.serverHost ?? "" })
+          : t("report.goesTo", { server: server?.name ?? "" });
+  const sent = target.kind === "dm" ? t("report.sentDirectory", { name: target.name })
+    : target.kind === "account" ? t("report.sentDirectoryAccount")
+      : toDirectory ? t("report.sentDirectoryServer")
+        : t("report.sent", { server: server?.name ?? "" });
   return (
     <div className="modal-backdrop dialog-backdrop" onMouseDown={onClose}>
       <div className="modal dialog report-dialog" role="dialog" aria-modal="true" aria-labelledby="report-title" onMouseDown={(e) => e.stopPropagation()}>
@@ -60,9 +94,9 @@ export function ReportDialog(props: (ServerProps | DirectoryProps) & { onClose: 
         <div className="dialog-body stack">
           {done ? (
             <>
-              <p>{directory ? t("report.sentDirectory", { name: directory.target.name }) : t("report.sent", { server: server?.serverName ?? "" })}</p>
+              <p>{sent}</p>
               <div className="dialog-actions">
-                {directory && <button className="secondary" onClick={() => { onClose(); askBlockFriend(directory.store, directory.target.peer, directory.target.name); }}><Icon name="ban" /> {t("friends.block")}</button>}
+                {target.kind === "dm" && directory && <button className="secondary" onClick={() => { onClose(); askBlockFriend(directory.store, target.peer, target.name); }}><Icon name="ban" /> {t("friends.block")}</button>}
                 {server?.block && <button className="secondary" onClick={() => { onClose(); server.block?.onBlock(); }}><Icon name="ban" /> {t("block.block")}</button>}
                 <button onClick={onClose}>{t("common.close")}</button>
               </div>
@@ -70,7 +104,15 @@ export function ReportDialog(props: (ServerProps | DirectoryProps) & { onClose: 
           ) : (
             <>
               {excerpt && <blockquote className="report-excerpt muted">{excerpt}</blockquote>}
-              <p className="muted small">{directory ? t("report.goesToDirectory", { host: directory.directoryHost, name: directory.target.name }) : t("report.goesTo", { server: server?.serverName ?? "" })}</p>
+              {passOn && (
+                <fieldset className="stack report-receiver">
+                  <legend>{t("report.receiver")}</legend>
+                  <label className="check"><input type="radio" name="report-receiver" checked={receiver === "server"} onChange={() => setReceiver("server")} /> {t("report.receiverServer", { server: server?.name ?? "" })}</label>
+                  <label className="check"><input type="radio" name="report-receiver" checked={receiver === "directory"} onChange={() => setReceiver("directory")} /> {t("report.receiverDirectory", { host: dirHost })}</label>
+                  <span className="muted small">{t("report.receiverHint")}</span>
+                </fieldset>
+              )}
+              <p className="muted small">{goesTo}</p>
               <div className="stack report-reasons" role="radiogroup" aria-label={t("report.reason")}>
                 {REPORT_REASONS.map((r) => (
                   <label key={r} className="check"><input type="radio" name="report-reason" checked={reason === r} onChange={() => setReason(r)} /> {t(`report.reason.${r}`)}</label>
@@ -79,7 +121,7 @@ export function ReportDialog(props: (ServerProps | DirectoryProps) & { onClose: 
               <label className="stack">{t("report.text")}
                 <textarea value={text} maxLength={REPORT_TEXT_MAX} rows={3} placeholder={t("report.textPlaceholder")} onChange={(e) => setText(e.target.value)} />
               </label>
-              {directory && <label className="check"><input type="checkbox" checked={withContext} onChange={(e) => setWithContext(e.target.checked)} /> {t("report.dmContext", { n: DM_REPORT_CONTEXT_MAX })}</label>}
+              {target.kind === "dm" && <label className="check"><input type="checkbox" checked={withContext} onChange={(e) => setWithContext(e.target.checked)} /> {t("report.dmContext", { n: DM_REPORT_CONTEXT_MAX })}</label>}
               {err && <p className="error">{err}</p>}
               <div className="dialog-actions">
                 <button className="secondary" onClick={onClose}>{t("common.cancel")}</button>

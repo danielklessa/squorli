@@ -17,7 +17,12 @@ export const SYNC_INTERVAL_MS = 5 * 60_000;
 const SYNC_CHUNK = 200;
 const TIMEOUT_MS = 2500;
 
-export type DirectoryProfile = { handle: string | null; displayName: string | null; avatarUrl: string | null };
+/** `suspendedUntil`: as the directory told this server, or as it was cached when the answer came without the server's token. */
+export type DirectoryProfile = { handle: string | null; displayName: string | null; avatarUrl: string | null; suspendedUntil: Date | null };
+/** After the directory refused this server (`server_blocked`), a lookup starts no new registration for this long. */
+const BLOCKED_RETRY_MS = 3_600_000;
+const suspensionOf = (acc: { suspendedUntil: string | null }): Date | null => (acc.suspendedUntil ? new Date(acc.suspendedUntil) : null);
+const sameDate = (a: Date | null, b: Date | null): boolean => (a?.getTime() ?? null) === (b?.getTime() ?? null);
 const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h, "hex"));
 
 /**
@@ -40,6 +45,14 @@ export class DirectoryClient {
   lastRegisterProblem: { kind: "unreachable" | "refused" | "challenge"; status: number | null; error: string | null; detail: string | null } | null = null;
   /** When the last registration succeeded (null = never since the start). */
   registeredAt: Date | null = null;
+  /**
+   * The directory told of a suspension this server did not know of (users/suspension.ts): index.ts ends the user's
+   * connections. Called from every place that stores the date, for a date that lies ahead.
+   */
+  onSuspended: ((userId: string, until: Date) => void) | null = null;
+  private noteSuspension(userId: string, before: Date | null, now: Date | null): void {
+    if (now && now.getTime() > Date.now() && !sameDate(before, now)) this.onSuspended?.(userId, now);
+  }
 
   constructor(private readonly db: Db, private readonly config: Config, private readonly log: FastifyBaseLogger) {}
 
@@ -73,7 +86,8 @@ export class DirectoryClient {
     if (this.token) return true;
     if (Date.now() < this.registerRetryAt) return false;
     const ok = await this.register();
-    if (!ok) this.registerRetryAt = Date.now() + 60_000;
+    // A refusal by the directory's operator (`server_blocked`) has set a longer pause already.
+    if (!ok) this.registerRetryAt = Math.max(this.registerRetryAt, Date.now() + 60_000);
     return ok;
   }
   private async doRegister(): Promise<boolean> {
@@ -100,12 +114,22 @@ export class DirectoryClient {
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
         this.lastRegisterProblem = { kind: "refused", status: res.status, error: err.error ?? null, detail: err.detail ?? null };
+        if (err.error === "server_blocked") {
+          // The directory's operator refused this server (docs/features/reports.md): nothing about the address is wrong,
+          // and asking again changes nothing. Lookups leave the directory alone for an hour.
+          this.token = null;
+          this.registerRetryAt = Date.now() + BLOCKED_RETRY_MS;
+          this.log.warn({ status: res.status, reason: err.detail, directory: url },
+            "Verzeichnis: der Betreiber des Verzeichnisses hat diesen Server abgelehnt. Handles, Anzeigenamen und Profilbilder werden nicht uebernommen, der Server steht nicht im Serververzeichnis, und die Squorli-Clients oeffnen ihn nicht. Kontakt: das Impressum des Verzeichnisses.");
+          return false;
+        }
         this.log.warn({ status: res.status, error: err.error, detail: err.detail, proofUrl: this.config.directoryProofUrl },
           "Verzeichnis: Server-Registrierung abgelehnt; Anzeigenamen werden nicht uebernommen (DIRECTORY_PROOF_URL muss vom Verzeichnis aus erreichbar sein und serverKey liefern)");
         return false;
       }
       const reg = ServerRegisterResponse.parse(await res.json());
       this.token = reg.token;
+      this.registerRetryAt = 0;
       this.lastRegisterProblem = null;
       this.registeredAt = new Date();
       this.log.info({ host: reg.host, expiresAt: reg.expiresAt }, "beim Verzeichnis als Server registriert");
@@ -139,15 +163,20 @@ export class DirectoryClient {
         this.token = null;
         if (await this.register()) res = await this.lookup(url, user.publicKey, member, proof);
       }
+      // Only an answer to our token says anything about a suspension; a public lookup always says "none".
+      let withToken = !!this.token;
       if (res.status === 401 || res.status === 403) {
         // Without a valid token, at least the handle (which is public).
         this.log.warn({ status: res.status }, "Verzeichnis: kein gueltiges Server-Token, nur Handle wird uebernommen");
         this.token = null;
+        withToken = false;
         res = await fetch(`${url}/api/keys/${user.publicKey}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
       }
+      const [cached] = await this.db.select({ suspendedUntil: users.suspendedUntil }).from(users).where(eq(users.id, user.id)).limit(1);
       let handle: string | null = null;
       let displayName = user.displayName;
       let avatarUrl: string | null = null;
+      let suspendedUntil: Date | null = cached?.suspendedUntil ?? null;
       if (res.status === 200) {
         const acc = DirectoryAccount.parse(await res.json());
         // The answer must be about the key asked for (security review, 25 September 2026): never take another account's name.
@@ -155,9 +184,12 @@ export class DirectoryClient {
         handle = acc.handle;
         displayName = acc.serverDisplayName ?? acc.displayName ?? user.displayName;
         avatarUrl = directoryAvatarUrl(url, acc.publicKey, acc.avatarUpdatedAt);
+        if (withToken) suspendedUntil = suspensionOf(acc);
       } else if (res.status !== 404) { this.log.warn({ status: res.status }, "Verzeichnisdienst antwortet unerwartet"); return null; }
-      await this.db.update(users).set({ handle, displayName, avatarUrl, handleCheckedAt: new Date() }).where(eq(users.id, user.id));
-      return { handle, displayName, avatarUrl };
+      else suspendedUntil = null; // no account at the directory: nothing to be suspended
+      await this.db.update(users).set({ handle, displayName, avatarUrl, suspendedUntil, handleCheckedAt: new Date() }).where(eq(users.id, user.id));
+      this.noteSuspension(user.id, cached?.suspendedUntil ?? null, suspendedUntil);
+      return { handle, displayName, avatarUrl, suspendedUntil };
     } catch (err) {
       this.log.warn({ err: err instanceof Error ? err.message : String(err) }, "Verzeichnisdienst nicht erreichbar; Handle und Name bleiben wie zuletzt bekannt");
       return null;
@@ -171,7 +203,7 @@ export class DirectoryClient {
     const url = this.config.DIRECTORY_URL;
     if (!url) return 0;
     if (!(await this.ensureToken())) return 0;
-    const all = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl }).from(users);
+    const all = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil }).from(users);
     let changed = 0;
     try {
       for (let i = 0; i < all.length; i += SYNC_CHUNK) {
@@ -186,6 +218,12 @@ export class DirectoryClient {
           if (!acc) continue; // no account: the local state stays
           const displayName = acc.serverDisplayName ?? acc.displayName ?? u.displayName;
           const avatarUrl = directoryAvatarUrl(url, acc.publicKey, acc.avatarUpdatedAt);
+          // The suspension is nothing the member list shows: stored and acted on, but no change for the broadcast.
+          const suspendedUntil = suspensionOf(acc);
+          if (!sameDate(suspendedUntil, u.suspendedUntil)) {
+            await this.db.update(users).set({ suspendedUntil }).where(eq(users.id, u.id));
+            this.noteSuspension(u.id, u.suspendedUntil, suspendedUntil);
+          }
           if (acc.handle === u.handle && displayName === u.displayName && avatarUrl === u.avatarUrl) continue;
           await this.db.update(users).set({ handle: acc.handle, displayName, avatarUrl, handleCheckedAt: now }).where(eq(users.id, u.id));
           onChanged({ userId: u.id, publicKey: u.publicKey, handle: acc.handle, displayName });
@@ -204,7 +242,7 @@ export class DirectoryClient {
   async syncOne(publicKey: string, onChanged: (u: { userId: string; publicKey: string; handle: string | null; displayName: string | null }) => void): Promise<boolean> {
     const url = this.config.DIRECTORY_URL;
     if (!url) return false;
-    const [u] = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl }).from(users).where(eq(users.publicKey, publicKey)).limit(1);
+    const [u] = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil }).from(users).where(eq(users.publicKey, publicKey)).limit(1);
     if (!u) return false;
     try {
       if (!(await this.ensureToken())) return false;
@@ -216,7 +254,9 @@ export class DirectoryClient {
       if (!acc) return false;
       const displayName = acc.serverDisplayName ?? acc.displayName ?? u.displayName;
       const avatarUrl = directoryAvatarUrl(url, acc.publicKey, acc.avatarUpdatedAt);
-      await this.db.update(users).set({ handle: acc.handle, displayName, avatarUrl, handleCheckedAt: new Date() }).where(eq(users.id, u.id));
+      const suspendedUntil = suspensionOf(acc);
+      await this.db.update(users).set({ handle: acc.handle, displayName, avatarUrl, suspendedUntil, handleCheckedAt: new Date() }).where(eq(users.id, u.id));
+      this.noteSuspension(u.id, u.suspendedUntil, suspendedUntil);
       if (acc.handle === u.handle && displayName === u.displayName && avatarUrl === u.avatarUrl) return false;
       onChanged({ userId: u.id, publicKey, handle: acc.handle, displayName });
       return true;

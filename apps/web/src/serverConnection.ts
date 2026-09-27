@@ -1,5 +1,5 @@
-import { PROTOCOL_VERSION, ServerEvent, VOTEKICK_RESULT_MS, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
-import { ServerApi, explainLoginError, type Health } from "./api";
+import { PROTOCOL_VERSION, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
+import { ServerApi, explainLoginError, suspendedText, suspendedUntilOfError, type Health } from "./api";
 import type { VoteKickState } from "./voteKick";
 import type { Identity } from "./identity";
 import { t } from "./i18n";
@@ -87,6 +87,16 @@ export type ServerConnState = {
   serverVersion: string | null;
   /** Directory service named by this server; null = none. */
   directoryUrl: string | null;
+  /**
+   * The directory's operator refused this chat server (docs/features/reports.md, refusedServers.ts): the client does not
+   * connect to it, however it was opened. The main area says so on a page of its own.
+   */
+  refused: boolean;
+  /**
+   * This server refuses the account because the directory's operator suspended it, until then ("" = the server named no
+   * date); null = not suspended here. The session stays on this device: it works again when the suspension is over.
+   */
+  suspendedUntil: string | null;
 };
 
 export type ConnectionHooks = {
@@ -109,6 +119,8 @@ export type ConnectionHooks = {
   onMention: (message: Message) => void;
   /** Blocked people (docs/features/reports.md, stage 3): by public key; their messages neither mark unread nor count as mentions here. */
   isBlocked: (publicKey: string) => boolean;
+  /** The directory's operator refused this server (refusedServers.ts, asked before every connection); always false for the home server. */
+  isRefused: () => Promise<boolean>;
 };
 
 const LOG_MAX = 80;
@@ -177,6 +189,7 @@ export class ServerConnection {
       host, base, me: null, userId: null, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
       voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
       serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, ownerSetup: false, serverVersion: null, directoryUrl: null,
+      refused: false, suspendedUntil: null,
     };
     // Token rejected by the server (expired, signed out from another device): do not keep running with a dead token.
     // Back in front of this tab: another device may have read channels meanwhile (normally `read.update` says so right away).
@@ -191,8 +204,28 @@ export class ServerConnection {
 
   private set(p: Partial<ServerConnState>) { this.state = { ...this.state, ...p }; this.hooks.onState(this.state); }
 
-  /** Read /api/health: name, icon, domain, directory. null if the server is unreachable. */
+  /**
+   * A chat server the directory's operator refused is not connected to (docs/features/reports.md): asked at every way in
+   * (`refreshHealth`, `resume`, `login`, `adopt`) and, by the store, whenever a new list arrived. true = refused: whatever
+   * ran is closed, the session stays stored (the server may be allowed again), and the state says why.
+   */
+  async checkRefused(): Promise<boolean> {
+    const refused = await this.hooks.isRefused().catch(() => false);
+    if (!refused) {
+      if (this.state.refused) this.set({ refused: false, error: null, connection: this.state.connection === "error" ? "idle" : this.state.connection });
+      return false;
+    }
+    if (this.state.refused && !this.ws) return true;
+    if (this.state.server || this.ws) this.hooks.onRemoved();
+    this.close();
+    this.voiceChannelId = null;
+    this.set({ refused: true, connection: "error", error: t("refused.short"), waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {} });
+    return true;
+  }
+
+  /** Read /api/health: name, icon, domain, directory. null if the server is unreachable (or refused: `state.refused`). */
   async refreshHealth(): Promise<Health | null> {
+    if (await this.checkRefused()) return null;
     const health = await this.api.getHealth().catch(() => null);
     this.set({
       serverName: health?.serverName ?? null, iconUrl: health?.iconUrl ? this.api.abs(health.iconUrl) : null, serverDomain: health?.domain?.toLowerCase() ?? null,
@@ -206,7 +239,8 @@ export class ServerConnection {
    * did not answer (docs/features/offline.md): the session stays, `waiting` says so and the next try is scheduled here,
    * so that a server that is down for a while shows a notice instead of the login and comes back by itself.
    */
-  async resume(token: string): Promise<"ok" | "rejected" | "unreachable"> {
+  async resume(token: string): Promise<"ok" | "rejected" | "unreachable" | "refused" | "suspended"> {
+    if (await this.checkRefused()) return "refused";
     this.api.setToken(token);
     // A retry after "unreachable" keeps that notice (and its buttons) on screen while the attempt runs.
     if (this.state.waiting !== "unreachable") this.set({ connection: "connecting", error: null, waiting: "checking" });
@@ -216,6 +250,9 @@ export class ServerConnection {
       this.enter(me);
       return "ok";
     } catch (err) {
+      // Suspended by the directory's operator: the session is not lost, it only does not work until then.
+      const until = suspendedUntilOfError(err);
+      if (until !== null) { this.retrySettled(); this.suspended(until); return "suspended"; }
       if (sessionRejected(err)) { this.retrySettled(); this.api.setToken(null); this.set({ connection: "idle", waiting: null }); return "rejected"; }
       this.set({ connection: "error", error: t("err.serverUnreachable"), waiting: "unreachable" });
       this.retryLater(() => void this.resume(token));
@@ -274,13 +311,14 @@ export class ServerConnection {
   /** Signed in: connect, unless the member must register first (a member from before server accounts, docs/features/local-accounts.md). */
   private enter(me: Me) {
     // A resumed session keeps `waiting` until the welcome, so the notice stands until the client can be shown (never the login in between).
-    this.set({ me, userId: me.userId, accountNeeded: false, waiting: me.registrationRequired ? null : this.state.waiting });
+    this.set({ me, userId: me.userId, accountNeeded: false, suspendedUntil: null, waiting: me.registrationRequired ? null : this.state.waiting });
     if (me.registrationRequired) { this.set({ connection: "idle", error: null }); return; }
     this.connect();
   }
 
   /** Take a session the store got elsewhere (the registration of a server account answers like a sign-in). */
   async adopt(session: VerifyResponse): Promise<void> {
+    if (await this.checkRefused()) return;
     this.api.setToken(session.sessionToken);
     this.hooks.onToken(session.sessionToken);
     this.enter(await this.api.getMe());
@@ -295,6 +333,7 @@ export class ServerConnection {
   async login(domain: string, invite?: string): Promise<void> {
     const id = this.identity();
     if (!id) return;
+    if (await this.checkRefused()) throw Object.assign(new Error("login failed"), { code: "server_refused_by_directory" });
     this.set({ connection: "logging-in", error: null, removed: null });
     try {
       await this.adopt(await this.api.login(id, domain, invite));
@@ -302,9 +341,21 @@ export class ServerConnection {
       const code = err instanceof Error && "code" in err ? (err as { code: string | null }).code : null;
       // No account for this key: not an error the user did, but the next step (the account forms).
       if (code === "registration_required") this.set({ connection: "idle", error: null, accountNeeded: true, waiting: null });
-      else this.set({ connection: "error", error: await explainLoginError(err, this.api, domain), waiting: null });
+      else this.set({ connection: "error", error: await explainLoginError(err, this.api, domain), waiting: null, suspendedUntil: suspendedUntilOfError(err) });
       throw Object.assign(new Error("login failed"), { code });
     }
+  }
+
+  /**
+   * This server refuses the account because the directory's operator suspended it (docs/features/reports.md): the
+   * connection ends, voice with it, and the state says until when. The session token stays, here and on the device:
+   * after the suspension it works again without a new sign-in.
+   */
+  private suspended(until: string) {
+    this.hooks.onRemoved();
+    this.close();
+    this.voiceChannelId = null;
+    this.set({ suspendedUntil: until, connection: "error", error: suspendedText(until || null), waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {} });
   }
 
   /** Sign out: end the session on the server side too (M6c, best effort) and close the connection. */
@@ -332,7 +383,7 @@ export class ServerConnection {
     this.ackTimers.clear(); this.acked = {}; this.liveLatest = {}; this.serverRead = false;
     if (this.recountTimer !== null) { clearTimeout(this.recountTimer); this.recountTimer = null; }
     this.voiceChannelId = null;
-    this.set({ me: null, userId: null, accountNeeded: false, connection: "idle", waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, removed: null, error });
+    this.set({ me: null, userId: null, accountNeeded: false, suspendedUntil: null, connection: "idle", waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, removed: null, error });
   }
 
   /** Close the connection without forgetting the session (e.g. on an identity switch). */
@@ -350,6 +401,8 @@ export class ServerConnection {
     this.wantConnection = true;
     const token = this.api.getToken();
     if (!token) return;
+    // A server that was refused since the last connection: the store's check closes it; never open a socket to one known as refused.
+    if (this.state.refused) return;
     this.set({ connection: this.state.server ? "reconnecting" : "connecting" });
     const base = this.state.base || window.location.origin;
     // Never two sockets of one client: an earlier one that stayed open would keep its own presence on the server.
@@ -372,6 +425,8 @@ export class ServerConnection {
       if (ev.code === 4012 && this.wantConnection) return this.sessionLost(t("err.accountDeleted"));
       // 4013 = the member has no account yet (docs/features/local-accounts.md): no reconnect, the account forms instead.
       if (ev.code === 4013 && this.wantConnection) { this.close(); void this.refreshMe().catch(() => {}); return; }
+      // 4014 = the account is suspended; the error event before it carried the date, this is for a close that came alone.
+      if (ev.code === WS_CLOSE_ACCOUNT_SUSPENDED && this.wantConnection) return this.suspended(suspendedUntilOf(ev.reason) ?? "");
       if (!this.wantConnection) return;
       this.set({ connection: "reconnecting" });
       this.reconnectTimer = window.setTimeout(() => this.connect(), this.reconnectDelay);
@@ -481,7 +536,7 @@ export class ServerConnection {
         const current = this.state.currentChannelId && e.state.channels.some((c) => c.id === this.state.currentChannelId)
           ? this.state.currentChannelId
           : e.state.channels.find((c) => c.kind === "text")?.id ?? null;
-        this.set({ server: e.state, userId: e.userId, connection: "connected", currentChannelId: current, error: null, waiting: null, radioTitles: {}, voteKick: null, voteKickAllowed: {}, clockOffset: Date.parse(e.serverTime) - Date.now() }); // the server sends the known titles after the welcome
+        this.set({ server: e.state, userId: e.userId, connection: "connected", currentChannelId: current, error: null, waiting: null, suspendedUntil: null, radioTitles: {}, voteKick: null, voteKickAllowed: {}, clockOffset: Date.parse(e.serverTime) - Date.now() }); // the server sends the known titles after the welcome
         this.read = pruneReadState(loadReadState(this.state.host, e.userId), e.state.channels.map((c) => c.id));
         void this.syncReadState();
         if (this.idle || this.game) this.reportIdle();
@@ -626,6 +681,9 @@ export class ServerConnection {
       case "error":
         if (e.code === "unauthorized" && e.message === "registration required") {
           // The close 4013 that follows shows the account forms; the session stays.
+        } else if (e.code === "unauthorized" && suspendedUntilOf(e.message) !== null) {
+          // The directory's operator suspended the account and this server refuses such accounts: not a lost session.
+          this.suspended(suspendedUntilOf(e.message) ?? "");
         } else if (e.code === "unauthorized") {
           // Token invalid or membership lost: do not stay in the chat with a dead socket.
           this.sessionLost(e.message === "not a member" ? t("err.notMember") : t("err.sessionInvalid"));

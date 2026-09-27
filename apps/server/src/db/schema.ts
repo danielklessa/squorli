@@ -20,6 +20,12 @@ export const users = pgTable("users", {
    * together with handle and name; null = none. The image itself never passes through this server: the clients load it from the directory.
    */
   avatarUrl: text("avatar_url"),
+  /**
+   * The directory's operator suspended the account until then (docs/features/reports.md, 27 September 2026), as the directory
+   * told this server with its token; null or a past date = not suspended. Cached like the handle, so it counts while the
+   * directory cannot be reached. What follows from it: users/suspension.ts.
+   */
+  suspendedUntil: ts("suspended_until"),
 });
 
 /**
@@ -83,6 +89,8 @@ export const serverSettings = pgTable("server_settings", {
   statusApiKey: text("status_api_key"),
   /** Whose view GET /api/status answers with; null = the default role ("Gast"). A deleted role falls back to it. */
   statusApiRoleId: uuid("status_api_role_id").references((): AnyPgColumn => roles.id, { onDelete: "set null" }),
+  /** Refuse directory accounts the directory's operator suspended (admin area > server; users/suspension.ts). On by default. */
+  refuseSuspended: boolean("refuse_suspended").notNull().default(true),
 });
 
 /** Membership. Anyone missing here sees nothing and can do nothing. */

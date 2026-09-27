@@ -84,6 +84,13 @@ export const DirectoryAccount = z.object({
   serverDisplayName: DisplayName.nullable().default(null),
   /** Avatar (19 September 2026): when the account last stored an image, null = none. Public like the handle; the image is at `directoryAvatarUrl`. */
   avatarUpdatedAt: Iso.nullable().default(null),
+  /**
+   * The directory's operator suspended the account until then (27 September 2026, docs/PLAN-reports.md 5.1); null = not
+   * suspended, or the asker is not told. Only a registered chat server (its token) and the account itself (`AccountStatus`)
+   * get the date; a public lookup always says null. A chat server refuses a suspended account unless its operator
+   * switched that off (`ServerSettings.refuseSuspended`).
+   */
+  suspendedUntil: Iso.nullable().default(null),
 });
 
 // ---- M6b: password-encrypted key backup (crypto in backup.ts)
@@ -130,7 +137,7 @@ export const BackupBlob = z.object({ handle: Handle, publicKey: PublicKey, ciphe
 
 // ---- M6c: signed account actions (authenticator, recovery codes, account status). Same pattern as registration
 // and backup: challenge + signature over host, nonce and payload (for actions with a code, the code is the payload).
-export const DirectoryAction = z.enum(["totp-setup", "totp-enable", "totp-disable", "recovery-regenerate", "account-status", "profile-update", "friends", "server-leave", "sound-settings", "email-set", "email-verify", "email-code", "settings", "avatar-set", "link-lookup", "dm-blob-put", "settings-sealed", "report"]);
+export const DirectoryAction = z.enum(["totp-setup", "totp-enable", "totp-disable", "recovery-regenerate", "account-status", "profile-update", "friends", "server-leave", "sound-settings", "email-set", "email-verify", "email-code", "settings", "avatar-set", "link-lookup", "dm-blob-put", "settings-sealed", "report", "notice-read"]);
 export type DirectoryAction = z.infer<typeof DirectoryAction>;
 export function directoryActionMessage(directoryHost: string, action: DirectoryAction, nonce: string, payload = ""): string {
   return `community-directory-${action}\n${directoryHost}\n${nonce}\n${payload}`;
@@ -224,6 +231,110 @@ export function directoryDmReportPayload(r: DmReportContent): string {
 }
 export const DmReportResponse = z.object({ ok: z.literal(true), id: Uuid });
 export type DmReportResponse = z.infer<typeof DmReportResponse>;
+
+// ---- Reports of a directory account and of a chat server (27 September 2026, docs/PLAN-reports.md 5.1). The same route and
+// the same signed action as a direct message's report; `kind` tells them apart and `directoryReportPayload` puts each kind's
+// content into one fixed order. `features.reportKinds` names the kinds a directory takes (one that only says `reports: true`
+// takes direct messages: `reportKindsOf`).
+//  - `account`: a directory account as it shows (handle, display name, picture). The directory keeps its own copy of the
+//    name and the picture at that moment; the reporter sends none.
+//  - `server`: a chat server as a whole, by its host. `evidence` is one message of that server as the reporter's client
+//    showed it (a report a member passes on because the server's moderators do nothing or are the problem: the receiver's
+//    choice in the report dialog, the user's decision 8). It is the reporter's word: the directory cannot check it.
+export const DIRECTORY_REPORT_KINDS = ["dm", "account", "server"] as const;
+export type DirectoryReportKind = typeof DIRECTORY_REPORT_KINDS[number];
+/** A chat message's text is at most 4000 characters (index.ts `CreateMessageRequest`). */
+export const SERVER_REPORT_EVIDENCE_TEXT_MAX = 4000;
+export const ServerReportEvidence = z.object({
+  text: z.string().max(SERVER_REPORT_EVIDENCE_TEXT_MAX),
+  /** The author as the client showed them; the key when the client knew it (a member who left has none there). */
+  authorName: z.string().max(80),
+  authorKey: PublicKey.nullable(),
+  channelName: z.string().max(80),
+  sentAt: Iso,
+});
+export type ServerReportEvidence = z.infer<typeof ServerReportEvidence>;
+export const AccountReportContent = z.object({
+  kind: z.literal("account"),
+  reason: ReportReason,
+  text: z.string().max(REPORT_TEXT_MAX).optional(),
+  /** The reported account. */
+  account: PublicKey,
+});
+export type AccountReportContent = z.infer<typeof AccountReportContent>;
+export const ServerReportContent = z.object({
+  kind: z.literal("server"),
+  reason: ReportReason,
+  text: z.string().max(REPORT_TEXT_MAX).optional(),
+  /** The reported chat server: the host its clients connect to (its PUBLIC_DOMAIN, with the port if any). */
+  host: ServerHost,
+  evidence: ServerReportEvidence.nullable().default(null),
+});
+export type ServerReportContent = z.infer<typeof ServerReportContent>;
+export type DirectoryReportContent = DmReportContent | AccountReportContent | ServerReportContent;
+export const AccountReportRequest = SignedActionRequest.extend(AccountReportContent.shape);
+export const ServerReportRequest = SignedActionRequest.extend(ServerReportContent.shape);
+/** What POST /api/reports takes: any of the three kinds. */
+export const DirectoryReportRequest = z.discriminatedUnion("kind", [DmReportRequest, AccountReportRequest, ServerReportRequest]);
+export type DirectoryReportRequest = z.infer<typeof DirectoryReportRequest>;
+/** What the reporter signs, per kind in one fixed order (a direct message's is `directoryDmReportPayload`, unchanged). */
+export function directoryReportPayload(r: DirectoryReportContent): string {
+  if (r.kind === "dm") return directoryDmReportPayload(r);
+  if (r.kind === "account") return JSON.stringify({ kind: r.kind, reason: r.reason, text: r.text ?? "", account: r.account });
+  const e = r.evidence;
+  return JSON.stringify({
+    kind: r.kind, reason: r.reason, text: r.text ?? "", host: r.host,
+    evidence: e ? { text: e.text, authorName: e.authorName, authorKey: e.authorKey, channelName: e.channelName, sentAt: e.sentAt } : null,
+  });
+}
+/** The kinds of report a directory takes, from its health. */
+export function reportKindsOf(features: { reports: boolean; reportKinds: readonly string[] }): DirectoryReportKind[] {
+  if (!features.reports) return [];
+  const known = DIRECTORY_REPORT_KINDS.filter((k) => features.reportKinds.includes(k));
+  return known.length > 0 ? known : ["dm"];
+}
+
+// ---- Refused chat servers (27 September 2026, docs/PLAN-reports.md 5.1, the user's decision 10). The directory's operator
+// can refuse a chat server; the clients then refuse it too, also when it is opened by its address. So that the directory does
+// not learn which servers a client opens, the client fetches the whole list (GET /api/servers/refused, cacheable for an
+// hour) and checks a host locally. The list holds the SHA-256 of each refused host, so it does not read like a list of
+// addresses; host names can be guessed, it is no secret. `features.refusedServers` says that the route exists.
+const REFUSED_HOST_PREFIX = "squorli-refused-host-v1\n";
+export const RefusedServersResponse = z.object({ hashes: z.array(z.string().regex(/^[0-9a-f]{64}$/)).max(100_000) });
+export type RefusedServersResponse = z.infer<typeof RefusedServersResponse>;
+/** The entry of `host` in the list: SHA-256 (hex) over a fixed prefix and the host in lower case, with its port if it has one. */
+export async function refusedHostHash(host: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`${REFUSED_HOST_PREFIX}${host.trim().toLowerCase()}`);
+  const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes as BufferSource));
+  return Array.from(hash, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+export const directoryRefusedServersUrl = (directoryUrl: string): string => `${directoryUrl.replace(/\/+$/, "")}/api/servers/refused`;
+
+// ---- Notices about the operator's measures (27 September 2026, docs/PLAN-reports.md 5.1, the user's decision 11). A measure
+// on an account (a warning, the picture or the name removed, a suspension and its end) leaves a notice the account reads in
+// its status (`AccountStatus.notices`). The wording is the client's: fixed texts in both languages, the reason from the
+// reports' list, never who reported and no text of the operator's. Signed action `notice-read` (POST /api/notices/read,
+// payload = the notice's id) marks one as read; `features.notices` says that the route exists. A connected client hears
+// `notices.changed` on the directory socket (friends.ts) and reads its status again.
+export const NOTICE_KINDS = ["warn", "avatar-remove", "name-clear", "suspend", "unsuspend"] as const;
+export const NoticeKind = z.enum(NOTICE_KINDS);
+export type NoticeKind = z.infer<typeof NoticeKind>;
+export const AccountNotice = z.object({
+  id: Uuid,
+  kind: NoticeKind,
+  reason: ReportReason,
+  /** A suspension's end. */
+  until: Iso.nullable(),
+  createdAt: Iso,
+  readAt: Iso.nullable(),
+});
+export type AccountNotice = z.infer<typeof AccountNotice>;
+/** A list of notices in which one this version cannot read (a kind or a reason of a later one) is left out alone. */
+export const AccountNotices = z.array(z.unknown()).default([]).transform((list) => list.flatMap((n) => { const r = AccountNotice.safeParse(n); return r.success ? [r.data] : []; }));
+export const NoticeReadRequest = SignedActionRequest.extend({ id: Uuid });
+export type NoticeReadRequest = z.infer<typeof NoticeReadRequest>;
+export const NoticeReadResponse = z.object({ ok: z.literal(true), notices: AccountNotices });
+export type NoticeReadResponse = z.infer<typeof NoticeReadResponse>;
 
 // ---- Avatars (19 September 2026): one image per handle, shown instead of the initials. The clients crop to a square and scale to
 // AVATAR_SIZE before the upload, so the service (which has no image library) only checks type and size. The image is public like the
@@ -373,6 +484,7 @@ export const HIDDEN_GAMES_MAX = 1000;
 export const HIDDEN_GAME_ID_MAX = 64;
 export const SERVER_ORDER_MAX = 100;
 export const BLOCKED_USERS_MAX = 200;
+export const HIDDEN_SERVERS_MAX = 100;
 export const SERVER_HOST_MAX = 253;
 export const SealedSettings = z.object({ v: z.literal(1), iv: z.string().regex(/^[0-9a-f]{24}$/), ciphertext: z.string().min(24).regex(/^[A-Za-z0-9+/]+={0,2}$/) });
 export type SealedSettings = z.infer<typeof SealedSettings>;
@@ -386,6 +498,12 @@ export const SealedSettingsContent = z.object({
   blockedUsers: z.array(PublicKey).max(BLOCKED_USERS_MAX).optional(),
   /** Link previews in direct messages (false = none are made for what this user sends, and none are shown of what they receive). Left out = the account says nothing (the device's choice stays). */
   dmLinkPreviews: z.boolean().optional(),
+  /**
+   * Chat servers of the account's list that the directory's operator refused and the user removed from the rail: directory
+   * hosts. Hidden on every device; the account's entry stays, so a server that is allowed again shows again (the client
+   * drops it from this list then). Left out = the account says nothing (the device's list stays).
+   */
+  hiddenServers: z.array(z.string().min(1).max(SERVER_HOST_MAX)).max(HIDDEN_SERVERS_MAX).optional(),
 });
 export type SealedSettingsContent = z.infer<typeof SealedSettingsContent>;
 export const SealedSettingsUpdateRequest = SignedActionRequest.extend({ sealed: z.string().min(2).max(SEALED_SETTINGS_MAX_LENGTH) });
@@ -422,7 +540,7 @@ export async function sealSettings(key: CryptoKey, publicKeyHex: string, content
 export async function openSettings(key: CryptoKey, publicKeyHex: string, sealed: SealedSettings): Promise<SealedSettingsContent | null> {
   try {
     const pt = await globalThis.crypto.subtle.decrypt({ name: "AES-GCM", iv: hexToBytes(sealed.iv), additionalData: sealedAad(publicKeyHex) }, key, base64ToBytes(sealed.ciphertext));
-    const parsed = JSON.parse(new TextDecoder().decode(pt)) as { settings?: unknown; hiddenGames?: unknown; serverOrder?: unknown; blockedUsers?: unknown; dmLinkPreviews?: unknown };
+    const parsed = JSON.parse(new TextDecoder().decode(pt)) as { settings?: unknown; hiddenGames?: unknown; serverOrder?: unknown; blockedUsers?: unknown; dmLinkPreviews?: unknown; hiddenServers?: unknown };
     const settings = AccountSettings.safeParse(parsed.settings);
     if (!settings.success) return null;
     const hiddenGames = Array.isArray(parsed.hiddenGames)
@@ -431,7 +549,9 @@ export async function openSettings(key: CryptoKey, publicKeyHex: string, sealed:
       ? [...new Set(parsed.serverOrder.filter((h): h is string => typeof h === "string").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0 && h.length <= SERVER_HOST_MAX))].slice(0, SERVER_ORDER_MAX) : undefined;
     const blockedUsers = Array.isArray(parsed.blockedUsers)
       ? [...new Set(parsed.blockedUsers.filter((k): k is string => typeof k === "string").map((k) => k.toLowerCase()).filter((k) => PublicKey.safeParse(k).success))].slice(0, BLOCKED_USERS_MAX) : undefined;
-    return { settings: settings.data, ...(hiddenGames ? { hiddenGames } : {}), ...(serverOrder ? { serverOrder } : {}), ...(blockedUsers ? { blockedUsers } : {}), ...(typeof parsed.dmLinkPreviews === "boolean" ? { dmLinkPreviews: parsed.dmLinkPreviews } : {}) };
+    const hiddenServers = Array.isArray(parsed.hiddenServers)
+      ? [...new Set(parsed.hiddenServers.filter((h): h is string => typeof h === "string").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0 && h.length <= SERVER_HOST_MAX))].slice(0, HIDDEN_SERVERS_MAX) : undefined;
+    return { settings: settings.data, ...(hiddenGames ? { hiddenGames } : {}), ...(serverOrder ? { serverOrder } : {}), ...(blockedUsers ? { blockedUsers } : {}), ...(typeof parsed.dmLinkPreviews === "boolean" ? { dmLinkPreviews: parsed.dmLinkPreviews } : {}), ...(hiddenServers ? { hiddenServers } : {}) };
   } catch { return null; }
 }
 /** A chat server that has looked up the key (a sign-in there), with the display name that applies there (account page). `verified` = registered with the directory. */
@@ -441,6 +561,8 @@ export const AccountServer = z.object({
   iconUpdatedAt: Iso.nullable().default(null),
   /** Account deletion on that server requested (server-leave) but not yet confirmed by the server; null = none pending. */
   leaveRequestedAt: Iso.nullable().default(null),
+  /** The directory's operator refused this chat server: true only in `AccountStatus.refusedServers`, clients do not connect to it. */
+  refused: z.boolean().default(false),
 });
 
 // ---- Delete the account on one chat server (server-leave): the user signs the action with the server's host as the payload
@@ -560,6 +682,12 @@ export const AccountStatus = DirectoryAccount.extend({
   recoveryCodesLeft: z.number().int().min(0),
   fetches: z.array(KeyFetch),
   servers: z.array(AccountServer),
+  /**
+   * The account's chat servers the directory's operator refused (each with `refused: true`), so that a client can say why
+   * a server is gone instead of dropping it without a word. A list of its own and not part of `servers`: a client from
+   * before it shows every entry of `servers` and connects to it. Empty for a directory from before it.
+   */
+  refusedServers: z.array(AccountServer).default([]),
   /** Voice cue settings stored in the account; null = never set (the client keeps its per-device settings). */
   soundSettings: SoundSettings.nullable().default(null),
   /** All client settings stored in the account (action `settings`); null = never set or a directory that predates them. */
@@ -569,6 +697,12 @@ export const AccountStatus = DirectoryAccount.extend({
   /** Confirmed e-mail address (null = none) and an address waiting for its confirmation code (null = none). */
   email: EmailAddress.nullable().default(null),
   emailPending: EmailAddress.nullable().default(null),
+  /**
+   * Notices about the operator's measures, newest first (above, "Notices"); `suspendedUntil` of the account itself is filled
+   * here, with the reason in `suspendedReason`. Defaults for a directory from before them.
+   */
+  notices: AccountNotices,
+  suspendedReason: ReportReason.nullable().default(null).catch(null),
 });
 
 export const DirectoryHealth = z.object({
@@ -576,8 +710,8 @@ export const DirectoryHealth = z.object({
   service: z.literal("directory"),
   /** Host that registration signatures are bound to. */
   host: z.string(),
-  /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). */
-  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false) }),
+  /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). */
+  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), refusedServers: z.boolean().default(false), notices: z.boolean().default(false) }),
   time: Iso,
 });
 

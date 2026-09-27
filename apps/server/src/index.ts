@@ -43,9 +43,10 @@ import { ReportsService } from "./reports";
 import { sweepModLog } from "./modLog";
 import { Doctor } from "./doctor";
 import { deleteUserAccount, type DeleteUserResult } from "./users/deleteUser";
+import { Suspensions } from "./users/suspension";
 import { registerUserRoutes } from "./users/routes";
 import { DirectoryClient, SYNC_INTERVAL_MS } from "./directory";
-import { broadcastStructure, loadChannels, loadSettings, setLocalAccountsConfig, setOpenReportCount } from "./state";
+import { broadcastStructure, loadChannels, loadSettings, refusesSuspended, setLocalAccountsConfig, setOpenReportCount } from "./state";
 import { setPublicOrigin } from "./names";
 import { visibility } from "./visibility";
 import { AfkMover } from "./voice/afk";
@@ -167,6 +168,10 @@ async function main() {
   // Online and AFK status change everyone's member list.
   hub.onPresence(() => { void broadcastStructure(db, hub, ["members"]).catch((err) => app.log.warn({ err }, "presence broadcast")); });
   const lk = new LivekitAdmin(config, app.log);
+  // Suspended directory accounts (users/suspension.ts): whoever is connected when the directory tells of a suspension is
+  // disconnected; the sign-in, the requests and the WebSocket refuse by themselves.
+  const suspensions = new Suspensions(db, hub, presence, lk, () => refusesSuspended(db), app.log);
+  directory.onSuspended = (userId, until) => { void suspensions.enforce(userId, until).catch((err) => app.log.warn({ err }, "Sperre durchsetzen")); };
 
   // AFK channel: absent members of a voice channel are moved there (voice/afk.ts), right when they turn absent (below) and
   // every few seconds, because a video that kept its channel's members from being moved ends without any event here.
@@ -219,7 +224,7 @@ async function main() {
   await app.register(multipart, { limits: { fileSize: Math.round(config.MAX_UPLOAD_MB * 1024 * 1024), files: 1 } });
   await registerAuthRoutes(app, db, config, hub, directory, presence);
   await registerUserRoutes(app, db, directory, hub, presence);
-  await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta });
+  await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta }, suspensions);
   await registerStatusRoutes(app, db, hub, presence, config);
   // Setup self-diagnosis (docs/features/doctor.md): GET /api/doctor with MANAGE_SERVER or from the machine itself (`squorli doctor`).
   await registerDoctorRoutes(app, db, config, new Doctor(config, directory, lk, VERSION, app.log));

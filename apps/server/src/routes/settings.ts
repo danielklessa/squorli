@@ -19,6 +19,7 @@ import { visibility } from "../visibility";
 import { compact } from "../util";
 import type { DirectoryClient } from "../directory";
 import type { VoicePresence } from "../voice/presence";
+import type { Suspensions } from "../users/suspension";
 import { RADIO_OFF } from "./radio";
 
 /** 32 random bytes as base64url (43 characters): fits a query string and a header without escaping. */
@@ -28,7 +29,7 @@ function newStatusApiKey(): string { return randomBytes(32).toString("base64url"
 const ICON_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const ICON_MAX_BYTES = 2 * 1024 * 1024;
 
-export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: Hub, config: Config, directory: DirectoryClient, voice: { presence: VoicePresence; lk: LivekitAdmin; onRadioChange: () => void }) {
+export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: Hub, config: Config, directory: DirectoryClient, voice: { presence: VoicePresence; lk: LivekitAdmin; onRadioChange: () => void }, suspensions: Suspensions) {
   /** Directory (M6d): name, listing, description, open join and icon live at the directory; re-register after a change. */
   // Debounced (1.5 s): several changes in quick succession = one registration (the directory's registration limit is 10/min).
   let reregTimer: NodeJS.Timeout | null = null;
@@ -91,6 +92,11 @@ export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: 
       for (const vm of voice.presence.members(afkChannelId)) await voice.lk.silence(afkChannelId, vm.userId);
     }
     if (afkChanged && before.afkChannelId) await syncVoiceAccessOf(db, hub, voice.presence, voice.lk, { channelIds: [before.afkChannelId] });
+    // Suspended directory accounts (users/suspension.ts): switched on, the ones this server already knows of are disconnected.
+    if (body.data.refuseSuspended !== undefined && body.data.refuseSuspended !== (before.refuseSuspended ?? true)) {
+      req.log.info({ by: m.userId, refuseSuspended: body.data.refuseSuspended }, "Umgang mit gesperrten Verzeichniskonten umgestellt");
+      if (body.data.refuseSuspended) await suspensions.enforceKnown();
+    }
     await broadcastStructure(db, hub, ["settings"]);
     if (body.data.name !== undefined || body.data.listed !== undefined || body.data.description !== undefined || body.data.openJoin !== undefined) reregister();
     return { ok: true };

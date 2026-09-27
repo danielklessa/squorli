@@ -95,6 +95,14 @@ function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; s
         </label>
         <span className="muted small">{t(!directoryUrl ? "admin.localAccountsNoDirectory" : server.settings.localAccountsLocked ? "admin.localAccountsLocked" : "admin.localAccountsHint")}</span>
       </>}
+      {/* Suspended directory accounts (docs/features/reports.md): a server from before it, or one without a directory, does not send the field. */}
+      {server.settings.refuseSuspended !== undefined && <>
+        <label className="check">
+          <input type="checkbox" checked={server.settings.refuseSuspended} onChange={(e) => run(() => api.updateSettings({ refuseSuspended: e.target.checked }))} />
+          {t("admin.refuseSuspended")}
+        </label>
+        <span className="muted small">{t("admin.refuseSuspendedHint")}</span>
+      </>}
       <h3>{t("admin.directoryHeading")}</h3>
       <label className="check">
         <input type="checkbox" checked={server.settings.listed} disabled={!directoryUrl} onChange={(e) => run(() => api.updateSettings({ listed: e.target.checked }))} />

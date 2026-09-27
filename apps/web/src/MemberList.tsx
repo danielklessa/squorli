@@ -25,6 +25,8 @@ type Props = {
   voice: Record<string, VoiceMember[]>; channels: Channel[];
   /** The server takes reports (docs/features/reports.md): "Melden" in the member menu. */
   canReport?: boolean; serverName?: string;
+  /** A member's directory account (name, picture) can be reported to the directory's operator; null = not offered. */
+  onReportAccount?: ((publicKey: string, name: string) => void) | null;
   /** M7: friends via the directory; null = no directory socket (then no entries in the menu). */
   friends: (ProfileFriends & { onMessage: (publicKey: string) => void; onRemove: (publicKey: string, name: string) => void }) | null;
   /** Blocking a member for me (docs/features/reports.md, stage 3): the menu's entry and the mark in the row; null = not signed in here. */
@@ -39,7 +41,7 @@ type Props = {
 };
 
 /** Right column: owners at the very top, then members grouped by highest role, online first. Context actions depending on permissions. */
-export function MemberList({ api, members, roles, myUserId, myPermissions, ownerId, channelPermissions, voice, channels, friends, blocked = null, onClose = null, voteKickAllowed, onVoteKick, voteKickBox, canReport = false, serverName = "" }: Props) {
+export function MemberList({ api, members, roles, myUserId, myPermissions, ownerId, channelPermissions, voice, channels, friends, blocked = null, onClose = null, voteKickAllowed, onVoteKick, voteKickBox, canReport = false, serverName = "", onReportAccount = null }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [open, setOpen] = useState<({ userId: string } & MenuAnchor) | null>(null);
   const openMenu = (event: MouseEvent<HTMLButtonElement>, userId: string) => {
@@ -154,6 +156,8 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
             {blocked && !isMe && (blocked.has(m.publicKey)
               ? <button role="menuitem" className="secondary small" onClick={() => { closeMenu(); blocked.onUnblock(m.publicKey); }}><Icon name="undo-2" /> {t("block.unblock")}</button>
               : <button role="menuitem" className="secondary small danger" onClick={() => { closeMenu(); blocked.onBlock(m.publicKey, m.displayName, !!m.handle); }}><Icon name="ban" /> {t("block.block")}</button>)}
+            {/* The directory account as it shows everywhere (name, picture): to the directory's operator, not to this server's moderators. */}
+            {onReportAccount && !isMe && m.handle && <button role="menuitem" className="secondary small" onClick={() => { closeMenu(); onReportAccount(m.publicKey, `@${m.handle}`); }}><Icon name="flag" /> {t("report.reportAccount")}</button>}
             <VoiceMemberActions api={api} member={m} myUserId={myUserId} permsIn={permsIn} voice={voice} channels={channels}
               voteKickAllowed={voteKickAllowed} onVoteKick={onVoteKick} onClose={closeMenu} onError={setErr} />
             {/* Everything that acts on the whole server, not on a channel (user's wishes, 24 September 2026): roles, owner status,
@@ -193,8 +197,8 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
           </ContextMenu>
         );
       })()}
-      {reportTarget && <ReportDialog api={api} target={reportTarget} serverName={serverName} onClose={() => setReportTarget(null)}
-        block={(() => { const x = blocked && reportTarget.kind === "member" ? members.find((y) => y.userId === reportTarget.userId) : null; return x && blocked && !blocked.has(x.publicKey) ? { name: x.displayName, onBlock: () => blocked.onBlock(x.publicKey, x.displayName, !!x.handle) } : null; })()} />}
+      {reportTarget && <ReportDialog target={reportTarget} onClose={() => setReportTarget(null)}
+        server={{ api, name: serverName, block: (() => { const x = blocked && reportTarget.kind === "member" ? members.find((y) => y.userId === reportTarget.userId) : null; return x && blocked && !blocked.has(x.publicKey) ? { name: x.displayName, onBlock: () => blocked.onBlock(x.publicKey, x.displayName, !!x.handle) } : null; })() }} />}
     </aside>
   );
 }

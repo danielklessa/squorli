@@ -4,9 +4,10 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Actor } from "../authz";
 import type { Db } from "../db";
 import { localAccounts, sessions, users } from "../db/schema";
-import { actorOf } from "../state";
+import { actorOf, refusesSuspended } from "../state";
+import { isSuspendedNow, refusedUntil, suspendedBody } from "../users/suspension";
 
-export type SessionUser = { userId: string; sessionId: string; publicKey: string; displayName: string | null; handle: string | null; handleCheckedAt: Date | null; avatarUrl: string | null; localHandle: string | null; localAvatarAt: Date | null; expiresAt: Date };
+export type SessionUser = { userId: string; sessionId: string; publicKey: string; displayName: string | null; handle: string | null; handleCheckedAt: Date | null; avatarUrl: string | null; localHandle: string | null; localAvatarAt: Date | null; expiresAt: Date; suspendedUntil: Date | null };
 
 /** Write last_used_at at most every 5 minutes (device list, M6c); not on every request. */
 const TOUCH_INTERVAL_MS = 5 * 60_000;
@@ -21,7 +22,7 @@ export const tokenHash = (token: string): string => createHash("sha256").update(
 export async function resolveSession(db: Db, rawToken: string): Promise<SessionUser | null> {
   const token = tokenHash(rawToken);
   const [row] = await db
-    .select({ userId: sessions.userId, sessionId: sessions.id, expiresAt: sessions.expiresAt, lastUsedAt: sessions.lastUsedAt, publicKey: users.publicKey, displayName: users.displayName, handle: users.handle, handleCheckedAt: users.handleCheckedAt, avatarUrl: users.avatarUrl, localHandle: localAccounts.handle, localAvatarAt: localAccounts.avatarUpdatedAt })
+    .select({ userId: sessions.userId, sessionId: sessions.id, expiresAt: sessions.expiresAt, lastUsedAt: sessions.lastUsedAt, publicKey: users.publicKey, displayName: users.displayName, handle: users.handle, handleCheckedAt: users.handleCheckedAt, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil, localHandle: localAccounts.handle, localAvatarAt: localAccounts.avatarUpdatedAt })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
     .leftJoin(localAccounts, eq(localAccounts.userId, sessions.userId))
@@ -31,7 +32,16 @@ export async function resolveSession(db: Db, rawToken: string): Promise<SessionU
   if (!row.lastUsedAt || Date.now() - row.lastUsedAt.getTime() > TOUCH_INTERVAL_MS) {
     void db.update(sessions).set({ lastUsedAt: new Date() }).where(eq(sessions.token, token)).catch(() => { /* display only, no reason to abort */ });
   }
-  return { userId: row.userId, sessionId: row.sessionId, publicKey: row.publicKey, displayName: row.displayName, handle: row.handle, handleCheckedAt: row.handleCheckedAt, avatarUrl: row.avatarUrl, localHandle: row.localHandle, localAvatarAt: row.localAvatarAt, expiresAt: row.expiresAt };
+  return { userId: row.userId, sessionId: row.sessionId, publicKey: row.publicKey, displayName: row.displayName, handle: row.handle, handleCheckedAt: row.handleCheckedAt, avatarUrl: row.avatarUrl, localHandle: row.localHandle, localAvatarAt: row.localAvatarAt, expiresAt: row.expiresAt, suspendedUntil: row.suspendedUntil };
+}
+
+/**
+ * The end of the suspension this session's user is refused for, or null (users/suspension.ts). The switch is only read
+ * for a user whose suspension lies ahead, so an ordinary request costs nothing more.
+ */
+export async function suspensionOf(db: Db, s: SessionUser): Promise<Date | null> {
+  if (!isSuspendedNow(s.suspendedUntil)) return null;
+  return refusedUntil(s, await refusesSuspended(db));
 }
 
 function bearer(req: FastifyRequest): string | null {
@@ -39,12 +49,20 @@ function bearer(req: FastifyRequest): string | null {
   return auth?.startsWith("Bearer ") ? auth.slice(7) : null;
 }
 
-/** Bearer token from the Authorization header; sends a 401 itself if nothing valid is present. */
+/**
+ * Bearer token from the Authorization header; sends a 401 itself if nothing valid is present, and 403 `account_suspended`
+ * with the date for a directory account the directory's operator suspended (the session stays: it works again afterwards).
+ */
 export async function requireSession(db: Db, req: FastifyRequest, reply: FastifyReply): Promise<SessionUser | null> {
   const token = bearer(req);
   const session = token ? await resolveSession(db, token) : null;
   if (!session) {
     await reply.code(401).send({ error: "unauthorized" });
+    return null;
+  }
+  const until = await suspensionOf(db, session);
+  if (until) {
+    await reply.code(403).send(suspendedBody(until));
     return null;
   }
   return session;

@@ -1,7 +1,9 @@
 import {
-  DM_MAX_CIPHERTEXT_CHARS, DM_REPORT_CONTEXT_MAX, base64ToBytes, deriveDmKey, deriveSettingsKey, directoryServerUrl, openDm, openSettings, sealDm, sealSettings, type DmControl, type DmPreview,
+  DM_MAX_CIPHERTEXT_CHARS, DM_REPORT_CONTEXT_MAX, base64ToBytes, deriveDmKey, deriveSettingsKey, directoryServerUrl, openDm, openSettings, reportKindsOf, sealDm, sealSettings, type DmControl, type DmPreview,
   type AccountServer, type AccountSettings, type AccountStatus, type DirectoryAccount, type DirectoryServerEvent, type DmConversation, type DmMessage, type Friend, type GamePresence, type ReportReason, type ServerLeaveResponse,
+  type AccountNotice, type DirectoryReportKind, type ServerReportEvidence,
 } from "@squorli/protocol";
+import { REFUSED_LIST_MAX_AGE_MS, hostRefused, loadDismissedRefused, loadRefusedList, refusedList, refusedListDue, sameHidden, saveDismissedRefused, saveRefusedList, shownRefused, type RefusedList } from "./refusedServers";
 import { buildDmPreviews, type PreviewDeps } from "./dmPreviews";
 import { shrinkPreviewImage } from "./dmPreviewImage";
 import { activity } from "./activity";
@@ -89,6 +91,24 @@ export type State = {
   directoryLinkError: string | null;
   /** The directory takes reports of direct messages (`features.reports`, docs/features/reports.md): the flag on a friend's message. */
   dmReports: boolean;
+  /**
+   * What the account may report to the directory's operator (`reportKindsOf`): "account" = a directory account as it shows,
+   * "server" = a chat server. Empty without a directory account, or at a directory from before them.
+   */
+  reportKinds: DirectoryReportKind[];
+  /**
+   * Notices about measures of the directory's operator (a warning, the picture or name removed, a suspension and its end;
+   * docs/features/reports.md), newest first, as the account's status has them. The client shows the unread ones and marks
+   * them as read (`readNotice`). Empty without an account.
+   */
+  notices: AccountNotice[];
+  /**
+   * The directory's operator suspended the account until then, with the reason; null = not suspended. While it lasts the
+   * directory gives no socket (no friends, no direct messages), and chat servers refuse the sign-in unless their operator
+   * switched that off.
+   */
+  suspendedUntil: string | null;
+  suspendedReason: ReportReason | null;
   /** Friends and open requests (from my point of view); null = nothing from the directory yet. */
   friends: Friend[] | null;
   /** Conversations per friend (the friend's key) with unread counts; arrives with the welcome and is kept up to date live. */
@@ -189,6 +209,15 @@ export class Store {
   private accountDmPreviews: boolean | null = null;
   private settingsKey: { publicKey: string; key: Promise<CryptoKey> } | null = null;
   private settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The chat servers the directory's operator refused (refusedServers.ts): the list of before counts until a new one arrived. */
+  private refused: RefusedList | null = loadRefusedList();
+  private refusedFetch: Promise<void> | null = null;
+  /** The account's own servers among the refused ones, by store key (the account's status names them; known at once, not an hour later). */
+  private accountRefused = new Set<string>();
+  /** Those of them the user removed from the rail (refusedServers.ts): this device's copy, and what the account's sealed blob has (null = it says nothing). */
+  private dismissedRefused: string[] = loadDismissedRefused();
+  private accountDismissed: string[] | null = null;
+  private linkRun = 0;
 
   constructor(opts: StoreOptions) {
     this.homeHost = opts.home?.host ?? null;
@@ -199,8 +228,10 @@ export class Store {
       identity: null, serverAccounts: handlesOf(loadServerAccounts()), homeHost: this.homeHost, activeHost: this.homeHost, servers: home ? { [home.state.host]: home.state } : {},
       signedIn: false, localHosts: [], clientLogin: { busy: false, error: null }, joinInvites: {},
       directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
-      directoryLink: "idle", directoryLinkError: null, dmReports: false, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
+      directoryLink: "idle", directoryLinkError: null, dmReports: false, reportKinds: [], notices: [], suspendedUntil: null, suspendedReason: null, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
     };
+    // The list of refused chat servers is good for an hour (refusedServers.ts).
+    setInterval(() => { void this.refreshRefused(); }, REFUSED_LIST_MAX_AGE_MS);
     subscribeVoiceSettings((_s, source) => { if (source === "user") this.scheduleSettingsPush(); });
     // AFK detection: every chat server and the directory hear when the user turns idle or comes back (activity.ts).
     activity.subscribe((idle) => { for (const conn of this.conns.values()) conn.setIdle(idle); this.link?.setIdle(idle); });
@@ -229,6 +260,7 @@ export class Store {
       onMention: (message) => this.incoming(() => this.mentionNote(host, message), this.state.activeHost === host && !this.state.homeOpen && this.conns.get(host)?.state.currentChannelId === message.channelId),
       // Blocked people (stage 3): their messages neither mark the channel unread nor count as mentions.
       isBlocked: (publicKey) => this.blockedFor(host).includes(publicKey),
+      isRefused: () => this.isRefused(host),
     });
     conn.setIdle(activity.idle);
     conn.setGame(this.gameOnServers ? this.game : null);
@@ -257,6 +289,54 @@ export class Store {
     this.set({ signedIn: data.signedIn, localHosts: data.hosts });
     await this.refreshDirectory();
     if (data.signedIn) this.enterClient();
+  }
+
+  // ---------- Chat servers the directory's operator refused (refusedServers.ts, docs/features/reports.md)
+  /**
+   * Whether the client must not connect to `host` (a store key: a foreign server's is its host at the directory). The
+   * server that serves the page is never checked: a refused operator serves that page anyway, and refusing it here would
+   * only lock its members out of a client they are looking at.
+   */
+  private async isRefused(host: string): Promise<boolean> {
+    if (host === this.homeHost) return false;
+    // The account's status names its own refused servers: that counts at once, the list of hashes may be an hour behind.
+    if (this.accountRefused.has(host)) return true;
+    return hostRefused(this.refused, this.state.directoryUrl, host);
+  }
+  /**
+   * Fetch the list when it is due (none yet, another directory, older than an hour); a directory that cannot be reached
+   * or that has no such list leaves the one at hand as it is. Every connection is checked against a new list.
+   * `fresh` = now and past the browser's cache: the account's status said that the list at hand is behind.
+   */
+  private refreshRefused(fresh = false): Promise<void> {
+    const url = this.state.directoryUrl;
+    if (!url || (!fresh && !refusedListDue(this.refused, url, Date.now()))) return Promise.resolve();
+    this.refusedFetch ??= (async () => {
+      try {
+        const health = await api.directoryHealth(url);
+        if (!health.features.refusedServers) return;
+        this.refused = refusedList(url, await api.directoryRefusedServers(url, fresh), Date.now());
+        saveRefusedList(this.refused);
+        this.recheckRefused();
+      } catch { /* the list of before stays in force */ }
+    })().finally(() => { this.refusedFetch = null; });
+    return this.refusedFetch;
+  }
+
+  /**
+   * What is known about refused servers changed: every connection is asked again. One refused since is closed by the
+   * check; one of the user's servers that is allowed again connects by itself, as it would at the start.
+   */
+  private recheckRefused() {
+    for (const conn of [...this.conns.values()]) {
+      const was = conn.state.refused;
+      void conn.checkRefused().then((refused) => {
+        const host = conn.state.host;
+        if (!was || refused || this.conns.get(host) !== conn || conn.state.connection !== "idle" || !this.isMine(host)) return;
+        if (this.storedToken(host) || this.serverAccount(host)) void this.connectForeign(conn);
+        else void this.probeServer(conn);
+      });
+    }
   }
 
   // ---------- Server accounts: one key per server (identity.ts), used instead of the main identity there
@@ -488,6 +568,7 @@ export class Store {
    */
   private async probeServer(conn: ServerConnection) {
     const health = await conn.refreshHealth();
+    if (conn.state.refused) return;
     if (!health) { this.markUnreachable(conn, () => void this.probeServer(conn)); return; }
     conn.retrySettled();
     if (conn.state.waiting !== null || conn.state.connection === "error") { conn.state = { ...conn.state, connection: conn.state.me ? conn.state.connection : "idle", error: null, waiting: null }; this.publish(conn); }
@@ -518,11 +599,32 @@ export class Store {
     // health request's whole time limit, and a status that flips back and forth would say nothing).
     if (known && conn.state.waiting !== "unreachable") { conn.state = { ...conn.state, connection: "connecting", error: null, waiting: "checking" }; this.publish(conn); }
     const health = await conn.refreshHealth();
+    if (conn.state.refused) return;
     if (!health) { this.markUnreachable(conn, known ? () => void this.connectForeign(conn, invite) : null); return; }
     conn.retrySettled();
     const token = this.storedToken(host);
     if (token && await conn.resume(token) !== "rejected") return;
     try { await conn.login(await this.signDomainOf(conn), invite); } catch { /* the message is kept in the server's state */ }
+  }
+  /**
+   * "Aus der Liste entfernen" on a server the directory's operator refused: gone from the rail. One of the account's list
+   * is hidden (refusedServers.ts): the list of hidden hosts follows the account inside the sealed settings, so the entry
+   * is gone on every device. The account's entry at the directory stays, and the server shows again by itself once it
+   * is allowed.
+   */
+  removeRefused(host: string) {
+    if (host === this.homeHost) return;
+    if (this.accountRefused.has(host) && !this.dismissedRefused.includes(host)) this.storeDismissed([...this.dismissedRefused, host]);
+    const listed = this.state.accountServers;
+    if (listed) this.set({ accountServers: listed.filter((s) => !(s.refused && this.hostFor(s.host) === host)) });
+    this.closeServer(host);
+  }
+  /** The hidden refused servers as they are now: kept on the device and, when they differ from the account's, pushed there. */
+  private storeDismissed(hosts: string[]) {
+    this.dismissedRefused = hosts;
+    saveDismissedRefused(hosts);
+    // At once: one click, nothing to gather, and the user may close the app right after it.
+    if (this.sealedSupported && this.settingsLoaded && !sameHidden(hosts, this.accountDismissed)) this.scheduleSettingsPush(0);
   }
   /** Close a foreign server and remove it from the client's rail (the session stays stored). */
   closeServer(host: string) {
@@ -660,7 +762,7 @@ export class Store {
     this.set({ activeHost: host, homeOpen: false, ...(target.invite ? { joinInvites: { ...this.state.joinInvites, [host]: target.invite } } : {}) });
     if (conn.state.me || conn.state.connection !== "idle") { this.rememberLast(host); return null; }
     if (this.isMine(host)) { this.rememberLast(host); void this.connectForeign(conn, target.invite ?? undefined); }
-    else if (!(await conn.refreshHealth())) this.markUnreachable(conn, null);
+    else if (!(await conn.refreshHealth()) && !conn.state.refused) this.markUnreachable(conn, null);
     return null;
   }
 
@@ -678,6 +780,8 @@ export class Store {
       this.set({ directoryAccount: account, directoryEmailRequired: emailRequired });
     }
     catch (err) { this.set({ directoryAccount: undefined, directoryError: api.explainDirectoryError(err) }); }
+    // The refused chat servers first: the connections made below are checked against the list at hand either way.
+    void this.refreshRefused();
     const rail = this.refreshAccountServers();
     void this.connectDirectory();
     // Without a home server the caller goes on to pick the server to show, which needs the account's list.
@@ -688,13 +792,18 @@ export class Store {
   /** Open the socket to the directory as soon as directory, account and key are present; otherwise close it. */
   private async connectDirectory() {
     const id = this.state.identity; const url = this.state.directoryUrl;
+    // Two runs at once (the status arrived while the first one asked the directory's health) must not leave two sockets.
+    const run = ++this.linkRun;
     this.link?.close(); this.link = null;
     this.dmKeys.clear();
     this.set({ directoryLink: "idle", directoryLinkError: null, dmReports: false, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null });
     if (!id || !url || !this.state.directoryAccount) return;
     if (this.homeHost === null && !this.state.signedIn) return;
+    // A suspended account gets no socket (docs/features/reports.md): nothing to try until the suspension is over.
+    if (this.isSuspended()) return;
     const health = await api.directoryHealth(url).catch(() => null);
-    if (!health?.features.friends) return;
+    if (run !== this.linkRun || !health?.features.friends) return;
+    if (this.isSuspended()) return;
     this.dmPreviewsAtDirectory = health.features.dmPreviews;
     this.set({ dmReports: health.features.reports });
     const link = new DirectoryLink(url, id, (e) => this.handleDirectory(e), (status, error) => this.set({ directoryLink: status, directoryLinkError: error ?? null }), health.features.afk);
@@ -785,7 +894,18 @@ export class Store {
       }
       case "error":
         if (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account") break; // connection error, recorded in directoryLinkError
+        if (e.code === "account_suspended") {
+          // The directory's operator suspended the account: no socket until then. The status has the reason and the notice.
+          this.link?.close(); this.link = null;
+          this.set({ suspendedUntil: e.until ?? this.state.suspendedUntil ?? "", directoryLink: "idle", directoryLinkError: null, friends: null, conversations: {}, dms: {}, currentPeer: null });
+          void this.refreshAccountServers();
+          break;
+        }
         this.set({ friendsError: explainDirectoryCode(e.code) });
+        break;
+      // A measure of the directory's operator left a notice (or one was read on another device): read the status again.
+      case "notices.changed":
+        void this.refreshAccountServers();
         break;
       case "pong": case "challenge":
         break;
@@ -955,6 +1075,37 @@ export class Store {
     if (!content) throw new Error(t("report.dmUnreadable"));
     await api.directoryReportDm(url, id, { kind: "dm", reason, text, peer, message: content.message, context: content.context });
   }
+  /**
+   * Report a directory account as it shows (name, picture) to the directory's operator; the directory keeps its own copy of
+   * both. Throws with a readable message.
+   */
+  async reportAccount(publicKey: string, reason: ReportReason, text: string | undefined): Promise<void> {
+    const id = this.state.identity, url = this.state.directoryUrl;
+    if (!id || !url) throw new Error(t("dir.noLink"));
+    await api.directoryReport(url, id, { kind: "account", reason, text, account: publicKey });
+  }
+  /**
+   * Report a chat server to the directory's operator, by its host. `evidence`: one message of that server as this client
+   * shows it, for a report that is passed on because the server's moderators do nothing or are the problem (the receiver's
+   * choice in the report dialog). Throws with a readable message.
+   */
+  async reportServer(host: string, reason: ReportReason, text: string | undefined, evidence: ServerReportEvidence | null): Promise<void> {
+    const id = this.state.identity, url = this.state.directoryUrl;
+    if (!id || !url) throw new Error(t("dir.noLink"));
+    await api.directoryReport(url, id, { kind: "server", reason, text, host: host.trim().toLowerCase(), evidence });
+  }
+  /** "Verstanden" under a notice: marked as read in the account, so it shows as read on every device. */
+  async readNotice(noticeId: string): Promise<void> {
+    const id = this.state.identity, url = this.state.directoryUrl;
+    if (!id || !url) throw new Error(t("dir.noLink"));
+    try { this.set({ notices: await api.directoryReadNotice(url, id, noticeId) }); }
+    catch (err) { throw new Error(api.explainDirectoryError(err)); }
+  }
+  /** Whether the account's suspension lies ahead ("" = suspended, the directory named no date). */
+  private isSuspended(): boolean {
+    const until = this.state.suspendedUntil;
+    return until !== null && (until === "" || Date.parse(until) > Date.now());
+  }
   clearDm(peer: string) { this.link?.send({ type: "dm.clear", peer }); }
   /** Handle search at the directory (prefix); errors are no big deal here, they just mean no hits. */
   searchHandles(q: string) { const url = this.state.directoryUrl; return url ? api.directorySearchHandles(url, q).catch(() => []) : Promise.resolve([]); }
@@ -969,9 +1120,10 @@ export class Store {
     const id = this.state.identity; const url = this.state.directoryUrl;
     if (!id || !url || !this.state.directoryAccount) {
       this.accountSettings = null;
-      this.accountSealed = false; this.settingsLoaded = false; this.pushWanted = false; this.accountHidden = null; this.accountOrder = null; this.accountBlocked = null;
+      this.accountSealed = false; this.settingsLoaded = false; this.pushWanted = false; this.accountHidden = null; this.accountOrder = null; this.accountBlocked = null; this.accountDismissed = null;
       if (this.settingsPushTimer) { clearTimeout(this.settingsPushTimer); this.settingsPushTimer = null; }
-      this.set({ accountServers: null, settingsSealed: false, accountHiddenGames: null });
+      this.set({ accountServers: null, settingsSealed: false, accountHiddenGames: null, reportKinds: [], notices: [], suspendedUntil: null, suspendedReason: null });
+      this.accountRefused = new Set();
       return;
     }
     try {
@@ -980,13 +1132,39 @@ export class Store {
       this.sealedSupported = health.features.settingsSealed;
       // The public key lookup (refreshDirectory) never carries names; the signed status does: the global display name for the settings.
       const acc = this.state.directoryAccount;
+      // The account's servers the directory's operator refused stay in the rail, marked (docs/features/reports.md).
+      const refusedNow = status.refusedServers.map((s) => ({ ...s, refused: true }));
+      this.accountRefused = new Set(refusedNow.map((s) => this.hostFor(s.host)));
+      const allowed = status.servers.filter((s) => !this.accountRefused.has(this.hostFor(s.host))).map((s) => ({ ...s, refused: false }));
       // The avatar's version comes along: an image changed on the account page shows in the settings without a reload of the lookup.
-      this.set({ accountServers: status.servers, directoryAvatars: health.features.avatars, directoryGameLibrary: health.features.gameLibrary, ...(acc ? { directoryAccount: { ...acc, displayName: status.displayName, avatarUpdatedAt: status.avatarUpdatedAt } } : {}) });
+      this.set({ directoryAvatars: health.features.avatars, directoryGameLibrary: health.features.gameLibrary, ...(acc ? { directoryAccount: { ...acc, displayName: status.displayName, avatarUpdatedAt: status.avatarUpdatedAt } } : {}) });
+      // Measures of the directory's operator (docs/features/reports.md): the notices, and whether the account is suspended.
+      const wasSuspended = this.isSuspended();
+      this.set({ reportKinds: reportKindsOf(health.features).filter((k) => k !== "dm"), notices: health.features.notices ? status.notices : [], suspendedUntil: status.suspendedUntil, suspendedReason: status.suspendedReason });
+      if (this.isSuspended()) {
+        // No socket while it lasts; one that is open (the suspension came a moment ago) is closed by the directory anyway.
+        if (this.link) { this.link.close(); this.link = null; this.set({ directoryLink: "idle", directoryLinkError: null, friends: null, conversations: {}, dms: {}, currentPeer: null }); }
+      } else if (wasSuspended) {
+        // Over or lifted: friends and direct messages are back.
+        void this.connectDirectory();
+      }
       await this.adoptAccountSettings(status);
+      // The list the rail and the connections work with: `servers` plus the refused ones, without those the user removed
+      // from the rail. That list came with the account's settings just now; a removal of a server that is not refused any
+      // more is dropped, here and in the account.
+      const kept = shownRefused(refusedNow, this.dismissedRefused, (h) => this.hostFor(h));
+      if (!sameHidden(kept.dismissed, this.dismissedRefused) || !sameHidden(kept.dismissed, this.accountDismissed)) this.storeDismissed(kept.dismissed);
+      const listed = [...allowed, ...kept.shown];
+      this.set({ accountServers: listed });
       // Without a home server: a server added by address that the account's list names by now is the account's from here on.
-      const local = this.state.localHosts.filter((h) => !status.servers.some((s) => this.hostFor(s.host) === h));
+      const local = this.state.localHosts.filter((h) => !listed.some((s) => this.hostFor(s.host) === h));
       if (local.length !== this.state.localHosts.length) { this.set({ localHosts: local }); this.saveClient(); }
-      this.connectAccountServers(status.servers);
+      this.connectAccountServers(listed);
+      // What the status says about refused servers counts for the connections that exist: one refused since is closed.
+      // A server of the account that the list of hashes still refuses was allowed again since that list was fetched.
+      const behind = (await Promise.all(allowed.map((s) => hostRefused(this.refused, url, this.hostFor(s.host))))).some(Boolean);
+      this.recheckRefused();
+      if (behind) void this.refreshRefused(true);
     } catch (err) { console.warn("Serverliste vom Verzeichnis nicht verfuegbar", err); }
   }
 
@@ -1002,22 +1180,23 @@ export class Store {
   private async adoptAccountSettings(status: AccountStatus): Promise<void> {
     const id = this.state.identity;
     let remote = this.settingsSupported ? status.settings : null;
-    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null; let dmPreviews: boolean | null = null;
+    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null; let dmPreviews: boolean | null = null; let dismissed: string[] | null = null;
     const blob = this.sealedSupported ? status.settingsSealed : null;
     if (id && blob) {
       const content = await this.settingsKeyOf(id).then((key) => openSettings(key, id.publicKey, blob), () => null);
       if (this.state.identity !== id) return;
       // A blob this key does not open counts as none: the device's settings make a new one.
-      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; dmPreviews = content.dmLinkPreviews ?? null; sealed = true; }
+      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; dmPreviews = content.dmLinkPreviews ?? null; dismissed = content.hiddenServers ?? null; sealed = true; }
     }
     const first = !this.settingsLoaded;
-    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmPreviews; this.settingsLoaded = true;
+    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmPreviews; this.accountDismissed = dismissed; this.settingsLoaded = true;
     // A change the user just made here is newer than what the status says; the pending push brings the account in step.
     if (this.settingsPushTimer || this.pushWanted) {
       // The hide list too, with one exception: a push that waited for this first status knows nothing of the account's list
       // yet and must not drop from it what another device hid. The block list the same way.
       if (first && hidden && this.localHidden) this.localHidden = [...new Set([...this.localHidden, ...hidden])];
       if (first && blocked && id) { const mine = this.state.blocked[id.publicKey] ?? []; const joined = [...new Set([...mine, ...blocked])]; if (!sameBlocked(mine, joined)) this.storeBlockedList(id.publicKey, joined); }
+      if (first && dismissed) { this.dismissedRefused = [...new Set([...this.dismissedRefused, ...dismissed])]; saveDismissedRefused(this.dismissedRefused); }
       if (sealed !== this.state.settingsSealed) this.set({ settingsSealed: sealed });
       if (!this.settingsPushTimer) this.scheduleSettingsPush(0);
       return;
@@ -1032,6 +1211,8 @@ export class Store {
     if (dmPreviews !== null && dmPreviews !== local.dmLinkPreviews) { local = { ...local, dmLinkPreviews: dmPreviews }; saveVoiceSettings(local, "directory"); }
     // The blocked people the same way: the account's list wins on this device; a device that blocked somebody just now is the pending-push case.
     if (blocked && id && !sameBlocked(blocked, this.state.blocked[id.publicKey])) this.storeBlockedList(id.publicKey, blocked);
+    // The refused servers removed from the rail the same way (refreshAccountServers goes on with this list).
+    if (dismissed && !sameHidden(this.dismissedRefused, dismissed)) { this.dismissedRefused = dismissed; saveDismissedRefused(dismissed); }
     if (!remote) {
       // Nothing stored yet (or an older directory): cue settings stored by an older client still win, the rest is seeded from this device.
       const sounds = status.soundSettings ? normalizeSoundSettings({ ...status.soundSettings, message: status.soundSettings.message ?? local.sounds.message }) : null;
@@ -1083,14 +1264,14 @@ export class Store {
     const next = this.localAccountSettings(); const known = this.accountSettings;
     try {
       if (this.sealedSupported) {
-        const local = loadVoiceSettings(); const hidden = this.hiddenForAccount(); const order = local.serverOrder; const blocked = this.mainBlocked(); const dmLinkPreviews = local.dmLinkPreviews;
-        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked) && dmLinkPreviews === this.accountDmPreviews) return;
+        const local = loadVoiceSettings(); const hidden = this.hiddenForAccount(); const order = local.serverOrder; const blocked = this.mainBlocked(); const dmLinkPreviews = local.dmLinkPreviews; const hiddenServers = this.dismissedRefused;
+        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked) && dmLinkPreviews === this.accountDmPreviews && sameHidden(hiddenServers, this.accountDismissed)) return;
         // The block list always goes along, an empty one too: "nobody" must win over a device's stale list after an unblock elsewhere
-        // (only a blob from before the feature says nothing about it).
-        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked, dmLinkPreviews });
+        // (only a blob from before the feature says nothing about it). The refused servers removed from the rail the same way.
+        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked, dmLinkPreviews, hiddenServers });
         await api.directorySetSealedSettings(url, id, blob);
         markAccountLocalePreference(next.locale);
-        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmLinkPreviews;
+        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmLinkPreviews; this.accountDismissed = hiddenServers;
         this.set({ settingsSealed: true, accountHiddenGames: hidden });
       } else if (this.settingsSupported) {
         if (known && sameAccountSettings(known, next)) return;

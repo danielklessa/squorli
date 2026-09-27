@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildRailServers, voiceActivity } from "./railServers";
 
 const srv = (host: string, lastSeenAt: string, displayName: string | null = null): AccountServer =>
-  ({ host, name: `Name of ${host}`, displayName, lastSeenAt, verified: true, iconUpdatedAt: null, leaveRequestedAt: null });
+  ({ host, name: `Name of ${host}`, displayName, lastSeenAt, verified: true, iconUpdatedAt: null, leaveRequestedAt: null, refused: false });
 const base = { keyOf: (h: string) => h.toLowerCase(), iconOf: (s: AccountServer) => `icon:${s.host}`, subOf: (n: string) => `as ${n}`, order: [] as string[] };
 
 describe("buildRailServers", () => {

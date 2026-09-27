@@ -7,7 +7,8 @@ import type { Config } from "../config";
 import type { Db } from "../db";
 import { bans, invites, localAccounts, memberRoles, members, roles, serverSettings, sessions, users } from "../db/schema";
 import type { Hub } from "../hub";
-import { SETTINGS_ID, broadcastStructure, loadSettings } from "../state";
+import { SETTINGS_ID, broadcastStructure, loadSettings, refusesSuspended } from "../state";
+import { refusedUntil, suspendedBody } from "../users/suspension";
 import type { DirectoryClient, LoginProof } from "../directory";
 import type { VoicePresence } from "../voice/presence";
 import { ChallengeStore } from "./challenges";
@@ -142,6 +143,14 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
       if (!known) await db.delete(users).where(eq(users.id, user.id));
       const settings = await loadSettings(db);
       return reply.code(403).send({ error: "registration_required", localAccounts: settings.localAccounts === true });
+    }
+    // A directory account the directory's operator suspended gets no session here while the suspension lasts, unless this
+    // server's operator switched that off (users/suspension.ts). The cached date counts while the directory is unreachable.
+    const until = refusedUntil({ handle, localHandle: local?.handle ?? null, suspendedUntil: profile ? profile.suspendedUntil : user.suspendedUntil }, await refusesSuspended(db));
+    if (until) {
+      if (!known) await db.delete(users).where(eq(users.id, user.id));
+      req.log.info({ publicKey: publicKey.slice(0, 8), until: until.toISOString() }, "Anmeldung abgewiesen: Verzeichniskonto gesperrt");
+      return reply.code(403).send(suspendedBody(until));
     }
     const res = await admit(db, config, hub, directory, req, reply, { id: user.id, publicKey, displayName: profile?.displayName ?? user.displayName }, invite, false, proof);
     return res ?? undefined;
