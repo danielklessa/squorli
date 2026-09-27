@@ -1,6 +1,6 @@
 {
   "name": "@squorli/server",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "db:generate": "drizzle-kit generate",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:suspended": "node scripts/smoke-suspended.mjs"
   },
   "dependencies": {
     "@squorli/link-preview": "workspace:*",
