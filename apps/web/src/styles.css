@@ -687,6 +687,12 @@ button.icon.on { color: var(--brand); }
 .screen-option.active { border-color: var(--brand); }
 .screen-thumb { aspect-ratio: 16 / 9; background: #000; border-radius: calc(var(--r) - 4px); overflow: hidden; display: grid; place-items: center; color: var(--muted); font-size: 1.6rem; }
 .screen-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* The picture is still being made (the dialog opens before the shell has the thumbnails): a light band moves across the tile. */
+.screen-thumb.loading { background: linear-gradient(100deg, #000 35%, color-mix(in srgb, var(--text) 14%, #000) 50%, #000 65%) 0 0 / 300% 100%; animation: screen-thumb-loading 1.4s linear infinite; }
+@keyframes screen-thumb-loading { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .screen-thumb.loading { animation: none; background: color-mix(in srgb, var(--text) 8%, #000); } }
+.screen-placeholder { box-sizing: border-box; border-radius: var(--r); }
+.screen-name-bar { display: block; width: 60%; height: 0.8rem; margin: 0.1rem 0; border-radius: 0.4rem; background: color-mix(in srgb, var(--text) 12%, transparent); }
 .screen-name { display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .screen-name img { flex: none; }
 .screen-name > span:not(.screen-game) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

@@ -91,6 +91,7 @@ export const de = {
   "screenPick.screens": "Gesamter Bildschirm",
   "screenPick.windows": "Fenster",
   "screenPick.none": "Nichts zum Teilen gefunden.",
+  "screenPick.listing": "Fenster und Bildschirme werden gesucht …",
   "screenPick.audio": "Systemton teilen",
   "screenPick.audioHint": "Überträgt, was dieser Computer abspielt, als eigene Tonspur (ohne Squorli selbst, wo die App das kann).",
   "screenPick.audioWindow": "Ton dieses Fensters teilen",

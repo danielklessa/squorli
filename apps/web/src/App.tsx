@@ -38,7 +38,7 @@ import { ColumnHandle } from "./ColumnHandle";
 import { loadLayout, saveLayout, type ColumnId, type Layout } from "./layout";
 import { NoServers } from "./NoServers";
 import { ScreenPicker } from "./ScreenPicker";
-import { quickSharePick } from "./screenPick";
+import { quickSharePick, whenListed } from "./screenPick";
 import { TitleBar } from "./TitleBar";
 import { loadVoiceSettings, saveVoiceSettings } from "./voice/settings";
 import { loadNotificationSettings, notificationFor, parseNotificationTag } from "./notifications";
@@ -59,7 +59,7 @@ import { GameDetection, syncedHidden } from "./gameDetection";
 import { directoryGameLookup, presenceOf } from "./gamePresence";
 import { GameLibraryContext } from "./GameLine";
 import { t } from "./i18n";
-import { platform, type ControlEvent, type HotkeyStatus, type ScreenPick, type ScreenSource } from "./platform";
+import { platform, type ControlEvent, type HotkeyStatus, type ScreenOffer, type ScreenPick } from "./platform";
 import { formatDeepLink } from "./platform/deepLink";
 import { setSquorliLinkHandler } from "./squorliLinks";
 import { isTypingTarget } from "./usePushToTalk";
@@ -203,15 +203,19 @@ export function App() {
    * only joining a voice channel on another server ends it (as the user specified).
    */
   /** Desktop app: the shell asks which screen or window to share (ScreenPicker.tsx); a browser has its own picker. */
-  const [screenPick, setScreenPick] = useState<{ sources: ScreenSource[]; resolve: (pick: ScreenPick | null) => void } | null>(null);
+  const [screenPick, setScreenPick] = useState<{ offer: ScreenOffer; resolve: (pick: ScreenPick | null) => void } | null>(null);
   /** "Quick Share" in the dock: the id of the game whose window the next request of the shell is answered with, without the dialog. */
   const quickShare = useRef<string | null>(null);
   useEffect(() => {
-    platform.screen.setPicker((sources) => {
-      const quick = quickShare.current ? quickSharePick(sources, quickShare.current, VoiceClient.supportsH265()) : null;
+    // The shell asks at once and fills its offer afterwards: the dialog opens right away and shows the list and the pictures
+    // as they come; "Quick Share" needs the list only.
+    platform.screen.setPicker(async (offer) => {
+      const game = quickShare.current;
       quickShare.current = null;
-      if (quick) return Promise.resolve(quick);
-      return new Promise((resolve) => { setPickWindow(stageFocus.current()); setScreenPick((open) => { open?.resolve(null); return { sources, resolve }; }); });
+      const quick = game ? quickSharePick(await whenListed(offer), game, VoiceClient.supportsH265()) : null;
+      if (quick) return quick;
+      offer.loadPictures();
+      return new Promise((resolve) => { setPickWindow(stageFocus.current()); setScreenPick((open) => { open?.resolve(null); return { offer, resolve }; }); });
     });
     return () => platform.screen.setPicker(null);
   }, []);
@@ -860,7 +864,7 @@ export function App() {
       )}
       {showAdmin && view && <AdminPanel api={view.conn.api} server={view.server} myUserId={view.active.userId!} directoryUrl={view.active.directoryUrl} onClose={() => setShowAdmin(false)} onEditChannel={setChannelEdit} />}
       {channelEdit && view && <ChannelDialog api={view.conn.api} server={view.server} target={channelEdit} myUserId={view.active.userId!} onClose={() => setChannelEdit(null)} />}
-      {screenPick && inPickWindow(<ScreenPicker sources={screenPick.sources} h265={VoiceClient.supportsH265()} win={pickWindow ?? window}
+      {screenPick && inPickWindow(<ScreenPicker offer={screenPick.offer} h265={VoiceClient.supportsH265()} audioPossible={platform.os === "windows"} win={pickWindow ?? window}
         onPick={(pick) => { screenPick.resolve(pick); setScreenPick(null); }} onCancel={() => { screenPick.resolve(null); setScreenPick(null); }} />)}
       {cameraPick && inPickWindow(<CameraPicker cameras={cameraPick} initial={voiceSettings.cameraDeviceId} initialBlur={voiceSettings.cameraBlur} win={pickWindow ?? window} onPick={(id, b) => { void pickCamera(id, b); }} onCancel={() => setCameraPick(null)} />)}
       {miniProfile && active?.me && (

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { BRIDGE_GLOBAL, INFO_ARGUMENT, IPC, type ControlEvent, type CustomProgram, type DesktopBridge, type DesktopInfo, type DetectedGame, type GameWatchSettings, type HotkeyRequest, type HotkeyStatus, type RunningGame, type AppearanceState, type ScreenAudioEvent, type ScreenPick, type ScreenPickRequest, type SystemActivityEvent, type UpdateState, type WindowAppearance, type WindowControl, type WindowFrameState, type BridgeLinkLookup, type BridgeNotification } from "@squorli/web/platform/bridge";
+import { BRIDGE_GLOBAL, INFO_ARGUMENT, IPC, type ControlEvent, type CustomProgram, type DesktopBridge, type DesktopInfo, type DetectedGame, type GameWatchSettings, type HotkeyRequest, type HotkeyStatus, type RunningGame, type AppearanceState, type ScreenAudioEvent, type ScreenPick, type ScreenPickRequest, type ScreenPickUpdate, type SystemActivityEvent, type UpdateState, type WindowAppearance, type WindowControl, type WindowFrameState, type BridgeLinkLookup, type BridgeNotification } from "@squorli/web/platform/bridge";
 
 /**
  * Preload script (sandboxed, context-isolated): the only thing the page gets from the shell is this bridge. Plain data in
@@ -20,6 +20,8 @@ const bridge: DesktopBridge = {
   onDeepLink: (cb) => { const off = subscribe<string>(IPC.deepLink, cb); ipcRenderer.send(IPC.deepLinkReady); return off; },
   onScreenPickRequest: (cb) => subscribe<ScreenPickRequest>(IPC.screenPickRequest, cb),
   answerScreenPick: (requestId: number, pick: ScreenPick | null) => ipcRenderer.send(IPC.screenPickAnswer, requestId, pick),
+  onScreenPickUpdate: (cb) => subscribe<ScreenPickUpdate>(IPC.screenPickUpdate, cb),
+  loadScreenPictures: (requestId: number) => ipcRenderer.send(IPC.screenPickPictures, requestId),
   onScreenAudio: (cb) => subscribe<ScreenAudioEvent>(IPC.screenAudio, cb),
   stopScreenAudio: () => ipcRenderer.send(IPC.screenAudioStop),
   setPlayerOutput: (label: string | null) => ipcRenderer.send(IPC.playerOutput, label),

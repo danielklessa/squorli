@@ -1,6 +1,7 @@
 import type { AppearanceState, DesktopBridge, ScreenCodec, UpdateState, WindowFrameState } from "./bridge";
 import { parseDeepLink } from "./deepLink";
 import { screenAudio } from "./screenAudio";
+import { createScreenOffer } from "./screenOffer";
 import type { Platform, ScreenPicker } from "./types";
 import { popoutFeatures } from "./web";
 
@@ -12,9 +13,16 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
   let picker: ScreenPicker | null = null;
   // The codec chosen with the last pick; the voice client asks for it after the capture and before it publishes the share.
   let pickedCodec: ScreenCodec = "vp8";
+  // The shell's questions without an answer yet: what it sends after the request (the list, then the thumbnails) fills them up.
+  const offers = new Map<number, ReturnType<typeof createScreenOffer>>();
+  // An app older than this client has neither member: its request carries everything.
+  if (typeof bridge.onScreenPickUpdate === "function") bridge.onScreenPickUpdate((update) => offers.get(update.requestId)?.update(update));
   bridge.onScreenPickRequest((request) => {
-    const answer = picker ? picker(request.sources).catch(() => null) : Promise.resolve(null);
+    const open = createScreenOffer(request, typeof bridge.loadScreenPictures === "function" ? () => bridge.loadScreenPictures(request.requestId) : null);
+    offers.set(request.requestId, open);
+    const answer = picker ? picker(open.offer).catch(() => null) : Promise.resolve(null);
     void answer.then((pick) => {
+      offers.delete(request.requestId);
       pickedCodec = pick?.codec === "h264" || pick?.codec === "h265" ? pick.codec : "vp8";
       // With the native helper the shell captures the audio itself and sends it over; the voice client takes it after the share started.
       audio.expect(!!pick?.audio && info.nativeScreenAudio);

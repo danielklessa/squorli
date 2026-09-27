@@ -38,10 +38,19 @@ export type UpdateState =
  * it: for a window what its application plays, for a screen what the system plays (without the app itself where the shell
  * has its native capture helper; the app's own windows never carry audio). `gameId` = the window belongs to a detected game
  * (its id as in `RunningGame`; shell from 21 September 2026, only while game detection is on). `fullscreen` = the window
- * covers its whole monitor without being maximized (a game or a player in full screen).
+ * covers its whole monitor without being maximized (a game or a player in full screen). `pending` = its thumbnail is still
+ * being made and follows in a `ScreenPickUpdate` ("" until then, and for good where none can be made).
  */
-export type ScreenSource = { id: string; kind: "screen" | "window"; name: string; thumbnail: string; icon: string | null; audio: boolean; gameId?: string | null; fullscreen?: boolean };
-export type ScreenPickRequest = { requestId: number; sources: ScreenSource[] };
+export type ScreenSource = { id: string; kind: "screen" | "window"; name: string; thumbnail: string; icon: string | null; audio: boolean; gameId?: string | null; fullscreen?: boolean; pending?: boolean };
+/**
+ * The shell's question which screen or window to share. Since 28 September 2026 it comes at once and fills up afterwards, so
+ * the dialog opens without a wait (the thumbnails of the windows take seconds): `listing` = the shell is still finding out
+ * what there is, `sources` is empty until the first `ScreenPickUpdate`; the thumbnails follow in further updates, and only
+ * when the client asked for them (`loadScreenPictures`). A shell from before sends everything in the request, no updates.
+ */
+export type ScreenPickRequest = { requestId: number; sources: ScreenSource[]; listing?: boolean };
+/** The same request as it stands now: always the whole list. */
+export type ScreenPickUpdate = ScreenPickRequest;
 /** The video codec a share is sent with: "vp8" = the client's standing codec; "h265" (where the computer's graphics unit encodes it) or else "h264" = the user's choice for moving pictures (games). */
 export type ScreenCodec = "vp8" | "h264" | "h265";
 /** `codec` stays in the client (the publish options of the share); the shell reads `sourceId` and `audio` only. */
@@ -141,6 +150,10 @@ export interface DesktopBridge {
   /** The shell asks which screen or window to share; answer with `answerScreenPick` (null = cancelled). */
   onScreenPickRequest(cb: (request: ScreenPickRequest) => void): () => void;
   answerScreenPick(requestId: number, pick: ScreenPick | null): void;
+  /** What a request offers as it fills up: the list, then the thumbnails. An app from before it has no such member and sends everything with the request. */
+  onScreenPickUpdate(cb: (update: ScreenPickUpdate) => void): () => void;
+  /** Ask for the thumbnails of a request's sources (the dialog is shown); "Quick Share" never does. */
+  loadScreenPictures(requestId: number): void;
   onScreenAudio(cb: (event: ScreenAudioEvent) => void): () => void;
   stopScreenAudio(): void;
   /** Output device of the embedded players (Twitch, YouTube), named by its label because device ids differ per origin; null = the system's default. */
@@ -218,6 +231,8 @@ export const IPC = {
   deepLink: "squorli:deep-link",
   screenPickRequest: "squorli:screen-pick-request",
   screenPickAnswer: "squorli:screen-pick-answer",
+  screenPickUpdate: "squorli:screen-pick-update",
+  screenPickPictures: "squorli:screen-pick-pictures",
   screenAudio: "squorli:screen-audio",
   screenAudioStop: "squorli:screen-audio-stop",
   playerOutput: "squorli:player-output",

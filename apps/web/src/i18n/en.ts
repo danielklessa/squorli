@@ -90,6 +90,7 @@ export const en: Messages = {
   "screenPick.screens": "Entire screen",
   "screenPick.windows": "Windows",
   "screenPick.none": "Found nothing to share.",
+  "screenPick.listing": "Looking for windows and screens …",
   "screenPick.audio": "Share system audio",
   "screenPick.audioHint": "Sends what this computer plays as a separate audio track (without Squorli itself where the app can do that).",
   "screenPick.audioWindow": "Share this window's audio",

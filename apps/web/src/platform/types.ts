@@ -7,8 +7,21 @@ export type { AppearanceState, ControlAction, ControlEvent, CustomProgram, Detec
 /** The chat server that serves the page: its key in the store and the domain a login there signs. */
 export type PlatformHome = { host: string; signDomain: string };
 
+/** What the shell offers to share right now; `listing` = it is still finding out what there is (`sources` is empty until then). */
+export type ScreenOfferState = { readonly sources: readonly ScreenSource[]; readonly listing: boolean };
+/**
+ * One question of the shell as it fills up (platform/screenOffer.ts): first nothing, then the list with names and icons,
+ * then the thumbnails (`ScreenSource.pending` until a source's one is there).
+ */
+export type ScreenOffer = {
+  /** The same object until something changes (fits `useSyncExternalStore`). */
+  current(): ScreenOfferState;
+  subscribe(cb: () => void): () => void;
+  /** Ask the shell for the thumbnails: the dialog does when it opens, "Quick Share" never. */
+  loadPictures(): void;
+};
 /** Asks the user which screen or window to share; null = cancelled. */
-export type ScreenPicker = (sources: ScreenSource[]) => Promise<ScreenPick | null>;
+export type ScreenPicker = (offer: ScreenOffer) => Promise<ScreenPick | null>;
 
 /** What the voice core needs from the platform (handed to `VoiceClient`, which imports no platform module). */
 export interface PlatformMedia {

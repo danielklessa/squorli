@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ScreenSource } from "./platform/bridge";
-import { defaultAudio, defaultCodec, movingCodec, quickSharePick, sortWindows } from "./screenPick";
+import { createScreenOffer } from "./platform/screenOffer";
+import { defaultAudio, defaultCodec, movingCodec, quickSharePick, sortWindows, whenListed } from "./screenPick";
 
 const source = (over: Partial<ScreenSource>): ScreenSource => ({ id: "window:1:0", kind: "window", name: "x", thumbnail: "", icon: null, audio: true, ...over });
 
@@ -37,5 +38,22 @@ describe("screenPick", () => {
     expect(quickSharePick(sources, "steam:730", true)).toEqual({ sourceId: "window:7:0", audio: true, codec: "h265" });
     expect(quickSharePick([source({ id: "window:7:0", gameId: "steam:730", audio: false })], "steam:730", false)).toEqual({ sourceId: "window:7:0", audio: false, codec: "h264" });
     expect(quickSharePick(sources, "epic:Fortnite", true)).toBeNull();
+  });
+
+  it("waits for the list and not for the pictures", async () => {
+    const { offer, update } = createScreenOffer({ requestId: 1, sources: [], listing: true }, null);
+    let listed: readonly ScreenSource[] | null = null;
+    const waiting = whenListed(offer).then((sources) => { listed = sources; });
+    await Promise.resolve();
+    expect(listed).toBeNull();
+    update({ requestId: 1, sources: [source({ pending: true })], listing: false });
+    await waiting;
+    expect(listed).toEqual([source({ pending: true })]);
+    // A later update (the pictures) changes nothing about what was handed out.
+    update({ requestId: 1, sources: [source({ thumbnail: "data:image/jpeg;base64,AA" })], listing: false });
+    expect(listed).toEqual([source({ pending: true })]);
+    // A shell from before: everything is there with the request.
+    const old = createScreenOffer({ requestId: 2, sources: [source({ id: "window:2:0" })] }, null);
+    expect(await whenListed(old.offer)).toEqual([source({ id: "window:2:0" })]);
   });
 });

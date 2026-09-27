@@ -1,4 +1,5 @@
 import type { ScreenCodec, ScreenPick, ScreenSource } from "./platform/bridge";
+import type { ScreenOffer } from "./platform/types";
 
 /**
  * The rules of the desktop app's share dialog (ScreenPicker.tsx) and of "Quick Share" (VoiceDock.tsx); pure, tested.
@@ -16,6 +17,17 @@ export function sortWindows(windows: readonly ScreenSource[], locale?: string): 
   const rank = (s: ScreenSource) => (s.gameId ? 0 : s.fullscreen ? 1 : 2);
   return [...windows].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, locale, { sensitivity: "base", numeric: true }));
 }
+
+/** The sources of an offer once the shell listed them (at once when it has); "Quick Share" waits for this and for nothing else, the thumbnails are the dialog's. */
+export function whenListed(offer: ScreenOffer): Promise<readonly ScreenSource[]> {
+  return new Promise((resolve) => {
+    if (!offer.current().listing) { resolve(offer.current().sources); return; }
+    const off = offer.subscribe(() => { if (offer.current().listing) return; off(); resolve(offer.current().sources); });
+  });
+}
+
+/** How many tiles stand in for the list while the shell is still finding out what there is. */
+export const PLACEHOLDER_TILES = 6;
 
 /** "Quick Share": the running game's window, topmost first, with its audio and always the codec for moving pictures, without the dialog; null = that window is not on offer (minimized, an older shell), then the dialog opens. */
 export function quickSharePick(sources: readonly ScreenSource[], gameId: string, h265: boolean): ScreenPick | null {
