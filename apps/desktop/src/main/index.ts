@@ -50,10 +50,13 @@ const directoryUrl = (app.isPackaged ? null : argValue("directory-url")) ?? DIRE
 const originOf = (url: string): string => { const u = new URL(url); return `${u.protocol}//${u.host}`; };
 const origins = devUrl ? [APP_ORIGIN, originOf(devUrl)] : [APP_ORIGIN];
 
-const APP_USER_MODEL_ID = "com.squorli.desktop";
+// Unpackaged an id of its own: Electron puts a Start menu shortcut "Electron" with the process's id next to electron.exe's
+// notifications, and with the installer's id that shortcut named the installed app's notifications "Electron" too (user's
+// report after 0.8.2, 27 September 2026).
+const APP_USER_MODEL_ID = app.isPackaged ? "com.squorli.desktop" : "com.squorli.desktop.dev";
 app.setName("Squorli");
-// Windows groups task bar entries and notifications by this id; it equals the installer's appId. Unpackaged it also makes the
-// task bar show the window's icon instead of Electron's.
+// Windows groups task bar entries and notifications by this id; packaged it equals the installer's appId. Unpackaged it also
+// makes the task bar show the window's icon instead of Electron's.
 if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 // A test that drives the app against a dev server passes `--user-data-dir` and keeps its hands off the developer's own data.
 if (devUrl && !argValue("user-data-dir")) app.setPath("userData", join(app.getPath("appData"), "Squorli-dev"));
@@ -144,7 +147,7 @@ function registerAppId(): void {
   try {
     const icon = join(app.getPath("userData"), "notification-icon.png");
     writeFileSync(icon, readFileSync(join(__dirname, "..", "build", "icon.png")));
-    for (const args of appIdRegistration(APP_USER_MODEL_ID, "Squorli", icon)) execFile("reg", args, { windowsHide: true }, () => {});
+    for (const args of appIdRegistration(APP_USER_MODEL_ID, app.isPackaged ? "Squorli" : "Squorli (dev)", icon)) execFile("reg", args, { windowsHide: true }, () => {});
   } catch { /* no icon, no registration: the toast keeps Windows' fallback name */ }
 }
 

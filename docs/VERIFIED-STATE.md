@@ -1,5 +1,6 @@
 # Verified state
 
+- **Development app's own id (27 September 2026, `docs/features/notifications.md`):** desktop typecheck and tests; after deleting the development `Electron.lnk`, `Get-StartApps` names `com.squorli.desktop` "Squorli". **Not checked:** the toast on screen.
 - **Notification sender and full screen (27 September 2026, `docs/features/notifications.md`):** root typecheck; web tests 451, desktop 78 (2 new); the rebuilt system watch helper answered `busy`; the unpackaged app registered `com.squorli.desktop` with "Squorli" and its icon. The NSIS installer builds with `build/installer.nsh`. **Not checked:** the toast on screen, a real full screen game, a real uninstall.
 
 - **Stage place holder and share viewers (27 September 2026, `docs/features/voice-video.md`):** root typecheck; web tests 451 (`shareViewers.test.ts` 2 new), desktop 76; Electron 44.4.2 over the DevTools protocol: `focusPopout` raised the named window, `focus()` did not; the viewers' avatars with the built stylesheet on a screenshot. **Not checked:** two real clients, the place holder with a real stage, the browser's way of raising the window.
