@@ -246,6 +246,8 @@ export class VoiceClient {
   private sentVideoAccess = "";
   /** Playback volume per person (0..2), keyed by public key and stored per device (userVolumes.ts). */
   private userVolumes: UserVolumes = loadUserVolumes();
+  /** People blocked by the identity of the server we sit on (App.tsx, docs/features/reports.md stage 3): silent here, whatever their volume. */
+  private blocked = new Set<string>();
   /** LiveKit identity -> public key for the members of the voice connection's server. */
   private peerKeys: Record<string, string> = {};
 
@@ -923,6 +925,18 @@ export class VoiceClient {
     return this.userVolumes[publicKey] ?? 1;
   }
 
+  /** The blocked people (by public key) of the identity used on the server we sit on; their voice and screen sound stay silent for us. */
+  setBlocked(publicKeys: Iterable<string>): void {
+    const next = new Set(publicKeys);
+    if (next.size === this.blocked.size && [...next].every((k) => this.blocked.has(k))) return;
+    this.blocked = next;
+    this.applyUserVolumes();
+    this.applyAudioMuted();
+  }
+  isBlocked(publicKey: string): boolean {
+    return this.blocked.has(publicKey);
+  }
+
   /** Set and store how loud this person is played back here (0..2). Works without a connection too; it applies on the next join. */
   setUserVolume(publicKey: string, volume: number): void {
     this.userVolumes = withUserVolume(this.userVolumes, publicKey, volume);
@@ -944,7 +958,7 @@ export class VoiceClient {
   private applyUserVolume(remote: RemoteTrack, identity: string): void {
     if (remote.source === Track.Source.ScreenShareAudio) return;
     const track = remote as RemoteAudioTrack; // remoteAudio only ever holds audio tracks (attachRemote)
-    const volume = clampUserVolume(this.userVolumes[this.volumeKey(identity)]);
+    const volume = this.blocked.has(this.volumeKey(identity)) ? 0 : clampUserVolume(this.userVolumes[this.volumeKey(identity)]);
     const meter = this.meters.get(identity);
     const ctx = this.audioCtx;
     if (volume > 1 && meter && ctx?.state === "running") {
@@ -1281,7 +1295,7 @@ export class VoiceClient {
   }
   isScreenAudioListening(tileId: string): boolean { return this.screenListening.has(tileId); }
   private audioMuted(track: RemoteTrack, identity: string): boolean {
-    return this.state.deafened || (track.source === Track.Source.ScreenShareAudio && !this.screenListening.has(`${identity}:screen`));
+    return this.state.deafened || this.blocked.has(this.volumeKey(identity)) || (track.source === Track.Source.ScreenShareAudio && !this.screenListening.has(`${identity}:screen`));
   }
   private applyAudioMuted(): void {
     for (const [track, { element, identity }] of this.remoteAudio) element.muted = this.audioMuted(track, identity);

@@ -4,6 +4,8 @@ Part of the project description. The entry point is the root [AGENTS.md](../../.
 
 Dated feature entries (per-person volume, `VIEW_VIDEO`, cues, pop-outs and fullscreen, voice card, screen share freezing in a pop-out, voice channel moderation): `docs/features/voice-video.md`. Web radio and the embedded players (`radioPlayer.ts`): `docs/features/radio.md`.
 
+Blocked people (27 September 2026, `docs/features/reports.md` stage 3): App.tsx hands the voice client the blocked keys of the identity used on the voice server (`setBlocked`); `applyUserVolume` and `audioMuted` keep their voice and screen sound silent whatever the slider says, and `VoiceMemberMenu.tsx` shows a line instead of the slider. The tiles stay: blocking is a view of this user's client, not moderation.
+
 ## Conventions
 
 - **Voice channel presence vs. media:** `voice.join`/`voice.leave` over the WebSocket are the intent ("I am in the channel", for everyone's sidebar). Whether someone actually sends, hears or speaks is known only to LiveKit; the client shows both together. Participants known only to LiveKit (bots) appear as "(extern)" (external).

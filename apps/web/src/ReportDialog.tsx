@@ -7,11 +7,12 @@ import { Icon } from "./Icon";
 import { t } from "./i18n";
 import type { Store } from "./store";
 
-/** What is being reported on a chat server: a message (the text shown as a reminder) or a member. */
-export type ReportTarget = { kind: "message"; messageId: string; authorName: string; excerpt: string } | { kind: "member"; userId: string; name: string };
+/** What is being reported on a chat server: a message (the text shown as a reminder; `authorId` for the offer to block afterwards) or a member. */
+export type ReportTarget = { kind: "message"; messageId: string; authorName: string; excerpt: string; authorId?: string } | { kind: "member"; userId: string; name: string };
 /** A friend's direct message, reported to the directory's operator (`peer` = the friend, the message's author). */
 export type DmReportTarget = { kind: "dm"; peer: string; name: string; messageId: string; excerpt: string };
-type ServerProps = { target: ReportTarget; api: ServerApi; serverName: string };
+/** `block`: after the report the dialog offers to block the person (stage 3); null = not offered (already blocked, or no member to block). */
+type ServerProps = { target: ReportTarget; api: ServerApi; serverName: string; block?: { name: string; onBlock: () => void } | null };
 /** `directoryHost` names who gets it; the store sends the report (`reportDm`) and, afterwards, the dialog offers to block. */
 type DirectoryProps = { target: DmReportTarget; store: Store; directoryHost: string };
 
@@ -62,6 +63,7 @@ export function ReportDialog(props: (ServerProps | DirectoryProps) & { onClose: 
               <p>{directory ? t("report.sentDirectory", { name: directory.target.name }) : t("report.sent", { server: server?.serverName ?? "" })}</p>
               <div className="dialog-actions">
                 {directory && <button className="secondary" onClick={() => { onClose(); askBlockFriend(directory.store, directory.target.peer, directory.target.name); }}><Icon name="ban" /> {t("friends.block")}</button>}
+                {server?.block && <button className="secondary" onClick={() => { onClose(); server.block?.onBlock(); }}><Icon name="ban" /> {t("block.block")}</button>}
                 <button onClick={onClose}>{t("common.close")}</button>
               </div>
             </>

@@ -13,6 +13,7 @@ import { dmReportContent } from "./dmReports";
 import { forgetServerAccount, loadOrCreateIdentity, loadServerAccounts, newIdentity, storeIdentity, storeServerAccount, type Identity, type ServerAccount } from "./identity";
 import { ServerConnection, type ServerConnState } from "./serverConnection";
 import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSettings } from "./accountSettings";
+import { loadBlockedLists, sameBlocked, saveBlockedLists, saveBlockedName, withBlocked, type BlockedLists } from "./blocked";
 import { sameServerOrder } from "./serverOrder";
 import { seesIncoming } from "./attention";
 import { accountLocalePreference, detectLocale, locale, localePreference, markAccountLocalePreference, storeLocalePreference, t, type LocalePreference } from "./i18n";
@@ -76,6 +77,11 @@ export type State = {
   accountHiddenGames: string[] | null;
   /** A language change is stored but waits for the reload until the voice connection has ended (`reloadForLocale`). */
   localeReloadPending: boolean;
+  /**
+   * Blocked people per identity (the identity's public key -> their public keys; blocked.ts, docs/features/reports.md stage 3).
+   * The main identity's list follows the directory account inside the sealed settings, a server account's stays on this device.
+   */
+  blocked: BlockedLists;
   // ---- M7: friends and direct messages over the directory socket
   /** Connection to the directory socket; "idle" also when there is no directory or no account. */
   directoryLink: LinkStatus;
@@ -176,6 +182,8 @@ export class Store {
   private localHidden: string[] | null = null;
   /** The server rail's order as the account's sealed blob has it (null = it says nothing); like the hide list it never travels in the open. */
   private accountOrder: string[] | null = null;
+  /** The blocked people as the account's sealed blob has them (null = it says nothing); the same rule. */
+  private accountBlocked: string[] | null = null;
   private settingsKey: { publicKey: string; key: Promise<CryptoKey> } | null = null;
   private settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -187,7 +195,7 @@ export class Store {
     this.state = {
       identity: null, serverAccounts: handlesOf(loadServerAccounts()), homeHost: this.homeHost, activeHost: this.homeHost, servers: home ? { [home.state.host]: home.state } : {},
       signedIn: false, localHosts: [], clientLogin: { busy: false, error: null }, joinInvites: {},
-      directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false,
+      directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
       directoryLink: "idle", directoryLinkError: null, dmReports: false, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
     };
     subscribeVoiceSettings((_s, source) => { if (source === "user") this.scheduleSettingsPush(); });
@@ -216,6 +224,8 @@ export class Store {
       onVoiceStop: (what, by) => this.onVoiceStop?.(host, what, by),
       onVoiceGone: () => this.onVoiceGone?.(host),
       onMention: (channelId) => this.incoming("mention", this.state.activeHost === host && !this.state.homeOpen && this.conns.get(host)?.state.currentChannelId === channelId),
+      // Blocked people (stage 3): their messages neither mark the channel unread nor count as mentions.
+      isBlocked: (publicKey) => this.blockedFor(host).includes(publicKey),
     });
     conn.setIdle(activity.idle);
     conn.setGame(this.gameOnServers ? this.game : null);
@@ -258,8 +268,10 @@ export class Store {
     this.set({ serverAccounts: handlesOf(loadServerAccounts()) });
   }
   private dropServerAccount(host: string) {
+    const acc = this.serverAccount(host);
     forgetServerAccount(host);
     this.set({ serverAccounts: handlesOf(loadServerAccounts()) });
+    if (acc) this.forgetBlockedOf(acc.publicKey);
   }
   /**
    * The domain a sign-in on `conn` signs: the address bar's for the own server, else the host this client actually connects
@@ -817,10 +829,52 @@ export class Store {
   acceptFriend(publicKey: string) { this.friendAction("friends.accept", publicKey); }
   declineFriend(publicKey: string) { this.friendAction("friends.decline", publicKey); }
   removeFriend(publicKey: string) { this.leavePeer(publicKey); this.friendAction("friends.remove", publicKey); }
-  blockFriend(publicKey: string) { this.leavePeer(publicKey); this.friendAction("friends.block", publicKey); }
+  /** Blocking a friend (or anybody with a directory account) is the block of stage 3 with the directory told as well (`setBlocked`). */
+  blockFriend(publicKey: string, name = "") { this.setBlocked(null, publicKey, true, { name, directory: true }); }
   /** An open conversation with somebody who is no friend any more closes: the home view shows its start page. */
   private leavePeer(publicKey: string) { if (this.state.currentPeer === publicKey) this.set({ currentPeer: null }); }
-  unblockFriend(publicKey: string) { this.friendAction("friends.unblock", publicKey); }
+  unblockFriend(publicKey: string) { this.setBlocked(null, publicKey, false, { directory: true }); }
+
+  // ---------- Blocked people (blocked.ts, docs/features/reports.md stage 3, 27 September 2026)
+  /** The people blocked by the identity used on `host` (its server account's list, else the main identity's); null = the main identity. */
+  blockedFor(host: string | null): readonly string[] {
+    const owner = host ? this.identityFor(host) : this.state.identity;
+    return owner ? this.state.blocked[owner.publicKey] ?? [] : [];
+  }
+  /**
+   * Block or unblock a person for the identity used on `host` (null = the main identity). Blocking is this client's view:
+   * their messages fold, their voice is silent here, their mentions do not count; no server learns it. `directory` = the person
+   * has a directory account, so the directory is told as well: `friends.block` keeps their requests out and ends a friendship,
+   * `friends.unblock` lifts that. `name` is kept on this device for the settings' list.
+   */
+  setBlocked(host: string | null, publicKey: string, blocked: boolean, opts: { name?: string; directory?: boolean } = {}): void {
+    const owner = host ? this.identityFor(host) : this.state.identity;
+    const key = publicKey.toLowerCase();
+    if (!owner || key === owner.publicKey) return;
+    const list = this.state.blocked[owner.publicKey] ?? [];
+    const next = withBlocked(list, key, blocked);
+    if (!sameBlocked(list, next)) this.storeBlockedList(owner.publicKey, next, blocked && opts.name ? { key, name: opts.name } : null);
+    if (owner.publicKey !== this.state.identity?.publicKey || !opts.directory || !this.link) return;
+    if (blocked) { this.leavePeer(key); this.friendAction("friends.block", key); }
+    else if (this.friendState(key) === "blocked") this.friendAction("friends.unblock", key);
+  }
+  /** The list of one identity as it is now: stored, shown, the servers' marks counted again, and the main identity's pushed to the account. */
+  private storeBlockedList(owner: string, list: string[], name: { key: string; name: string } | null = null): void {
+    const all = { ...this.state.blocked };
+    if (list.length > 0) all[owner] = list; else delete all[owner];
+    saveBlockedLists(all);
+    saveBlockedName(name?.key ?? "", name?.name ?? "", all);
+    this.set({ blocked: all });
+    for (const [host, conn] of this.conns) if (this.identityFor(host)?.publicKey === owner) conn.refreshMarks();
+    if (owner === this.state.identity?.publicKey && this.sealedSupported && this.settingsLoaded && !sameBlocked(list, this.accountBlocked)) this.scheduleSettingsPush();
+  }
+  /** A key that is gone (a server account forgotten, the identity replaced) takes its list along. */
+  private forgetBlockedOf(owner: string): void {
+    if (!this.state.blocked[owner]) return;
+    const all = { ...this.state.blocked }; delete all[owner];
+    saveBlockedLists(all); saveBlockedName("", "", all);
+    this.set({ blocked: all });
+  }
   /**
    * Encrypt and send a direct message; it is displayed via the directory's echo (dm.message). Links get their previews
    * first (dmPreviews.ts): made here, by the sender, and sent inside the encrypted message.
@@ -894,7 +948,7 @@ export class Store {
     const id = this.state.identity; const url = this.state.directoryUrl;
     if (!id || !url || !this.state.directoryAccount) {
       this.accountSettings = null;
-      this.accountSealed = false; this.settingsLoaded = false; this.pushWanted = false; this.accountHidden = null; this.accountOrder = null;
+      this.accountSealed = false; this.settingsLoaded = false; this.pushWanted = false; this.accountHidden = null; this.accountOrder = null; this.accountBlocked = null;
       if (this.settingsPushTimer) { clearTimeout(this.settingsPushTimer); this.settingsPushTimer = null; }
       this.set({ accountServers: null, settingsSealed: false, accountHiddenGames: null });
       return;
@@ -927,21 +981,22 @@ export class Store {
   private async adoptAccountSettings(status: AccountStatus): Promise<void> {
     const id = this.state.identity;
     let remote = this.settingsSupported ? status.settings : null;
-    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null;
+    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null;
     const blob = this.sealedSupported ? status.settingsSealed : null;
     if (id && blob) {
       const content = await this.settingsKeyOf(id).then((key) => openSettings(key, id.publicKey, blob), () => null);
       if (this.state.identity !== id) return;
       // A blob this key does not open counts as none: the device's settings make a new one.
-      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; sealed = true; }
+      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; sealed = true; }
     }
     const first = !this.settingsLoaded;
-    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.settingsLoaded = true;
+    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.settingsLoaded = true;
     // A change the user just made here is newer than what the status says; the pending push brings the account in step.
     if (this.settingsPushTimer || this.pushWanted) {
       // The hide list too, with one exception: a push that waited for this first status knows nothing of the account's list
-      // yet and must not drop from it what another device hid.
+      // yet and must not drop from it what another device hid. The block list the same way.
       if (first && hidden && this.localHidden) this.localHidden = [...new Set([...this.localHidden, ...hidden])];
+      if (first && blocked && id) { const mine = this.state.blocked[id.publicKey] ?? []; const joined = [...new Set([...mine, ...blocked])]; if (!sameBlocked(mine, joined)) this.storeBlockedList(id.publicKey, joined); }
       if (sealed !== this.state.settingsSealed) this.set({ settingsSealed: sealed });
       if (!this.settingsPushTimer) this.scheduleSettingsPush(0);
       return;
@@ -952,6 +1007,8 @@ export class Store {
     let local = loadVoiceSettings();
     // The server rail's order from the blob: the account's wins on this device (a device that reordered just now is the pending-push case above).
     if (order && !sameServerOrder(order, local.serverOrder)) { local = { ...local, serverOrder: order }; saveVoiceSettings(local, "directory"); }
+    // The blocked people the same way: the account's list wins on this device; a device that blocked somebody just now is the pending-push case.
+    if (blocked && id && !sameBlocked(blocked, this.state.blocked[id.publicKey])) this.storeBlockedList(id.publicKey, blocked);
     if (!remote) {
       // Nothing stored yet (or an older directory): cue settings stored by an older client still win, the rest is seeded from this device.
       const sounds = status.soundSettings ? normalizeSoundSettings({ ...status.soundSettings, message: status.soundSettings.message ?? local.sounds.message }) : null;
@@ -962,8 +1019,8 @@ export class Store {
     }
     this.accountSettings = remote;
     if (!sameAccountSettings(toAccountSettings(local, remote.locale), remote, true)) saveVoiceSettings(applyAccountSettings(local, remote), "directory");
-    // Settings still in the open, or a hide list or a server order the account lacks: the push seals them.
-    if (this.sealedSupported && (!sealed || !sameHiddenGames(this.hiddenForAccount(), hidden) || !sameServerOrder(order ?? [], local.serverOrder))) this.scheduleSettingsPush(0);
+    // Settings still in the open, or a hide list, a server order or a block list the account lacks: the push seals them.
+    if (this.sealedSupported && (!sealed || !sameHiddenGames(this.hiddenForAccount(), hidden) || !sameServerOrder(order ?? [], local.serverOrder) || !sameBlocked(this.mainBlocked(), blocked))) this.scheduleSettingsPush(0);
     // Language: a choice made on this device since it was last in step with the account (login footer) wins and is pushed;
     // otherwise the account's applies, with a reload only when the texts actually change.
     const pref = localePreference(); const synced = accountLocalePreference();
@@ -975,6 +1032,8 @@ export class Store {
   }
   private localAccountSettings(): AccountSettings { return toAccountSettings(loadVoiceSettings(), localePreference()); }
   private hiddenForAccount(): string[] | null { return this.localHidden ?? this.accountHidden; }
+  /** The main identity's blocked people, the part of the block lists that may follow the account. */
+  private mainBlocked(): string[] { return this.state.identity ? this.state.blocked[this.state.identity.publicKey] ?? [] : []; }
   private settingsKeyOf(id: Identity): Promise<CryptoKey> {
     if (this.settingsKey?.publicKey !== id.publicKey) this.settingsKey = { publicKey: id.publicKey, key: deriveSettingsKey(id.privateKey, id.publicKey) };
     return this.settingsKey.key;
@@ -1001,12 +1060,14 @@ export class Store {
     const next = this.localAccountSettings(); const known = this.accountSettings;
     try {
       if (this.sealedSupported) {
-        const hidden = this.hiddenForAccount(); const order = loadVoiceSettings().serverOrder;
-        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? [])) return;
-        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}) });
+        const hidden = this.hiddenForAccount(); const order = loadVoiceSettings().serverOrder; const blocked = this.mainBlocked();
+        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked)) return;
+        // The block list always goes along, an empty one too: "nobody" must win over a device's stale list after an unblock elsewhere
+        // (only a blob from before the feature says nothing about it).
+        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked });
         await api.directorySetSealedSettings(url, id, blob);
         markAccountLocalePreference(next.locale);
-        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order;
+        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked;
         this.set({ settingsSealed: true, accountHiddenGames: hidden });
       } else if (this.settingsSupported) {
         if (known && sameAccountSettings(known, next)) return;
@@ -1211,7 +1272,7 @@ export class Store {
     for (const conn of this.conns.values()) conn.logout();
     this.conns.clear();
     this.forgetAllTokens();
-    for (const host of Object.keys(loadServerAccounts())) forgetServerAccount(host);
+    for (const [host, acc] of Object.entries(loadServerAccounts())) { forgetServerAccount(host); this.forgetBlockedOf(acc.publicKey); }
     this.set({ serverAccounts: {} });
     this.lastHost = null; this.entered = false; this.startTarget = null;
     this.set({ servers: {}, activeHost: null, signedIn: false, localHosts: [], joinInvites: {}, clientLogin: { busy: false, error: null } });
@@ -1224,7 +1285,9 @@ export class Store {
     this.link?.close(); this.link = null;
     this.forgetAllTokens();
     const { forgetIdentity } = await import("./identity");
+    const old = this.state.identity;
     forgetIdentity();
+    if (old) this.forgetBlockedOf(old.publicKey);
     this.set({ identity: await loadOrCreateIdentity(), directoryAccount: undefined });
     void this.refreshDirectory();
   }

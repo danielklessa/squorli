@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DM_REPORT_CONTEXT_MAX, DirectoryGame, DmReportRequest, LibraryGameId, directoryDmReportPayload, directoryGameIconUrl, directoryGameUrl, splitGameId } from "./directory";
 import {
   ACCOUNT_SETTINGS_MAX_LENGTH, AVATAR_MAX_BYTES, AccountSettings, AccountSettingsUpdateRequest, AvatarUpdateRequest, DirectoryAccount, DirectoryHealth, avatarDigest, directoryAvatarPayload, directoryAvatarUrl, sniffAvatarMime, DirectoryRegisterRequest, Handle, directoryRegisterMessage, parseAccountSettings,
-  HIDDEN_GAMES_MAX, HIDDEN_GAME_ID_MAX, SERVER_HOST_MAX, SEALED_SETTINGS_MAX_LENGTH, SealedSettings, SoundSettings, deriveSettingsKey, openSettings, parseSealedSettings, sealSettings,
+  BLOCKED_USERS_MAX, HIDDEN_GAMES_MAX, HIDDEN_GAME_ID_MAX, SERVER_HOST_MAX, SERVER_ORDER_MAX, SEALED_SETTINGS_MAX_LENGTH, SealedSettings, SoundSettings, deriveSettingsKey, openSettings, parseSealedSettings, sealSettings,
 } from "./directory";
 
 describe("registration", () => {
@@ -72,7 +72,7 @@ describe("account settings", () => {
 
 describe("sealed settings", () => {
   const seed = "11".repeat(32); const publicKey = "a".repeat(64);
-  const content = { settings: AccountSettings.parse({ locale: "de", stage: { featureSelf: false } }), hiddenGames: ["steam:730", "epic:Fortnite"], serverOrder: ["b.example", "a.example"] };
+  const content = { settings: AccountSettings.parse({ locale: "de", stage: { featureSelf: false } }), hiddenGames: ["steam:730", "epic:Fortnite"], serverOrder: ["b.example", "a.example"], blockedUsers: ["c".repeat(64), "d".repeat(64)] };
   it("opens what it sealed, on every device that has the seed", async () => {
     const sealed = await sealSettings(await deriveSettingsKey(seed, publicKey), publicKey, content);
     expect(SealedSettings.safeParse(sealed).success).toBe(true);
@@ -101,6 +101,24 @@ describe("sealed settings", () => {
     const sealed = await sealSettings(key, publicKey, { settings: content.settings, hiddenGames });
     expect(JSON.stringify(sealed).length).toBeLessThanOrEqual(SEALED_SETTINGS_MAX_LENGTH);
     expect((await openSettings(key, publicKey, sealed))?.hiddenGames).toHaveLength(HIDDEN_GAMES_MAX);
+  });
+  it("carries the longest block list and server order the schema allows within the request's limit", async () => {
+    // Every list at its maximum at once would not fit; a real account never hides a thousand games and blocks two hundred people.
+    const serverOrder = Array.from({ length: SERVER_ORDER_MAX }, (_, i) => `${String(i).padStart(SERVER_HOST_MAX - 8, "x")}.example`);
+    const blockedUsers = Array.from({ length: BLOCKED_USERS_MAX }, (_, i) => i.toString(16).padStart(64, "0"));
+    const key = await deriveSettingsKey(seed, publicKey);
+    const sealed = await sealSettings(key, publicKey, { settings: content.settings, serverOrder, blockedUsers });
+    expect(JSON.stringify(sealed).length).toBeLessThanOrEqual(SEALED_SETTINGS_MAX_LENGTH);
+    const opened = await openSettings(key, publicKey, sealed);
+    expect(opened?.serverOrder).toHaveLength(SERVER_ORDER_MAX);
+    expect(opened?.blockedUsers).toHaveLength(BLOCKED_USERS_MAX);
+  });
+  it("cleans the block list and says nothing when the blob has none", async () => {
+    const key = await deriveSettingsKey(seed, publicKey);
+    const odd = await sealSettings(key, publicKey, { settings: content.settings, blockedUsers: ["C".repeat(64), "", "c".repeat(64), "not a key", "e".repeat(63)] });
+    expect((await openSettings(key, publicKey, odd))?.blockedUsers).toEqual(["c".repeat(64)]);
+    const none = await sealSettings(key, publicKey, { settings: content.settings });
+    expect((await openSettings(key, publicKey, none))?.blockedUsers).toBeUndefined();
   });
   it("drops a hidden id that does not fit and keeps the rest; settings that do not fit open as nothing", async () => {
     const key = await deriveSettingsKey(seed, publicKey);

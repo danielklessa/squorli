@@ -63,7 +63,7 @@ The directory's side of kinds two and three is planned in the directory's own re
 - Protocol: a new part in `packages/protocol` (copied to the directory, `AGENTS.md` section 2a), a directory feature flag so that clients show the entries only where the directory knows them.
 - After the report the client offers to block (section 6).
 
-## 6. Blocking members on servers
+## 6. Blocking members on servers (built 27 September 2026, `docs/features/reports.md`)
 
 - A list of blocked accounts per user, in the account's sealed settings (`SealedSettingsContent`, user's rule of 22 September 2026: new account-level settings are encrypted), so it follows the user across devices and servers and no server learns it. Server accounts (`~name`) keep theirs per device in their key's storage.
 - Effect in the client: messages of a blocked member are folded ("blocked message, show"), their voice is muted at volume 0 for this user, their mentions do not count, friend requests from them are refused (that exists). The server does not enforce anything: blocking is a view, moderation is the server's.
@@ -81,7 +81,7 @@ The directory's side of kinds two and three is planned in the directory's own re
 
 1. **Server reports:** permission, table, snapshot, queue, event, client menus and dialog, retention job. **Built 26 September 2026** (`docs/features/reports.md`).
 2. **Delete on ban** and the moderation log. **Built 26 September 2026.**
-3. **Blocking** in the sealed settings.
+3. **Blocking** in the sealed settings. **Built 27 September 2026** (`docs/features/reports.md`).
 4. **Reports to the directory** (direct messages, accounts, servers, passed-on reports), together with the directory's side. **Direct messages built 26 September 2026** (`docs/features/reports.md`); accounts, whole servers and passed-on server reports open.
 5. Offline notification with the push of `docs/PLAN-mobile.md`.
 

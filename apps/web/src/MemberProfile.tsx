@@ -2,6 +2,7 @@ import { handleLabel, type Friend, type Member } from "@squorli/protocol";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Avatar } from "./Avatar";
+import type { BlockControls } from "./blocked";
 import { ContextMenu, type MenuAnchor } from "./ContextMenu";
 import { EmojiButton } from "./EmojiPicker";
 import { GameLine } from "./GameLine";
@@ -19,9 +20,10 @@ export type ProfileFriends = {
 /**
  * The small profile a left click on a member opens (user's wish, 24 September 2026): avatar, name, handle, game; for a
  * friend a line to write (with emoji) that sends a direct message and switches to the friends view with that friend open;
- * otherwise a button to send a friend request. The context menu stays on the right click.
+ * otherwise a button to send a friend request. The context menu stays on the right click. `blocked`: block or unblock the
+ * person for me (docs/features/reports.md, stage 3); null = not signed in here.
  */
-export function MemberProfile({ anchor, member, isMe, friends, onClose }: { anchor: MenuAnchor; member: Member; isMe: boolean; friends: ProfileFriends | null; onClose: () => void }) {
+export function MemberProfile({ anchor, member, isMe, friends, blocked = null, onClose }: { anchor: MenuAnchor; member: Member; isMe: boolean; friends: ProfileFriends | null; blocked?: BlockControls | null; onClose: () => void }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -64,6 +66,9 @@ export function MemberProfile({ anchor, member, isMe, friends, onClose }: { anch
           {err && <p className="error small">{err}</p>}
         </div>
       )}
+      {blocked && !isMe && (blocked.has(m.publicKey)
+        ? <button role="menuitem" className="secondary small" onClick={() => { onClose(); blocked.onUnblock(m.publicKey); }}><Icon name="undo-2" /> {t("block.unblock")}</button>
+        : <button role="menuitem" className="secondary small danger" onClick={() => { onClose(); blocked.onBlock(m.publicKey, m.displayName, !!m.handle); }}><Icon name="ban" /> {t("block.block")}</button>)}
     </ContextMenu>
   );
 }

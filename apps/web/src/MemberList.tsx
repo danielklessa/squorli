@@ -3,6 +3,7 @@ import { Permission, handleLabel, hasPermission, type Channel, type Member, type
 import { useState, type MouseEvent, type ReactNode } from "react";
 import { ContextMenu, ContextSubmenu, type MenuAnchor } from "./ContextMenu";
 import type { ServerApi } from "./api";
+import type { BlockControls } from "./blocked";
 import { askConfirm, askInput } from "./dialogs";
 import { Icon } from "./Icon";
 import { GameLine } from "./GameLine";
@@ -26,6 +27,8 @@ type Props = {
   canReport?: boolean; serverName?: string;
   /** M7: friends via the directory; null = no directory socket (then no entries in the menu). */
   friends: (ProfileFriends & { onMessage: (publicKey: string) => void; onRemove: (publicKey: string, name: string) => void }) | null;
+  /** Blocking a member for me (docs/features/reports.md, stage 3): the menu's entry and the mark in the row; null = not signed in here. */
+  blocked?: BlockControls | null;
   /** Phone: the list is a panel slid in from the right; a header with this close button sits on top. null = the desktop column. */
   onClose?: (() => void) | null;
   /** Vote kick (docs/features/votekick.md): per voice channel whether the server would take a vote right now. */
@@ -36,7 +39,7 @@ type Props = {
 };
 
 /** Right column: owners at the very top, then members grouped by highest role, online first. Context actions depending on permissions. */
-export function MemberList({ api, members, roles, myUserId, myPermissions, ownerId, channelPermissions, voice, channels, friends, onClose = null, voteKickAllowed, onVoteKick, voteKickBox, canReport = false, serverName = "" }: Props) {
+export function MemberList({ api, members, roles, myUserId, myPermissions, ownerId, channelPermissions, voice, channels, friends, blocked = null, onClose = null, voteKickAllowed, onVoteKick, voteKickBox, canReport = false, serverName = "" }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [open, setOpen] = useState<({ userId: string } & MenuAnchor) | null>(null);
   const openMenu = (event: MouseEvent<HTMLButtonElement>, userId: string) => {
@@ -112,6 +115,7 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
                     {m.online && m.afk && <Icon name="moon" className="afk" title={t("members.afk")} />}
                     {m.isOwner && <Icon name="crown" className="owner" title={t("members.owner")} />}
                     {m.streamBlocked && <Icon name="video-off" className="muted" title={t("members.streamBlocked")} />}
+                    {blocked?.has(m.publicKey) && <Icon name="ban" className="muted" title={t("members.blocked")} />}
                   </button>
                 </li>
               );
@@ -119,7 +123,7 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
           </ul>
         </section>
       ))}
-      {profile && profileMember && <MemberProfile anchor={profile} member={profileMember} isMe={profileMember.userId === myUserId} friends={friends} onClose={() => setProfile(null)} />}
+      {profile && profileMember && <MemberProfile anchor={profile} member={profileMember} isMe={profileMember.userId === myUserId} friends={friends} blocked={blocked} onClose={() => setProfile(null)} />}
       {open && menuMember && (() => {
         // The menu lives outside the rows: a role given here can move the member into another group, and the menu (with its
         // open roles submenu) must stay where it is so several roles can be ticked in a row (user's wish, 24 September 2026).
@@ -146,6 +150,10 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
                 </div>
               );
             })()}
+            {/* Blocking for me (stage 3): a view of this client, no server action; hence outside the "Server" section below. */}
+            {blocked && !isMe && (blocked.has(m.publicKey)
+              ? <button role="menuitem" className="secondary small" onClick={() => { closeMenu(); blocked.onUnblock(m.publicKey); }}><Icon name="undo-2" /> {t("block.unblock")}</button>
+              : <button role="menuitem" className="secondary small danger" onClick={() => { closeMenu(); blocked.onBlock(m.publicKey, m.displayName, !!m.handle); }}><Icon name="ban" /> {t("block.block")}</button>)}
             <VoiceMemberActions api={api} member={m} myUserId={myUserId} permsIn={permsIn} voice={voice} channels={channels}
               voteKickAllowed={voteKickAllowed} onVoteKick={onVoteKick} onClose={closeMenu} onError={setErr} />
             {/* Everything that acts on the whole server, not on a channel (user's wishes, 24 September 2026): roles, owner status,
@@ -185,7 +193,8 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
           </ContextMenu>
         );
       })()}
-      {reportTarget && <ReportDialog api={api} target={reportTarget} serverName={serverName} onClose={() => setReportTarget(null)} />}
+      {reportTarget && <ReportDialog api={api} target={reportTarget} serverName={serverName} onClose={() => setReportTarget(null)}
+        block={(() => { const x = blocked && reportTarget.kind === "member" ? members.find((y) => y.userId === reportTarget.userId) : null; return x && blocked && !blocked.has(x.publicKey) ? { name: x.displayName, onBlock: () => blocked.onBlock(x.publicKey, x.displayName, !!x.handle) } : null; })()} />}
     </aside>
   );
 }

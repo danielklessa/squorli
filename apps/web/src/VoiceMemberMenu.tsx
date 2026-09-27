@@ -38,7 +38,8 @@ export function VoiceMemberMenu({ anchor, member, client, voiceState, api, myUse
   return (
     <ContextMenu anchor={anchor} label={name} onClose={onClose}>
       <div className="context-identity" role="presentation"><Avatar name={name} src={member.avatarUrl} online={member.online} afk={member.afk} /><strong>{name}</strong></div>
-      <UserVolumeControl client={client} publicKey={member.publicKey} />
+      {/* A blocked person is silent here whatever the slider says (docs/features/reports.md, stage 3). */}
+      {client.isBlocked(member.publicKey) ? <span className="muted small"><Icon name="ban" /> {t("block.voiceMuted")}</span> : <UserVolumeControl client={client} publicKey={member.publicKey} />}
       {p && mayView && (["camera", "screen"] as const).filter((source) => source === "camera" ? p.cameraOn : p.screenOn).map((source) => {
         const id = feedId(p.identity, source);
         const on = client.isVideoWatching(id);

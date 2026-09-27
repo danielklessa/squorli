@@ -18,6 +18,11 @@ describe("read state", () => {
   });
   it("starts a channel this device never saw as read", () => {
     expect(catchUp([msg(5, other, `<@${me}>`)], undefined, me)).toEqual({ unread: false, mentions: 0, latest: 5 });
+  });
+  it("leaves a blocked person's messages out of the marks", () => {
+    const list = [msg(5, other), msg(6, other, `<@${me}>`)];
+    expect(catchUp(list, 4, me, new Set([other]))).toEqual({ unread: false, mentions: 0, latest: 6 });
+    expect(catchUp(list, 4, me, new Set(["somebody-else"]))).toEqual({ unread: true, mentions: 1, latest: 6 });
     expect(catchUp([], undefined, me)).toEqual({ unread: false, mentions: 0, latest: null });
   });
   it("remembers the newest shown message and keeps the object when nothing changed", () => {

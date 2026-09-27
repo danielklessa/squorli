@@ -105,6 +105,8 @@ export type ConnectionHooks = {
   onVoiceStop: (what: { camera: boolean; screen: boolean }, by: string) => void;
   /** A live message of someone else mentions me (also in the channel that is open: the store knows whether the user looks at it). */
   onMention: (channelId: string) => void;
+  /** Blocked people (docs/features/reports.md, stage 3): by public key; their messages neither mark unread nor count as mentions here. */
+  isBlocked: (publicKey: string) => boolean;
 };
 
 const LOG_MAX = 80;
@@ -551,10 +553,12 @@ export class ServerConnection {
         }
         const typing = { ...(this.state.typing[e.message.channelId] ?? {}) };
         delete typing[e.message.authorId];
-        const unread = e.message.channelId !== this.state.currentChannelId && e.message.authorId !== this.state.userId;
+        // A blocked person's message is folded on screen and marks nothing (stage 3 of reports).
+        const blockedAuthor = this.blockedAuthors().has(e.message.authorId);
+        const unread = e.message.channelId !== this.state.currentChannelId && e.message.authorId !== this.state.userId && !blockedAuthor;
         if (e.message.channelId === this.state.currentChannelId) this.rememberRead(e.message.channelId, [e.message]);
         if (unread) this.liveLatest = { ...this.liveLatest, [e.message.channelId]: e.message.seq };
-        const mentionsMe = e.message.authorId !== this.state.userId && this.state.userId !== null && mentionsUser(e.message.content, this.state.userId);
+        const mentionsMe = !blockedAuthor && e.message.authorId !== this.state.userId && this.state.userId !== null && mentionsUser(e.message.content, this.state.userId);
         const mentioned = unread && mentionsMe;
         if (mentionsMe) this.hooks.onMention(e.message.channelId);
         this.set({
@@ -679,8 +683,21 @@ export class ServerConnection {
     }
     const ch = this.state.messages[channelId];
     if (!ch?.loaded) return;
-    const result = catchUp(ch.list, this.read[channelId], userId);
+    const result = catchUp(ch.list, this.read[channelId], userId, this.blockedAuthors());
     this.set({ unread: { ...this.state.unread, [channelId]: result.unread }, mentions: { ...this.state.mentions, [channelId]: result.mentions } });
+  }
+
+  /** The members this user has blocked, by user id, for the counters (`hooks.isBlocked` knows them by public key). */
+  private blockedAuthors(): ReadonlySet<string> {
+    const out = new Set<string>();
+    for (const m of this.state.server?.members ?? []) if (this.hooks.isBlocked(m.publicKey)) out.add(m.userId);
+    return out;
+  }
+  /** The block list changed (store.ts): unread and mention marks are counted again without the blocked people's messages. */
+  refreshMarks(): void {
+    if (this.state.connection !== "connected" || !this.state.userId) return;
+    if (this.serverRead) { void this.syncReadState(); return; }
+    void this.catchUpChannels();
   }
 
   /** Coalesced: a busy open channel sends one acknowledgement per pause, not one per message. */
@@ -743,7 +760,7 @@ export class ServerConnection {
         if (!cur?.loaded) this.historyLoadedAt.set(c.id, Date.now());
         const messages = { ...this.state.messages, [c.id]: { list, hasMore: cur?.loaded ? cur.hasMore : page.hasMore, loaded: true, loading: cur?.loading ?? false } };
         if (c.id === this.state.currentChannelId) { this.set({ messages }); this.rememberRead(c.id, list); continue; }   // opened while we were fetching
-        const result = catchUp(page.messages, this.read[c.id], userId);
+        const result = catchUp(page.messages, this.read[c.id], userId, this.blockedAuthors());
         if (this.read[c.id] === undefined) this.rememberRead(c.id, page.messages);   // first sight on this device: start from here
         this.set({
           messages,

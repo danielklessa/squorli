@@ -2,6 +2,7 @@ import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Avatar } from "./Avatar";
 import { Permission, hasPermission, type Channel, type Member, type Message } from "@squorli/protocol";
 import { ApiError } from "./api";
+import type { BlockControls } from "./blocked";
 import { slowmodeLabel, slowmodeRemaining } from "./channelPerms";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { askConfirm } from "./dialogs";
@@ -29,6 +30,8 @@ type Props = {
   /** The server takes reports (docs/features/reports.md): "Melden" on other people's messages. */
   canReport?: boolean;
   serverName?: string;
+  /** Blocked people (stage 3 of the reports): their messages fold, and the report dialog offers to block; null = not signed in here. */
+  blocked?: BlockControls | null;
 };
 
 const GROUP_MS = 5 * 60_000;
@@ -52,7 +55,7 @@ function PendingFile({ file, onRemove }: { file: File; onRemove: () => void }) {
   );
 }
 
-export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "" }: Props) {
+export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -162,7 +165,10 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
     try { await conn.api.editMessage(editing.id, encodeMentions(text, members, editMention.picked)); setEditing(null); editMention.close(); } catch (e) { setErr(String(e)); }
   }
 
-  const typers = Object.entries(typing).filter(([uid, t]) => uid !== myUserId && Date.now() - t < 4000).map(([uid]) => nameOf.get(uid) ?? t("chat.someone"));
+  // Blocked people (docs/features/reports.md, stage 3): their messages are folded to one line; "Anzeigen" opens one for this view.
+  const blockedAuthors = useMemo(() => new Set(blocked ? members.filter((m) => blocked.has(m.publicKey)).map((m) => m.userId) : []), [blocked, members]);
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  const typers = Object.entries(typing).filter(([uid, t]) => uid !== myUserId && !blockedAuthors.has(uid) && Date.now() - t < 4000).map(([uid]) => nameOf.get(uid) ?? t("chat.someone"));
 
   return (
     <section className="chat" onPaste={onPaste}>
@@ -180,7 +186,18 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
           const grouped = prev && prev.authorId === m.authorId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
           const newDay = !prev || fmtDay(prev.createdAt) !== fmtDay(m.createdAt);
           const mine = m.authorId === myUserId;
-          const mentioned = !mine && mentionsUser(m.content, myUserId);
+          const fromBlocked = blockedAuthors.has(m.authorId);
+          const mentioned = !mine && !fromBlocked && mentionsUser(m.content, myUserId);
+          if (fromBlocked && !revealed.has(m.id)) {
+            return (
+              <div key={m.id}>
+                {newDay && <div className="day-sep"><span>{fmtDay(m.createdAt)}</span></div>}
+                <article className={`msg blocked-msg ${grouped && !newDay ? "grouped" : ""}`}>
+                  <div className="blocked-fold"><Icon name="ban" /> <span>{t("block.folded", { name: nameOf.get(m.authorId) ?? t("chat.formerMember") })}</span><button className="secondary small" onClick={() => setRevealed((prev) => new Set(prev).add(m.id))}>{t("block.show")}</button></div>
+                </article>
+              </div>
+            );
+          }
           return (
             <div key={m.id}>
               {newDay && <div className="day-sep"><span>{fmtDay(m.createdAt)}</span></div>}
@@ -217,9 +234,10 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
                     </>
                   )}
                 </div>
-                {(mine || canManage || canReport) && editing?.id !== m.id && (
+                {(mine || canManage || canReport || fromBlocked) && editing?.id !== m.id && (
                   <div className="msg-actions">
-                    {!mine && canReport && <button className="icon" title={t("report.reportMessage")} onClick={() => setReportTarget({ kind: "message", messageId: m.id, authorName: nameOf.get(m.authorId) ?? "?", excerpt: m.content ? decodeMentions(m.content, members).text.slice(0, 200) : t("chat.attachments", { n: m.attachments.length }) })}><Icon name="flag" /></button>}
+                    {fromBlocked && <button className="icon" title={t("block.hide")} onClick={() => setRevealed((prev) => { const next = new Set(prev); next.delete(m.id); return next; })}><Icon name="eye-off" /></button>}
+                    {!mine && canReport && <button className="icon" title={t("report.reportMessage")} onClick={() => setReportTarget({ kind: "message", messageId: m.id, authorId: m.authorId, authorName: nameOf.get(m.authorId) ?? "?", excerpt: m.content ? decodeMentions(m.content, members).text.slice(0, 200) : t("chat.attachments", { n: m.attachments.length }) })}><Icon name="flag" /></button>}
                     {mine && m.content && <button className="icon" title={t("chat.edit")} onClick={() => startEdit(m)}><Icon name="pencil" /></button>}
                     {(mine || canManage) && <button className="icon" title={t("common.delete")} onClick={() => { void askConfirm({ title: t("chat.deleteTitle"), text: m.content ? ((c) => c.slice(0, 160) + (c.length > 160 ? "…" : ""))(decodeMentions(m.content, members).text) : t("chat.attachments", { n: m.attachments.length }), confirmLabel: t("common.delete"), danger: true }).then((ok) => { if (ok) return conn.api.deleteMessage(m.id); }).catch((e) => setErr(String(e))); }}><Icon name="trash-2" /></button>}
                   </div>
@@ -230,7 +248,8 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
         })}
       </div>
       </MentionContext.Provider>
-      {reportTarget && <ReportDialog api={conn.api} target={reportTarget} serverName={serverName} onClose={() => setReportTarget(null)} />}
+      {reportTarget && <ReportDialog api={conn.api} target={reportTarget} serverName={serverName} onClose={() => setReportTarget(null)}
+        block={(() => { const a = blocked && reportTarget.kind === "message" ? members.find((x) => x.userId === reportTarget.authorId) : null; return a && blocked && !blocked.has(a.publicKey) ? { name: a.displayName, onBlock: () => blocked.onBlock(a.publicKey, a.displayName, !!a.handle) } : null; })()} />}
 
       <footer className="composer">
         {mention.popup}

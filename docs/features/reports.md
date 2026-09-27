@@ -65,3 +65,29 @@ The user asked whether reports cover direct messages as well and, as they did no
 
 - The flag and the dialog on screen (typecheck, unit tests `dmReports.test.ts` (3) and the protocol's payload tests only).
 - A real report reaching the directory from the client (the directory's smoke test signs the same payload the client builds).
+
+## Built (27 September 2026): blocking members (stage 3)
+
+The user asked for stage 3 next ("dann mach erstmal reports stufe 3"). Plan section 6 applies: a list of blocked people per user, in the account's sealed settings, a view of this user's client alone. Code: `apps/web/src/blocked.ts` (the lists per identity, `chat.blocked.v1`, the names seen at the time in `chat.blockedNames.v1`, `BlockControls`), `store.ts` (`blockedFor`, `setBlocked`, the sealed sync), `serverConnection.ts` (`hooks.isBlocked`, `refreshMarks`), `readState.ts` (`catchUp` with `ignoreAuthors`), `ChatView.tsx` (the fold), `MemberList.tsx`/`MemberProfile.tsx` (the entries), `ReportDialog.tsx` (the offer after a report), `VoiceMemberMenu.tsx`, `voice/voiceClient.ts` (`setBlocked`), `SettingsDialog.tsx` ("Blockiert"), `friendActions.ts` (`askBlockPerson`); protocol `directory.ts` (`SealedSettingsContent.blockedUsers`, `BLOCKED_USERS_MAX` = 200; copied to the directory repo).
+
+- **Whom and where:** blocked by public key, so a block holds on every server where that person is. The directory account's list travels inside the sealed blob (`blockedUsers`) and so follows the user to every device; a server account (`~name`) keeps its list on this device under its own key (`chat.blocked.v1` is keyed by the identity's public key) and loses it with the account. No server and not the directory learns whom somebody blocks.
+- **Effect:** the person's messages are folded to one line ("Blockierte Nachricht von X", "Anzeigen" opens one for this view, the eye in the actions folds it again); they do not mark a channel unread and their mentions do not count (live and in the catch-up; a server with server-side read states still counts them until the channel is opened, it cannot know); they are not listed as typing; in a voice channel their voice and screen sound are silent for this user whatever the volume slider says (the member menu says "Blockiert: für dich stumm" instead of the slider), their tiles stay; with a directory account the directory is told as well (`friends.block`: their requests are refused, a friendship ends; `friends.unblock` when the block is lifted and the directory shows them as blocked). The person notices nothing.
+- **Where:** the member menu and the small profile ("Blockieren" / "Blockierung aufheben", never on oneself), the report dialog after a report of a message or a member ("Blockieren"), the friends' "Blockieren" (home view, conversation head, a direct message's report) which now goes the same way, a ban mark in the member row, and Einstellungen > Blockiert: the list of the identity used on the server shown (names from any open server, the friends, else the name remembered when blocking, else the key), where it is kept, "Blockierung aufheben". The confirmation says what follows and where the block holds (`block.textAccount` / `block.textDevice`).
+- **Sync:** like the hide list and the server rail's order: the account's list wins when the status is read, a device that blocked somebody just now (a pending push) merges the account's into its own first, and every push writes the list, an empty one too, so "nobody" wins over a device's stale list after an unblock elsewhere (a blob from before the feature says nothing and the device's list stays and is pushed).
+
+### Decisions made by Claude, not confirmed by the user
+
+- A blocked person's messages mark nothing, not only no mentions (the plan named mentions): a folded message should not ping anybody.
+- Blocking somebody with a directory account also blocks them at the directory (their requests refused, a friendship ended), as the plan's "friend requests from them are refused (that exists)" implies; a server account is blocked on this client only.
+- The empty list is written into the blob; the schema keeps the field optional for older blobs.
+- At most 200 blocked people per account (with the hide list at its maximum the blob would not fit the request otherwise).
+- The name is remembered on the device only, never in the blob.
+- The home view's "Blockiert" section (the directory's blocked friends) stays next to Einstellungen > Blockiert; both go through the same store functions.
+
+### Not checked
+
+- On screen: the fold, the menu entries, the tab and the confirmation texts (typecheck, unit tests and the store harness only; no screenshot yet).
+- Two real clients: the silence in a voice channel, a block from one device arriving at another while both are open (the second device takes it over at its next status read).
+- A server account's list on a real server, the mention counter on a server with server-side read states.
+- **Needs a desktop app release** (web client only; the server and the directory are unchanged apart from the protocol copy).
+

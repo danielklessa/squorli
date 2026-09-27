@@ -28,7 +28,7 @@ import { VoiceClient, type VoiceState } from "./voice/voiceClient";
 import { LocalAccountSettings } from "./AccountForms";
 import { safeHref } from "./safeHref";
 
-export type SettingsTab = "profile" | "view" | "voice" | "camera" | "sounds" | "hotkeys" | "games" | "sessions" | "account" | "app" | "licenses";
+export type SettingsTab = "profile" | "view" | "voice" | "camera" | "sounds" | "hotkeys" | "games" | "blocked" | "sessions" | "account" | "app" | "licenses";
 const TABS: { id: SettingsTab; label: string; icon: string }[] = [
   { id: "profile", label: t("settings.tab.profile"), icon: "user" },
   { id: "view", label: t("settings.tab.view"), icon: "languages" },
@@ -37,6 +37,7 @@ const TABS: { id: SettingsTab; label: string; icon: string }[] = [
   { id: "sounds", label: t("settings.tab.sounds"), icon: "bell" },
   { id: "hotkeys", label: t("settings.tab.hotkeys"), icon: "keyboard" },
   { id: "games", label: t("settings.tab.games"), icon: "gamepad-2" },
+  { id: "blocked", label: t("settings.tab.blocked"), icon: "ban" },
   { id: "sessions", label: t("settings.tab.sessions"), icon: "monitor-smartphone" },
   { id: "account", label: t("settings.tab.account"), icon: "key-round" },
   { id: "app", label: t("settings.tab.app"), icon: "download" },
@@ -63,7 +64,7 @@ const fmt = fmtDateTime;
  * the directory's account page, sign out, discard identity) and licenses (our own and the third-party notices, LicensesTab.tsx). With a directory account everything except the device selection
  * is stored there (store.ts pushes every change); sessions and the name on this server belong to the server shown.
  */
-export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, directoryUrl, directoryAccount, serverDomain, clientVersion, syncError, sealed, client, voice, initialTab, games, hotkeyStatus, onSaveServerName, onSaveGlobalName, onSetAvatar, onSetLocale, localePending, onCapturingKey, onClose, onLogout, onForget, serverAccount, onDirectorySignIn }: {
+export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, directoryUrl, directoryAccount, serverDomain, clientVersion, syncError, sealed, client, voice, initialTab, games, blocked, hotkeyStatus, onSaveServerName, onSaveGlobalName, onSetAvatar, onSetLocale, localePending, onCapturingKey, onClose, onLogout, onForget, serverAccount, onDirectorySignIn }: {
   /** The server on screen and who you are there; null = none is shown (client without a home server): the dialog then has
    *  no profile and no sessions, which belong to a server, and the account page names the directory account and `publicKey`. */
   api: ServerApi | null; me: Me | null; publicKey: string | null;
@@ -80,6 +81,8 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
   client: VoiceClient; voice: VoiceState; initialTab?: SettingsTab;
   /** Game detection of the desktop app; null = not available here, and the category is not shown. */
   games: GameDetection | null;
+  /** Blocked people (docs/features/reports.md, stage 3): the list of the identity used on the server shown, where it is kept, and lifting a block. */
+  blocked: { list: { publicKey: string; name: string }[]; inAccount: boolean; onUnblock: (publicKey: string) => void };
   /** What the desktop app's shell made of the global shortcuts (App.tsx); null until it answered, or in a browser (the category is not shown there). */
   hotkeyStatus: HotkeyStatus | null;
   onSaveServerName: (displayName: string | null) => Promise<void>;
@@ -589,6 +592,18 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
               </>
             )}
             {tab === "games" && games && <GamesTab games={games} hiddenInAccount={inAccount && sealed} />}
+
+            {tab === "blocked" && (
+              <>
+                <h3>{t("settings.tab.blocked")}</h3>
+                <p className="muted small">{t(blocked.inAccount ? "block.hintAccount" : "block.hintDevice")}</p>
+                {blocked.list.length === 0 ? <p className="muted">{t("block.none")}</p> : (
+                  <ul className="blocked-list">{blocked.list.map((b) => (
+                    <li key={b.publicKey}><span className="blocked-name">{b.name}</span><span className="muted small">{b.publicKey.slice(0, 16)}…</span><button className="secondary small" onClick={() => blocked.onUnblock(b.publicKey)}><Icon name="undo-2" /> {t("block.unblock")}</button></li>
+                  ))}</ul>
+                )}
+              </>
+            )}
 
             {tab === "hotkeys" && platform.hotkeys && <HotkeysTab settings={settings} bindings={settings.hotkeys} layout={keyLayout} status={hotkeyStatus} capturing={capturingHotkey} refused={refusedHotkey}
               onCapture={(action) => { setRefusedHotkey(null); setCapturingHotkey(action); }} onRemove={(action) => { setRefusedHotkey(null); update({ hotkeys: { ...settingsRef.current.hotkeys, [action]: null } }); }} />}

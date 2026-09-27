@@ -14,12 +14,12 @@ export type CatchUp = { unread: boolean; mentions: number; latest: number | null
 /**
  * State of one channel from its newest messages. `lastRead` undefined = this device has never seen the channel: nothing
  * counts as unread then (a new member or a new browser must not find every channel marked), the newest message becomes
- * the starting point. Own messages never count.
+ * the starting point. Own messages never count, nor those of `ignoreAuthors` (blocked people, docs/features/reports.md stage 3).
  */
-export function catchUp(messages: readonly Message[], lastRead: number | undefined, myUserId: string): CatchUp {
+export function catchUp(messages: readonly Message[], lastRead: number | undefined, myUserId: string, ignoreAuthors?: ReadonlySet<string>): CatchUp {
   const latest = messages.reduce<number | null>((max, m) => (max === null || m.seq > max ? m.seq : max), null);
   if (lastRead === undefined) return { unread: false, mentions: 0, latest };
-  const fresh = messages.filter((m) => m.seq > lastRead && m.authorId !== myUserId);
+  const fresh = messages.filter((m) => m.seq > lastRead && m.authorId !== myUserId && !ignoreAuthors?.has(m.authorId));
   return { unread: fresh.length > 0, mentions: fresh.filter((m) => mentionsUser(m.content, myUserId)).length, latest };
 }
 

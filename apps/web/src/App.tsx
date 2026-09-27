@@ -59,7 +59,8 @@ import { platform, type ControlEvent, type HotkeyStatus, type ScreenPick, type S
 import { formatDeepLink } from "./platform/deepLink";
 import { setSquorliLinkHandler } from "./squorliLinks";
 import { isTypingTarget } from "./usePushToTalk";
-import { askRemoveFriend } from "./friendActions";
+import { askBlockPerson, askRemoveFriend } from "./friendActions";
+import { loadBlockedNames, type BlockControls } from "./blocked";
 
 /**
  * A command from outside the window (docs/features/hotkeys.md): a global shortcut, the push-to-talk key watched by the
@@ -217,6 +218,8 @@ export function App() {
   /** The server the last voice connection belonged to: its removal notice may come after the connection is already gone. */
   const lastVoiceHostRef = useRef<string | null>(null);
   if (voiceHost) lastVoiceHostRef.current = voiceHost;
+  // Blocked people (docs/features/reports.md, stage 3): the voice client silences those of the identity we sit on the voice server with.
+  useEffect(() => { client.setBlocked(voiceHost ? store.blockedFor(voiceHost) : []); }, [client, store, voiceHost, state.blocked]);
   /** The join under way, if any (joinVoice): the same host and channel asked again waits for it instead of starting over. */
   const joinInFlight = useRef<{ host: string; channelId: string; promise: Promise<void> } | null>(null);
   /** Moved to the AFK channel for inactivity: the voice channel the dock offers the way back to (user's decision: never automatically). */
@@ -641,6 +644,22 @@ export function App() {
     // The member list's small profile: send, then show the conversation in the friends view (user's wish, 24 September 2026).
     onSend: async (pk: string, text: string) => { await store.sendDm(pk, text); store.selectPeer(pk); setMobileContent(true); },
   } : null;
+  // Blocking people (docs/features/reports.md, stage 3): per server the identity used there decides whose list applies (store.ts).
+  const blockControlsFor = (host: string): BlockControls => ({
+    has: (pk) => store.blockedFor(host).includes(pk),
+    onBlock: (pk, name, directory) => askBlockPerson(store, host, pk, name, directory),
+    onUnblock: (pk) => store.setBlocked(host, pk, false, { directory: true }),
+  });
+  // The settings' list of the identity used on the server shown: names from any open server, from the friends, else the name
+  // remembered when blocking (this device), else the key.
+  const blockedList = (() => {
+    const known = new Map<string, string>();
+    for (const s of Object.values(state.servers)) for (const m of s.server?.members ?? []) known.set(m.publicKey, m.displayName);
+    for (const f of state.friends ?? []) if (!known.has(f.publicKey)) known.set(f.publicKey, `@${f.handle}`);
+    const remembered = loadBlockedNames();
+    return store.blockedFor(activeHost).map((pk) => ({ publicKey: pk, name: known.get(pk) ?? remembered[pk] ?? `${pk.slice(0, 16)}…` }));
+  })();
+  const blockedInAccount = !!state.directoryAccount && state.settingsSealed && !(activeHost && state.serverAccounts[activeHost]);
 
   // Server rail: own server first, then the account's servers from the directory (without duplicating our own).
   // Without a home server: the account's servers, then the ones added by address, and the one being looked at before joining.
@@ -744,7 +763,7 @@ export function App() {
             channel={current} messages={view.active.messages[current.id] ?? { list: [], hasMore: true, loaded: false, loading: false }}
             members={view.server.members} myUserId={view.active.userId!} myPermissions={permsIn(view.server, current.id)}
             typing={view.active.typing[current.id] ?? {}} conn={view.conn}
-            canReport={view.server.openReports !== undefined} serverName={view.server.settings.name}
+            canReport={view.server.openReports !== undefined} serverName={view.server.settings.name} blocked={blockControlsFor(view.active.host)}
           />
         ) : (
           <section className="chat empty"><p className="muted">{t("app.noTextChannel")}</p></section>
@@ -775,7 +794,7 @@ export function App() {
         }} />}
       {voteKick && votePerson && voteKick.canVote && voteAsked !== voteKick.vote.id && <VoteKickModal state={voteKick} person={votePerson} onVote={castVote} onClose={() => setVoteAsked(voteKick.vote.id)} />}
       {!homeOpen && view && <MemberList api={view.conn.api} members={view.server.members} roles={view.server.roles} myUserId={view.active.userId!} myPermissions={view.server.myPermissions} channelPermissions={view.server.myChannelPermissions} ownerId={view.server.settings.ownerId} canReport={view.server.openReports !== undefined} serverName={view.server.settings.name}
-        voice={view.active.voice} channels={view.server.channels} friends={state.serverAccounts[view.active.host] ? null : friendsMenu} onClose={mobile ? () => setMobileMembers(false) : null}
+        voice={view.active.voice} channels={view.server.channels} friends={state.serverAccounts[view.active.host] ? null : friendsMenu} blocked={blockControlsFor(view.active.host)} onClose={mobile ? () => setMobileMembers(false) : null}
         voteKickAllowed={view.active.voteKickAllowed} onVoteKick={(userId, channelId) => startVoteKick(view.active.host, channelId, userId)}
         voteKickBox={voiceHost === activeHost ? <VoteKickPanel state={voteKick} result={voteKickResult} person={votePerson} onVote={castVote} /> : null} />}
 
@@ -792,6 +811,7 @@ export function App() {
       {settingsTab && (homeless || (active?.me && conn)) && (
         <SettingsDialog api={active?.me && conn ? conn.api : null} me={active?.me ?? null} publicKey={state.identity?.publicKey ?? null} displayName={me?.displayName ?? active?.me?.displayName ?? state.directoryAccount?.displayName ?? "…"} avatarUrl={myAvatarUrl} directoryUrl={state.directoryUrl} directoryAccount={state.directoryAccount}
           serverDomain={active?.serverDomain ?? null} clientVersion={platform.app?.version ?? home?.serverVersion ?? null} syncError={state.settingsSyncError} sealed={state.settingsSealed} client={client} voice={voice} games={games} hotkeyStatus={hotkeyStatus} initialTab={settingsTab}
+          blocked={{ list: blockedList, inAccount: blockedInAccount, onUnblock: (pk) => store.setBlocked(activeHost, pk, false, { directory: true }) }}
           onSaveServerName={(n) => store.setServerDisplayName(n)} onSaveGlobalName={(n) => store.setDirectoryName(null, n)} onSetAvatar={(active?.me?.localHandle && !active.me.handle) || (state.directoryAccount && state.directoryAvatars) ? (image) => store.setAvatar(image) : null} onSetLocale={(pref) => store.setLocale(pref)} localePending={state.localeReloadPending}
           onCapturingKey={setCapturingPttKey} onClose={() => setSettingsTab(null)}
           onLogout={() => { setSettingsTab(null); void client.leave(); store.logout(); }}

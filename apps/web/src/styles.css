@@ -1275,3 +1275,11 @@ h3 > .category-btn:hover { color: var(--text); }
 .votekick-dialog .votekick-person { margin: 0.25rem 0 0.75rem; }
 .votekick-dialog .votekick-counts { margin-top: 0.35rem; }
 .votekick-dialog .dialog-actions button { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+/* Blocked people (docs/features/reports.md, stage 3): a blocked person's message is folded to one line until "Anzeigen". */
+.msg.blocked-msg { padding-top: 0.15rem; padding-bottom: 0.15rem; }
+.blocked-fold { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; color: var(--muted); font-size: 0.875rem; }
+.blocked-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.blocked-list li { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.blocked-list .blocked-name { font-weight: 600; }
+.blocked-list button { margin-left: auto; }
