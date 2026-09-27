@@ -1,0 +1,12 @@
+# nginx in a container on squorli_internal, with deploy/proxies/nginx.conf as its site (run.sh adapts domain,
+# certificate and targets the way the file's header says).
+services:
+  proxy:
+    image: nginx:1.29-alpine
+    volumes:
+      - ./proxytest/site.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../certs:/certs:ro
+    depends_on: [app, livekit]
+    networks:
+      internal: { aliases: [chat.test] }
+    profiles: [external]

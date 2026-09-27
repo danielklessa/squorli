@@ -64,6 +64,13 @@ const Env = z.object({
    * description and one picture) and keeps the pictures under DATA_DIR/previews. false = no previews and no such requests.
    */
   LINK_PREVIEWS: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").default("true"),
+  /** Log level of the app server (docs/features/logging.md); default info in production, debug otherwise. */
+  LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).optional(),
+  /**
+   * true = one log line per request with the caller's IP address, for troubleshooting only (docs/features/logging.md).
+   * Default false: no request log, only requests that end in a server error, without the address.
+   */
+  LOG_REQUESTS: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").default("false"),
   /** Scales every rate limit (rateLimits.ts, docs/features/rate-limits.md): 2 = twice as many requests, 0 = no limits (load tests only). */
   RATE_LIMIT_FACTOR: z.coerce.number().min(0).default(1),
   /**

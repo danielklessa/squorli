@@ -2,7 +2,8 @@
 # image: production image (Dockerfile, target "app") into the GitHub Container Registry
 #        on the default branch (tags <branch>, sha-<short-sha>, latest) and on git tags (<tag>, latest).
 #        Use it on the servers via APP_IMAGE in .env, see deploy/compose.yml.
-# Mirrors .gitlab-ci.yml; keep both in step.
+# proxies: the reference proxy configurations against the real stack (GitHub only).
+# Mirrors .gitlab-ci.yml (test, image); keep both in step.
 
 name: CI
 
@@ -32,6 +33,15 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  # The reference proxy configurations (deploy/proxies/) against the real stack: nginx, Traefik and Caddy in front of the
+  # production compose.yml, checked through the proxy (docs/features/proxy-tests.md). GitHub only: the GitLab runner's
+  # docker-in-docker has no socket for Traefik's docker provider.
+  proxies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash deploy/proxies/test/run.sh nginx traefik caddy
 
   image:
     needs: test

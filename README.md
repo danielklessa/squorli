@@ -98,6 +98,8 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 | `OWNER_PUBLIC_KEY` | Public key (64 hex) of a Squorli account that becomes owner on its first login; empty = the first user who signs in with an account |
 | `MAX_UPLOAD_MB` | Upper limit for attachments, default 25 |
 | `LINK_PREVIEWS` | `true` (default): links in messages get a preview (title, description, picture; YouTube videos play in the chat). The server fetches the linked pages itself, from public hosts only, and serves the pictures from its data volume, so readers never contact the linked host. `false` turns previews and these outgoing requests off |
+| `LOG_LEVEL` | Log level of the app server: `fatal`, `error`, `warn`, `info` (default), `debug` |
+| `LOG_REQUESTS` | `false` (default): no line per request, so the log holds no visitor addresses; only requests that end in a server error are logged, without the address. `true` logs every request with the caller's IP, for troubleshooting only. What each container logs and how long: [docs/features/logging.md](docs/features/logging.md) |
 | `LIVEKIT_NODE_IP` | Public IP of the host; empty = LiveKit detects it via STUN |
 | `LIVEKIT_PUBLIC_URL` | Only if clients should not reach LiveKit via `https://PUBLIC_DOMAIN/rtc` |
 | `DIRECTORY_URL` | `https://directory.squorli.com` or your own directory; empty = no directory |
@@ -134,7 +136,7 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 `deploy/portainer.yml` is a self-contained stack for Portainer (web editor or git repository, path `deploy/portainer.yml`): external mode with a reverse proxy on another host, no `env_file`, no build, no bind mounts. The LiveKit config is inlined via `LIVEKIT_CONFIG` (keep it in step with `deploy/livekit/livekit.yaml`).
 
 1. Stacks > Add stack > paste `deploy/portainer.yml`.
-2. Enter the environment variables: `PUBLIC_DOMAIN`, `POSTGRES_PASSWORD`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (required); `APP_IMAGE=ghcr.io/danielklessa/squorli-server:latest` (set explicitly, pin a tag or digest for production); optionally `LIVEKIT_NODE_IP`, `DIRECTORY_URL`, `TRUSTED_PROXIES`, `PROXY_BIND_IP` (default `0.0.0.0`, then restrict via firewall), `LOCAL_ACCOUNTS`, `SERVER_NAME`, `OWNER_PUBLIC_KEY`, `MAX_UPLOAD_MB`, `LIVEKIT_PUBLIC_URL`, `DIRECTORY_PROOF_URL`, `APP_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`. Meaning as in [Configuration](#configuration).
+2. Enter the environment variables: `PUBLIC_DOMAIN`, `POSTGRES_PASSWORD`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (required); `APP_IMAGE` optional (default `ghcr.io/danielklessa/squorli-server:latest`; pin a tag or digest for production); optionally `LIVEKIT_NODE_IP`, `DIRECTORY_URL`, `TRUSTED_PROXIES`, `PROXY_BIND_IP` (default `0.0.0.0`, then restrict via firewall), `LOCAL_ACCOUNTS`, `SERVER_NAME`, `OWNER_PUBLIC_KEY`, `MAX_UPLOAD_MB`, `LIVEKIT_PUBLIC_URL`, `DIRECTORY_PROOF_URL`, `APP_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`. Meaning as in [Configuration](#configuration).
 3. Set up the proxy and firewall as in [Reverse proxy](#reverse-proxy).
 4. Check `https://PUBLIC_DOMAIN/api/health` and `https://PUBLIC_DOMAIN/rtc/validate` (401).
 

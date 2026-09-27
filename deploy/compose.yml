@@ -9,11 +9,19 @@
 
 name: squorli
 
+# Container logs (docs/features/logging.md): Docker keeps them unrotated by default. Here at most 3 files of 10 MB per
+# container, so old lines (the few with IP addresses included) disappear by themselves. For a time limit instead
+# (e.g. 14 days) use journald, see the note.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   app:
     build: { context: .., dockerfile: Dockerfile, target: app }
     image: ${APP_IMAGE:-squorli/app:local}
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     environment:
       DATABASE_URL: postgres://chat:${POSTGRES_PASSWORD}@postgres:5432/chat
@@ -37,6 +45,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_DB: chat
       POSTGRES_USER: chat
@@ -53,6 +62,7 @@ services:
   livekit:
     image: livekit/livekit-server:v1.13.7  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
     restart: unless-stopped
+    logging: *logging
     command: --config /etc/livekit.yaml --rtc.tcp_port ${LIVEKIT_TCP_PORT:-7881} --udp-port ${LIVEKIT_UDP_PORT:-7882}
     environment:
       # Keys via env so they are not in the YAML (format "key: secret").
@@ -68,6 +78,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     ports: ["80:80", "443:443"]
     volumes:

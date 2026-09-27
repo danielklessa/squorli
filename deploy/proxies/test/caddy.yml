@@ -1,0 +1,11 @@
+# Caddy in a container on squorli_internal, with deploy/proxies/Caddyfile.external as its config (run.sh adapts domain,
+# certificate and targets the way the file's header says).
+services:
+  proxy:
+    image: caddy:2-alpine
+    volumes:
+      - ./proxytest/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../certs:/certs:ro
+    networks:
+      internal: { aliases: [chat.test] }
+    profiles: [external]

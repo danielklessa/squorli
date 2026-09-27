@@ -55,8 +55,7 @@ Recording, end-to-end encryption of media, a bot API, threads, federation betwee
 
 ### 2.1 Operator path
 
-- **Reference proxy configurations tested for real:** nginx, Traefik, Nginx Proxy Manager exist in `deploy/proxies/` but were never run against real installations; a config for an external Caddy is missing; a CI job for nginx and Traefik at least.
-- **Logging concept:** what the server logs (Fastify's default request log carries IP addresses), levels, and what an operator should set for retention (the directory's example: journald with 14 days, `../squorli-directory/deploy/README.md`, "Logs").
+- **Nginx Proxy Manager and Plesk against a real installation:** nginx, Traefik and Caddy are tested in CI since 27 September 2026 (`docs/features/proxy-tests.md`); NPM (web interface) and Plesk stay manual, together with the next item.
 - **The "stranger in 15 minutes" test:** somebody who has never seen Squorli installs it from the website on a fresh VPS, standalone and behind an existing proxy (test campaign T6); `squorli doctor` and the admin panel's check against that real installation and a real proxy (`docs/features/doctor.md`, "Not checked").
 
 ---

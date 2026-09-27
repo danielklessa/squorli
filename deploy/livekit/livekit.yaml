@@ -22,5 +22,7 @@ turn:
 audio:
   update_interval: 150
   smooth_intervals: 1
+# warn, not info: at info LiveKit logs every participant who joins with all the IP addresses of their device (ICE
+# candidates). For troubleshooting a connection set info for a while and restart livekit (docs/features/logging.md).
 logging:
-  level: info
+  level: warn

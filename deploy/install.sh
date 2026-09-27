@@ -22,7 +22,7 @@ DEFAULT_IMAGE="ghcr.io/danielklessa/squorli-server:latest"
 DEFAULT_DIRECTORY="https://directory.squorli.com"
 DEFAULT_TRUSTED="172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1"
 DEPLOY_FILES=(deploy/compose.yml deploy/caddy/Caddyfile deploy/livekit/livekit.yaml deploy/proxies/nginx.ports.yml
-  deploy/proxies/remote-proxy.ports.yml deploy/proxies/nginx.conf deploy/proxies/README.md)
+  deploy/proxies/remote-proxy.ports.yml deploy/proxies/nginx.conf deploy/proxies/Caddyfile.external deploy/proxies/README.md)
 
 if [ -t 1 ]; then
   B=$'\e[1m'; D=$'\e[2m'; RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; R=$'\e[0m'
@@ -713,7 +713,7 @@ finish() {
       local host=127.0.0.1; [ "$SETUP" = remote ] && host="$BIND_IP"
       printf '%s\n' "$(t "Jetzt den Reverse Proxy einrichten (TLS für $DOMAIN, WebSockets an):" "Now set up the reverse proxy (TLS for $DOMAIN, WebSockets on):")" \
         "  https://$DOMAIN/      -> http://$host:$APP_PORT" "  https://$DOMAIN/rtc*  -> http://$host:$LK_HTTP_PORT" \
-        "$(t "Vorlagen und Anleitung: $DIR/deploy/proxies/ (README.md, nginx.conf)" "Templates and guide: $DIR/deploy/proxies/ (README.md, nginx.conf)")"
+        "$(t "Vorlagen und Anleitung: $DIR/deploy/proxies/ (README.md, nginx.conf, Caddyfile.external)" "Templates and guide: $DIR/deploy/proxies/ (README.md, nginx.conf, Caddyfile.external)")"
       [ "$SETUP" = remote ] && [ -n "$PROXY_IP" ] && printf '%s\n' "$(t "Ports $APP_PORT und $LK_HTTP_PORT nur für $PROXY_IP öffnen." "Open ports $APP_PORT and $LK_HTTP_PORT to $PROXY_IP only.")"
       echo ;;
   esac

@@ -54,7 +54,7 @@ import { VoicePresence } from "./voice/presence";
 import { registerWs } from "./ws/handler";
 import { registerRateLimits } from "./rateLimits";
 import { PAGE_HEADERS } from "./webHeaders";
-import { requestSerializer } from "./logRedact";
+import { logOptions } from "./logRedact";
 import { loadLinkSecret } from "./attachmentLinks";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -79,8 +79,8 @@ async function main() {
   const config = loadConfig();
 
   const app = Fastify({
-    // Query secrets (status key, attachment signature) never reach the log (logRedact.ts).
-    logger: { level: config.NODE_ENV === "production" ? "info" : "debug", serializers: { req: requestSerializer } },
+    // No line per request and no addresses unless LOG_REQUESTS; query secrets never reach the log (logRedact.ts).
+    ...logOptions(config.LOG_LEVEL ?? (config.NODE_ENV === "production" ? "info" : "debug"), config.LOG_REQUESTS),
     // In external mode we trust X-Forwarded-* only from the configured proxies.
     // In bundled mode the only proxy is our own Caddy inside the Docker network.
     trustProxy: config.trustedProxies,

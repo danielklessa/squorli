@@ -4,15 +4,21 @@
 # Enter the ${...} variables under "Environment variables" of the stack (see README.md "Portainer"):
 #   required: PUBLIC_DOMAIN, POSTGRES_PASSWORD, LIVEKIT_API_KEY, LIVEKIT_API_SECRET (32+ characters)
 #   usually:  LIVEKIT_NODE_IP (public IP of this host), DIRECTORY_URL, TRUSTED_PROXIES (IP of the proxy), PROXY_BIND_IP
-#   optional: APP_IMAGE, SERVER_NAME, OWNER_PUBLIC_KEY, MAX_UPLOAD_MB, LINK_PREVIEWS (true/false), LIVEKIT_PUBLIC_URL, DIRECTORY_PROOF_URL, LOCAL_ACCOUNTS (true/false), RATE_LIMIT_FACTOR
-# Set APP_IMAGE=ghcr.io/danielklessa/squorli-server:latest to use the public GitHub Container Registry image.
-# This overrides the legacy registry default below; see the Portainer section in README.md.
+#   optional: APP_IMAGE, SERVER_NAME, OWNER_PUBLIC_KEY, MAX_UPLOAD_MB, LINK_PREVIEWS (true/false), LIVEKIT_PUBLIC_URL, DIRECTORY_PROOF_URL, LOCAL_ACCOUNTS (true/false), RATE_LIMIT_FACTOR, LOG_LEVEL, LOG_REQUESTS (true/false)
+# The image defaults to the public one in the GitHub Container Registry; APP_IMAGE pins a version (e.g. :v0.5.0) or another
+# registry. See the Portainer section in README.md.
 # Firewall: 7881/tcp + 7882/udp open to the world (media); 3000 + 7880 only for the proxy host (HTTP, no TLS).
+
+# Container logs at most 3 files of 10 MB per container (docs/features/logging.md); Docker keeps them unrotated otherwise.
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
 
 services:
   app:
-    image: ${APP_IMAGE:-registry.klessa.net/squorli/squorli-server:latest}
+    image: ${APP_IMAGE:-ghcr.io/danielklessa/squorli-server:latest}
     restart: unless-stopped
+    logging: *logging
     environment:
       NODE_ENV: production
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
@@ -32,6 +38,8 @@ services:
       DIRECTORY_PROOF_URL: ${DIRECTORY_PROOF_URL:-}
       LOCAL_ACCOUNTS: ${LOCAL_ACCOUNTS:-}
       RATE_LIMIT_FACTOR: ${RATE_LIMIT_FACTOR:-1}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_REQUESTS: ${LOG_REQUESTS:-false}
     volumes: [appdata:/app/data]   # attachments, server icon
     ports:
       - "${PROXY_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3000"   # proxy: https://PUBLIC_DOMAIN -> http://<host>:3000 (with WebSocket)
@@ -42,6 +50,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_DB: chat
       POSTGRES_USER: chat
@@ -57,6 +66,7 @@ services:
   livekit:
     image: livekit/livekit-server:v1.13.7  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
     restart: unless-stopped
+    logging: *logging
     # Media ports from the stack variables; the flags override tcp_port/udp_port of LIVEKIT_CONFIG below.
     command: --rtc.tcp_port ${LIVEKIT_TCP_PORT:-7881} --udp-port ${LIVEKIT_UDP_PORT:-7882}
     environment:
@@ -75,7 +85,7 @@ services:
           update_interval: 150
           smooth_intervals: 1
         logging:
-          level: info
+          level: warn
     ports:
       - "${PROXY_BIND_IP:-0.0.0.0}:${LIVEKIT_HTTP_PORT:-7880}:7880"   # signaling: proxy https://PUBLIC_DOMAIN/rtc* -> http://<host>:7880 (WebSocket)
       - "${LIVEKIT_TCP_PORT:-7881}:${LIVEKIT_TCP_PORT:-7881}/tcp"   # media fallback via TCP

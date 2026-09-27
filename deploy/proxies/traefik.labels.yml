@@ -1,4 +1,5 @@
-# Example Traefik v3 labels (external mode), as an overlay to compose.yml. Untested, see README.md.
+# Example Traefik v3 labels (external mode), as an overlay to compose.yml. Tested by deploy/proxies/test/run.sh with
+# Traefik v3.6 (docs/features/proxy-tests.md); the Let's Encrypt resolver is replaced by a test certificate there.
 # docker compose --env-file ../.env -f compose.yml -f proxies/traefik.labels.yml --profile external up -d
 services:
   app:

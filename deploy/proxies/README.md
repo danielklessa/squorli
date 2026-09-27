@@ -13,6 +13,8 @@ Once TURN is active (see `../livekit/livekit.yaml`), also `5349/tcp`.
 
 Only subdomains are supported, no sub-path like `example.org/chat`.
 
+**Tested:** `test/run.sh` starts the production `compose.yml` in external mode behind a real nginx, Traefik and Caddy (containers, a test certificate for `chat.test`) and checks through each: `/api/health`, the redirect to HTTPS, `/rtc` reaching LiveKit, the WebSocket upgrade on `/api/ws`, that the app sees the client's address (not the proxy's), an upload of `MAX_UPLOAD_MB`, and the server's own setup check (`squorli doctor`). It runs in CI on every push. Not covered: Nginx Proxy Manager, Plesk, a proxy on another host, real certificates.
+
 ## How the proxy reaches the containers
 
 In external mode `compose.yml` publishes **no** HTTP ports; `app` and `livekit` are only attached to the network `squorli_internal`.
@@ -136,7 +138,7 @@ location ~ ^/ {
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   proxy_set_header X-Forwarded-Proto $scheme;
-  client_max_body_size 30m;   # >= MAX_UPLOAD_MB
+  client_max_body_size 30m;   # >= MAX_UPLOAD_MB plus the form data around the file
 }
 ```
 
@@ -149,4 +151,8 @@ location ~ ^/ {
 
 `traefik.labels.yml` as overlay: `docker compose --env-file ../.env -f compose.yml -f proxies/traefik.labels.yml --profile external up -d`. Adjust the network name and certresolver.
 
-Status: **untested** against real installations. Will be checked against nginx and Traefik in M5 and added to CI.
+The overlay expects Traefik on a Docker network named `proxy` with the entrypoint `websecure` and a certificate resolver `letsencrypt`; rename them to yours. Traefik passes WebSockets and sets `X-Forwarded-For` by itself and has no body size limit by default. `TRUSTED_PROXIES` can stay at the default (Traefik comes from a Docker network).
+
+## Caddy
+
+For a Caddy you already run for other sites (without one, use `PROXY_MODE=bundled`: the stack brings its own Caddy). Start with `nginx.ports.yml` like nginx on the host, copy the site block of `Caddyfile.external` into your Caddyfile, replace `chat.example.org`, `caddy reload`. Caddy in a container: attach it to `squorli_internal` and use `app:3000` and `livekit:7880` as targets. Caddy gets the certificate, redirects HTTP to HTTPS, passes WebSockets and sets `X-Forwarded-For` by itself. Firewall and checks as with nginx.

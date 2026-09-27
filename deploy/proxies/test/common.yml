@@ -1,0 +1,15 @@
+# Overlay of the proxy test (run.sh, docs/features/proxy-tests.md): the app trusts the test CA, so its own setup check
+# (/api/doctor) reaches https://chat.test through the proxy like a real installation; the request log shows the address
+# the app sees; a curl container plays the browser.
+services:
+  app:
+    environment:
+      NODE_EXTRA_CA_CERTS: /certs/ca.pem
+      LOG_REQUESTS: "true"
+    volumes: [../certs:/certs:ro]
+  client:
+    image: curlimages/curl:8.16.0
+    entrypoint: ["sleep", "infinity"]
+    volumes: [../certs:/certs:ro]
+    networks: [internal]
+    profiles: [external]
