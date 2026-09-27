@@ -1,12 +1,14 @@
 import { app, BrowserWindow, ipcMain, nativeImage, Notification, screen, session, type IpcMainEvent, type IpcMainInvokeEvent, type Tray } from "electron";
 import { randomBytes } from "node:crypto";
 import { release } from "node:os";
+import { execFile } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { INFO_ARGUMENT, IPC, type AppearanceState, type DesktopInfo, type PlatformOs, type UpdateState, type WindowAppearance, type WindowFrameState } from "@squorli/web/platform/bridge";
 import { APP_ORIGIN } from "./appFiles";
 import { appearanceState, normalizeAppearance, supportedMaterials } from "./appearance";
 import { attentionText, badgeFile, readAttentionCount } from "./attention";
-import { readNotification } from "./notifications";
+import { appIdRegistration, readNotification } from "./notifications";
 import { readAutostartBackground, startsInBackground } from "./autostart";
 import { autostartEnabled, autostartSupported, setAutostart } from "./autostartSystem";
 import { loadConfig, saveConfig } from "./config";
@@ -48,10 +50,11 @@ const directoryUrl = (app.isPackaged ? null : argValue("directory-url")) ?? DIRE
 const originOf = (url: string): string => { const u = new URL(url); return `${u.protocol}//${u.host}`; };
 const origins = devUrl ? [APP_ORIGIN, originOf(devUrl)] : [APP_ORIGIN];
 
+const APP_USER_MODEL_ID = "com.squorli.desktop";
 app.setName("Squorli");
 // Windows groups task bar entries and notifications by this id; it equals the installer's appId. Unpackaged it also makes the
 // task bar show the window's icon instead of Electron's.
-if (process.platform === "win32") app.setAppUserModelId("com.squorli.desktop");
+if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 // A test that drives the app against a dev server passes `--user-data-dir` and keeps its hands off the developer's own data.
 if (devUrl && !argValue("user-data-dir")) app.setPath("userData", join(app.getPath("appData"), "Squorli-dev"));
 app.userAgentFallback = desktopUserAgent(app.userAgentFallback, app.getVersion());
@@ -110,9 +113,11 @@ function showAttention(): void {
 // Notifications of the operating system (docs/features/notifications.md). Kept referenced until they are gone: a
 // notification the garbage collector takes loses its click handler on Windows.
 const notifications = new Set<Notification>();
-function showNotification(value: unknown): void {
+async function showNotification(value: unknown, fullscreenBusy: () => Promise<boolean | null>): Promise<void> {
   const n = readNotification(value);
   if (!n || !Notification.isSupported()) return;
+  // A game or another application in full screen: only when the user allowed it (Einstellungen > Töne); unknown = show.
+  if (!n.inFullscreen && (await fullscreenBusy()) === true) return;
   const note = new Notification({ title: n.title, body: n.body, silent: true, ...(process.platform === "win32" ? {} : { icon: join(__dirname, "..", "build", "icon.png") }) });
   const forget = () => { notifications.delete(note); };
   note.on("click", () => {
@@ -127,6 +132,20 @@ function showNotification(value: unknown): void {
   note.on("failed", forget);
   notifications.add(note);
   note.show();
+}
+
+/**
+ * Name and icon of the notifications on Windows (notifications.ts `appIdRegistration`): the icon is copied out of the app's
+ * archive into userData, where Windows can read it, and the id is registered for the current user. Runs at every start
+ * (cheap, and the copy follows the installed version); a failure only leaves Windows' fallback name.
+ */
+function registerAppId(): void {
+  if (process.platform !== "win32") return;
+  try {
+    const icon = join(app.getPath("userData"), "notification-icon.png");
+    writeFileSync(icon, readFileSync(join(__dirname, "..", "build", "icon.png")));
+    for (const args of appIdRegistration(APP_USER_MODEL_ID, "Squorli", icon)) execFile("reg", args, { windowsHide: true }, () => {});
+  } catch { /* no icon, no registration: the toast keeps Windows' fallback name */ }
 }
 
 /** The key of control links that could open the microphone (controlArgs.ts), made once per installation. */
@@ -254,6 +273,7 @@ else {
   });
   lockDownContents(origins);
   void app.whenReady().then(() => {
+    registerAppId();
     // Windows knows the locale only from here on; the client says its own language once it runs (`IPC.language`).
     language = languageOfLocale(app.getLocale());
     // Unpackaged: the build of the sibling package; packaged: electron-builder copies it next to the app (extraResources).
@@ -309,7 +329,7 @@ else {
       return autostartBackground;
     });
     ipcMain.on(IPC.attention, (event, count: unknown) => { if (isClientFrame(event)) { attention = readAttentionCount(count); showAttention(); } });
-    ipcMain.on(IPC.notify, (event, value: unknown) => { if (isClientFrame(event)) showNotification(value); });
+    ipcMain.on(IPC.notify, (event, value: unknown) => { if (isClientFrame(event)) void showNotification(value, systemWatch.fullscreenBusy); });
     ipcMain.on(IPC.focusPopout, (event, name: unknown) => { if (isClientFrame(event)) focusPopout(name); });
     ipcMain.on(IPC.language, (event, value: unknown) => { if (isClientFrame(event)) { language = readShellLanguage(value, language); setTrayLanguage(tray, language); } });
     ipcMain.on(IPC.openExternal, (event, url: unknown) => { if (isClientFrame(event) && typeof url === "string") openExternal(url); });

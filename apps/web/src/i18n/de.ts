@@ -870,6 +870,7 @@ export const de = {
   "notify.head": "Benachrichtigungen",
   "notify.on": "Benachrichtigung bei Direktnachrichten und Erwähnungen",
   "notify.preview": "Nachrichtentext in der Benachrichtigung zeigen",
+  "notify.fullscreen": "Auch bei Spielen und Anwendungen im Vollbild",
   "notify.test": "Test-Benachrichtigung",
   "notify.testBody": "So sehen Benachrichtigungen von Squorli aus.",
   "notify.hidden": "Neue Nachricht",

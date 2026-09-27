@@ -9,7 +9,7 @@ import { findControl } from "./controlArgs";
 import { findDeepLink } from "./deepLinkArgs";
 import { E0_FLAG, keysLine, scanCodeOf } from "./keyCodes";
 import { isAllowedExternal, windowOpenDecision } from "./navigation";
-import { readNotification } from "./notifications";
+import { appIdRegistration, inFullscreen, readNotification } from "./notifications";
 import { SPLASH_SKIP_URL, mayInstallAtStart, splashHtml, splashScript, splashView } from "./splashPage";
 import { updateMode } from "./updateMode";
 import { desktopUserAgent } from "./userAgent";
@@ -310,12 +310,29 @@ describe("scanCodeOf", () => {
 
 describe("readNotification", () => {
   it("takes strings, cuts them and refuses anything else", () => {
-    expect(readNotification({ title: "Anna", body: "Hi", tag: "dm:abc" })).toEqual({ title: "Anna", body: "Hi", tag: "dm:abc" });
+    expect(readNotification({ title: "Anna", body: "Hi", tag: "dm:abc" })).toEqual({ title: "Anna", body: "Hi", tag: "dm:abc", inFullscreen: false });
+    expect(readNotification({ title: "Anna", body: "Hi", tag: "dm:abc", inFullscreen: true })?.inFullscreen).toBe(true);
     const long = readNotification({ title: "t", body: "x".repeat(1000), tag: "dm:abc" });
     expect(long?.body).toHaveLength(300);
     expect(readNotification({ title: " ", body: "", tag: "dm:abc" })).toBeNull();
     expect(readNotification({ title: "t", body: "", tag: "" })).toBeNull();
     expect(readNotification({ title: "t", body: 1, tag: "x" })).toBeNull();
     expect(readNotification("dm:abc")).toBeNull();
+  });
+});
+
+describe("inFullscreen", () => {
+  it("counts Windows' full screen states and a window that covers its monitor", () => {
+    expect(inFullscreen(5, false)).toBe(false);
+    expect(inFullscreen(0, false)).toBe(false);
+    expect(inFullscreen(6, false)).toBe(false);
+    for (const state of [2, 3, 4, 7]) expect(inFullscreen(state, false)).toBe(true);
+    expect(inFullscreen(5, true)).toBe(true);
+  });
+  it("registers name and icon under the app's id", () => {
+    expect(appIdRegistration("com.squorli.desktop", "Squorli", "C:\\x\\icon.png")).toEqual([
+      ["add", "HKCU\\Software\\Classes\\AppUserModelId\\com.squorli.desktop", "/v", "DisplayName", "/t", "REG_SZ", "/d", "Squorli", "/f"],
+      ["add", "HKCU\\Software\\Classes\\AppUserModelId\\com.squorli.desktop", "/v", "IconUri", "/t", "REG_SZ", "/d", "C:\\x\\icon.png", "/f"],
+    ]);
   });
 });

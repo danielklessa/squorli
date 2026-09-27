@@ -208,7 +208,8 @@ export interface DesktopBridge {
 export const SECRET_KEYS = ["chat.identity.v1", "chat.serverAccounts.v1"] as const;
 
 /** A notification the client asks the shell to show; `tag` comes back when it is clicked. */
-export type BridgeNotification = { title: string; body: string; tag: string };
+/** `inFullscreen`: show it also while a game or another application runs in full screen (Windows; the setting in Einstellungen > Töne). */
+export type BridgeNotification = { title: string; body: string; tag: string; inFullscreen?: boolean };
 
 /** IPC channel names, shared by main and preload. */
 export const IPC = {

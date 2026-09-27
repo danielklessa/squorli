@@ -6,6 +6,7 @@ import type { WindowInfo } from "./captureSource";
 import { keysLine } from "./keyCodes";
 import { SystemWatchLines } from "./systemWatchLines";
 import { nativeHelperPath } from "./windowAudio";
+import { inFullscreen } from "./notifications";
 
 /**
  * What the client's AFK detection cannot see from inside the window (docs/features/afk.md, 20 September 2026): the native
@@ -18,6 +19,7 @@ export const systemWatchPath = (): string | null => nativeHelperPath("squorli-sy
 const RESTART_MS = 5000;
 const MAX_RESTARTS = 5;
 const WINDOWS_TIMEOUT_MS = 700;
+const BUSY_TIMEOUT_MS = 400;
 
 export type SystemWatch = {
   /** The helper exists on this system (built, Windows); without it nothing below does anything. */
@@ -32,6 +34,8 @@ export type SystemWatch = {
   onKey(cb: (event: { scan: number; down: boolean } | null) => void): void;
   /** What the helper says about these windows (decimal handles); a window it does not answer for is missing, without the helper all are. Never rejects. */
   describeWindows(hwnds: readonly string[]): Promise<WindowInfo[]>;
+  /** Whether a game or another application runs in full screen (notifications.ts `inFullscreen`); null = unknown (no helper, an older one, no answer in time). */
+  fullscreenBusy(): Promise<boolean | null>;
   stop(): void;
 };
 
@@ -46,6 +50,7 @@ export function startSystemWatch(getWindow: () => BrowserWindow | null, isClient
   let display: boolean | null = null;
   let nextRequest = 1;
   const asked = new Map<number, { found: WindowInfo[]; done: (found: WindowInfo[]) => void }>();
+  const busyAsked = new Map<number, (busy: boolean) => void>();
   const send = (event: SystemActivityEvent) => { const win = getWindow(); if (win && !win.isDestroyed()) win.webContents.send(IPC.systemActivity, event); };
   // A client that starts listening (a reload too) learns the display state as it is; input only counts from now on.
   ipcMain.on(IPC.systemActivityReady, (event) => { if (isClientFrame(event) && display !== null) send({ type: "display", required: display }); });
@@ -66,6 +71,7 @@ export function startSystemWatch(getWindow: () => BrowserWindow | null, isClient
         if (event.type === "key") { keyListener(event); continue; }
         if (event.type === "window") { asked.get(event.request)?.found.push(event.info); continue; }
         if (event.type === "windows") { const open = asked.get(event.request); open?.done(open.found); continue; }
+        if (event.type === "busy") { busyAsked.get(event.request)?.(inFullscreen(event.state, event.fullscreen)); continue; }
         if (event.type === "display") display = event.required;
         send(event);
       }
@@ -95,6 +101,15 @@ export function startSystemWatch(getWindow: () => BrowserWindow | null, isClient
       const timer = setTimeout(() => { asked.delete(request); resolve([]); }, WINDOWS_TIMEOUT_MS);
       asked.set(request, { found: [], done: (found) => { clearTimeout(timer); asked.delete(request); resolve(found); } });
       stdin.write(`windows\t${request}\t${ids.join("\t")}\n`);
+    }),
+    fullscreenBusy: () => new Promise((resolve) => {
+      const stdin = child?.stdin;
+      if (!stdin) { resolve(null); return; }
+      const request = nextRequest++;
+      // A helper from before the question never answers: the notification then shows, as it did.
+      const timer = setTimeout(() => { busyAsked.delete(request); resolve(null); }, BUSY_TIMEOUT_MS);
+      busyAsked.set(request, (busy) => { clearTimeout(timer); busyAsked.delete(request); resolve(busy); });
+      stdin.write(`busy\t${request}\n`);
     }),
     stop: () => {
       stopped = true;

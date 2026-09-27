@@ -25,7 +25,7 @@ const objDir = join(tmpdir(), "squorli-native-obj");
 mkdirSync(outDir, { recursive: true }); mkdirSync(objDir, { recursive: true });
 const targets = [
   { source: "window-audio/main.cpp", exe: "squorli-window-audio.exe", libs: "mmdevapi.lib ole32.lib user32.lib" },
-  { source: "system-watch/main.cpp", exe: "squorli-system-watch.exe", libs: "user32.lib xinput.lib hid.lib powrprof.lib" },
+  { source: "system-watch/main.cpp", exe: "squorli-system-watch.exe", libs: "user32.lib xinput.lib hid.lib powrprof.lib shell32.lib" },
 ];
 // A batch file keeps the quoting out of cmd's hands. Static runtime (/MT): the helpers must start on a machine without the VC++ redistributable.
 const batch = join(objDir, "build.cmd");

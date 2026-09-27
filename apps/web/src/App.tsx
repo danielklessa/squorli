@@ -281,7 +281,7 @@ export function App() {
     store.onIncoming = (note) => {
       client.playSound("message");
       const settings = loadNotificationSettings(platform.kind === "desktop");
-      if (settings.on && platform.notifications.permission() === "granted") platform.notifications.show(notificationFor(note, settings.preview, t("notify.hidden")));
+      if (settings.on && platform.notifications.permission() === "granted") platform.notifications.show({ ...notificationFor(note, settings.preview, t("notify.hidden")), inFullscreen: settings.fullscreen });
     };
     return () => { store.onIncoming = null; };
   }, [store, client]);

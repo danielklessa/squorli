@@ -869,6 +869,7 @@ export const en: Messages = {
   "notify.head": "Notifications",
   "notify.on": "Notify me of direct messages and mentions",
   "notify.preview": "Show the message text in the notification",
+  "notify.fullscreen": "Also while a game or another application runs in full screen",
   "notify.test": "Test notification",
   "notify.testBody": "This is how notifications from Squorli look.",
   "notify.hidden": "New message",

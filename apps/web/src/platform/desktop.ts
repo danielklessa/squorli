@@ -73,7 +73,8 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
       request: async () => "granted",
       show: (notification) => bridge.notify(notification),
       onClick: (cb) => bridge.onNotificationClick(cb),
-    } : { permission: () => "unsupported", request: async () => "unsupported", show: () => {}, onClick: () => () => {} },
+      knowsFullscreen: info.os === "windows" && info.systemWatch === true,
+    } : { permission: () => "unsupported", request: async () => "unsupported", show: () => {}, onClick: () => () => {}, knowsFullscreen: false },
     media: { mobile: false, blocksInsecureMedia: window.location.protocol !== "http:", screenSharePublishOverrides: () => (pickedCodec === "vp8" ? null : { videoCodec: pickedCodec }), takeScreenAudio: () => audio.take(), stopScreenAudio: () => audio.stop(),
       // An app older than this client has no such member.
       setPlayerOutput: typeof bridge.setPlayerOutput === "function" ? (label) => bridge.setPlayerOutput(label) : null,

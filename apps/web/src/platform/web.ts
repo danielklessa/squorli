@@ -30,6 +30,7 @@ function browserNotifications(mobile: boolean): Platform["notifications"] {
       } catch { /* Chrome on Android throws: notifications need a service worker there */ }
     },
     onClick: (cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; },
+    knowsFullscreen: false,
   };
 }
 

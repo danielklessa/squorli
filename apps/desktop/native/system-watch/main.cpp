@@ -25,10 +25,18 @@
 //                screen), then one line "windows<TAB><request>". The screen share's picker leaves desktop widgets out with
 //                it and knows which window is a game's (docs/features/voice-video.md, 21 September 2026).
 //
+//   busy<TAB><request><TAB><state><TAB><fullscreen 0|1>
+//                the answer to "busy": Windows' own notification state (SHQueryUserNotificationState: 1 = not present,
+//                2 = busy with a full screen application, 3 = a Direct3D game in exclusive full screen, 4 = presentation
+//                mode, 5 = accepts notifications, 6 = quiet time, 7 = an app of the Store in full screen; 0 = unknown) and
+//                whether the foreground window covers its whole monitor (a game in borderless full screen, which Windows
+//                does not always count). The app asks before a notification (docs/features/notifications.md, 27 September 2026).
+//
 // stdin:  one line "watch<TAB><path><TAB><path>..." replaces the watch list (UTF-8; a path ending in a backslash is a folder
 //         with everything below it, any other is one executable; "watch" alone = nothing is watched, which is the start).
 //         One line "windows<TAB><request><TAB><hwnd><TAB><hwnd>..." (decimal window handles) asks about those windows.
 //         One line "keys<TAB><hex><TAB><hex>..." replaces the watched keys ("keys" alone = none, which is the start).
+//         One line "busy<TAB><request>" asks whether something runs in full screen.
 // stdout: the lines above, after one line "ready". The helper ends when stdin closes (the parent is gone) or when it is killed.
 // Windows only. It reads no mouse and no window contents, and of the keyboard only the keys the app names, while it names them.
 #include <windows.h>
@@ -36,6 +44,7 @@
 #include <xinput.h>
 #include <powrprof.h>
 #include <hidsdi.h>
+#include <shellapi.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -317,6 +326,25 @@ void describeWindows(const std::vector<std::string>& parts) {
   if (fwrite(answer.data(), 1, answer.size(), stdout) != answer.size() || fflush(stdout) != 0) ExitProcess(0);
 }
 
+// Runs on the thread that reads stdin; one write, like describeWindows.
+void describeBusy(const std::vector<std::string>& parts) {
+  if (parts.size() < 2 || parts[1].empty() || parts[1].size() > 20 || parts[1].find_first_not_of("0123456789") != std::string::npos) return;
+  QUERY_USER_NOTIFICATION_STATE state = static_cast<QUERY_USER_NOTIFICATION_STATE>(0);
+  if (FAILED(SHQueryUserNotificationState(&state))) state = static_cast<QUERY_USER_NOTIFICATION_STATE>(0);
+  bool fullscreen = false;
+  const HWND window = GetForegroundWindow();
+  wchar_t name[64] = {};
+  if (window && GetClassNameW(window, name, 64) > 0 && wcscmp(name, L"Progman") != 0 && wcscmp(name, L"WorkerW") != 0 && wcscmp(name, L"Shell_TrayWnd") != 0) {
+    RECT rect = {};
+    MONITORINFO monitor = {};
+    monitor.cbSize = sizeof(monitor);
+    if (!IsIconic(window) && GetWindowRect(window, &rect) && GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor))
+      fullscreen = rect.left <= monitor.rcMonitor.left && rect.top <= monitor.rcMonitor.top && rect.right >= monitor.rcMonitor.right && rect.bottom >= monitor.rcMonitor.bottom;
+  }
+  const std::string answer = "busy\t" + parts[1] + "\t" + std::to_string(static_cast<int>(state)) + "\t" + (fullscreen ? "1" : "0") + "\n";
+  if (fwrite(answer.data(), 1, answer.size(), stdout) != answer.size() || fflush(stdout) != 0) ExitProcess(0);
+}
+
 // Runs on the stdin thread: the set changes here, the registration follows on the main thread.
 void setKeys(const std::vector<std::string>& parts) {
   std::set<unsigned> keys;
@@ -332,6 +360,7 @@ void setKeys(const std::vector<std::string>& parts) {
 
 void onCommand(const std::string& line) {
   if (line.rfind("windows\t", 0) == 0) { describeWindows(fields(line)); return; }
+  if (line.rfind("busy\t", 0) == 0) { describeBusy(fields(line)); return; }
   if (line == "keys" || line.rfind("keys\t", 0) == 0) { setKeys(fields(line)); return; }
   if (line.rfind("watch", 0) != 0 || (line.size() > 5 && line[5] != '\t')) return;
   std::vector<std::wstring> folders, files;

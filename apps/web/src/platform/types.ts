@@ -112,7 +112,10 @@ export interface Platform {
     /** "granted" = can show; "default" = must ask first (`request`, inside a click); "denied" = the user or the system refused; "unsupported" = no way here (an older app, a browser without the API or an insecure page). */
     permission(): NotifyPermission;
     request(): Promise<NotifyPermission>;
-    show(notification: { title: string; body: string; tag: string }): void;
+    /** `inFullscreen`: show it also while something runs in full screen (the desktop app on Windows holds it back otherwise). */
+    show(notification: { title: string; body: string; tag: string; inFullscreen?: boolean }): void;
+    /** The shell can tell whether a game or another application runs in full screen (Windows with the system watch helper). */
+    readonly knowsFullscreen: boolean;
     /** A notification was clicked (the window is in front again); `tag` as shown. */
     onClick(cb: (tag: string) => void): () => void;
   };

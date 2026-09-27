@@ -35,8 +35,14 @@ export function NotificationSettings() {
         <input type="checkbox" checked={settings.preview} disabled={!active} onChange={(e) => change({ ...settings, preview: e.target.checked })} />
         {t("notify.preview")}
       </label>
+      {platform.notifications.knowsFullscreen && (
+        <label className="check">
+          <input type="checkbox" checked={settings.fullscreen} disabled={!active} onChange={(e) => change({ ...settings, fullscreen: e.target.checked })} />
+          {t("notify.fullscreen")}
+        </label>
+      )}
       <div className="row">
-        <button disabled={!active} onClick={() => platform.notifications.show({ title: "Squorli", body: t("notify.testBody"), tag: "test" })}>{t("notify.test")}</button>
+        <button disabled={!active} onClick={() => platform.notifications.show({ title: "Squorli", body: t("notify.testBody"), tag: "test", inFullscreen: true })}>{t("notify.test")}</button>
       </div>
       <span className="muted small">{hint}</span>
     </>

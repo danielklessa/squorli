@@ -10,12 +10,14 @@ export type NotificationSettings = {
   on: boolean;
   /** Put the message's text into the notification; false = only who wrote where (for a screen others see). */
   preview: boolean;
+  /** Also while a game or another application runs in full screen (desktop app on Windows, which can tell); off by default. */
+  fullscreen: boolean;
 };
 
 const KEY = "chat.notifications.v1";
 
 export function defaultNotificationSettings(desktop: boolean): NotificationSettings {
-  return { on: desktop, preview: true };
+  return { on: desktop, preview: true, fullscreen: false };
 }
 
 export function loadNotificationSettings(desktop: boolean): NotificationSettings {
@@ -23,7 +25,7 @@ export function loadNotificationSettings(desktop: boolean): NotificationSettings
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<NotificationSettings> | null;
     if (!raw || typeof raw !== "object") return fallback;
-    return { on: typeof raw.on === "boolean" ? raw.on : fallback.on, preview: typeof raw.preview === "boolean" ? raw.preview : fallback.preview };
+    return { on: typeof raw.on === "boolean" ? raw.on : fallback.on, preview: typeof raw.preview === "boolean" ? raw.preview : fallback.preview, fullscreen: raw.fullscreen === true };
   } catch { return fallback; }
 }
 
