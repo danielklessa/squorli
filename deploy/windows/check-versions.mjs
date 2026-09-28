@@ -38,6 +38,12 @@ for (const [key, item] of Object.entries(versions)) {
   if (!item.license || !item.source || !item.name) problems.push(`${key}: name, license and source are required (THIRD-PARTY-NOTICES.md)`);
 }
 
+// From which version on an installation may update to this one by itself: the automatic updates of both systems read it
+// (docs/features/auto-update.md). It may name the version that comes next, never nothing.
+const server = JSON.parse(read("apps", "server", "package.json"));
+const from = server.squorli?.autoUpdateFrom;
+if (!/^\d+\.\d+\.\d+$/.test(from ?? "")) problems.push(`apps/server/package.json: squorli.autoUpdateFrom must name a version (1.2.3), it says ${JSON.stringify(from)}`);
+
 if (problems.length) {
   for (const p of problems) console.error(`[windows versions] ${p}`);
   console.error("[windows versions] Raise deploy/windows/versions.json together with the Compose files and .nvmrc (deploy/windows/AGENTS.md).");

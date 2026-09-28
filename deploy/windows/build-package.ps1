@@ -41,7 +41,12 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if (-not $OutDir) { $OutDir = Join-Path $repo 'dist\windows' }
 if (-not $CacheDir) { $CacheDir = Join-Path $env:LOCALAPPDATA 'squorli-build-cache' }
 $versions = Get-Content -Raw -Encoding UTF8 (Join-Path $PSScriptRoot 'versions.json') | ConvertFrom-Json
-$serverVersion = (Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'apps\server\package.json') | ConvertFrom-Json).version
+$serverPackage = Get-Content -Raw -Encoding UTF8 (Join-Path $repo 'apps\server\package.json') | ConvertFrom-Json
+$serverVersion = $serverPackage.version
+# From which version on an installation may update to this one by itself (docs/features/auto-update.md)
+$autoUpdateFrom = ''
+if ($serverPackage.PSObject.Properties.Name -contains 'squorli' -and $serverPackage.squorli.PSObject.Properties.Name -contains 'autoUpdateFrom') { $autoUpdateFrom = "$($serverPackage.squorli.autoUpdateFrom)" }
+if ($autoUpdateFrom -notmatch '^\d+\.\d+\.\d+$') { throw "apps/server/package.json: squorli.autoUpdateFrom must name a version (1.2.3), it says '$autoUpdateFrom'" }
 $name = "squorli-server-$serverVersion-windows-x64"
 
 function Step([string]$text) { Write-Host ''; Write-Host "==== $text" -ForegroundColor Cyan }
@@ -295,7 +300,7 @@ foreach ($p in $versions.PSObject.Properties) {
   if ($p.Value.PSObject.Properties.Name -contains 'build') { $v = $p.Value.build }
   $components[$p.Name] = $v
 }
-$manifest = [ordered]@{ name = 'squorli-server'; version = $serverVersion; platform = 'windows-x64'; commit = "$commit"; builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); components = $components }
+$manifest = [ordered]@{ name = 'squorli-server'; version = $serverVersion; autoUpdateFrom = $autoUpdateFrom; platform = 'windows-x64'; commit = "$commit"; builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'); components = $components }
 [IO.File]::WriteAllText((Join-Path $stage 'manifest.json'), (($manifest | ConvertTo-Json -Depth 4) + "`n"), (New-Object Text.UTF8Encoding $false))
 
 $readme = @(

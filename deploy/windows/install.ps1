@@ -63,11 +63,25 @@ $Utf8 = New-Object Text.UTF8Encoding $false
 # In the order they start; they stop the other way round.
 $ServiceNames = @('SquorliPostgres', 'SquorliLiveKit', 'SquorliServer', 'SquorliCaddy')
 $WrappedServices = @('SquorliLiveKit', 'SquorliServer', 'SquorliCaddy')
+# What each service runs: the package's folders, and the programs whose versions manifest.json names ("server" is the
+# package's own version). WinSW runs every service but PostgreSQL.
+$Programs = [ordered]@{
+  SquorliPostgres = @{ Folders = @('pgsql'); Parts = @('postgresql') }
+  SquorliLiveKit = @{ Folders = @('livekit'); Parts = @('livekit', 'winsw') }
+  SquorliServer = @{ Folders = @('app', 'node'); Parts = @('server', 'node', 'winsw') }
+  SquorliCaddy = @{ Folders = @('caddy'); Parts = @('caddy', 'winsw') }
+}
+$PartNames = @{ server = 'Squorli Server'; node = 'Node.js'; postgresql = 'PostgreSQL'; livekit = 'LiveKit'; caddy = 'Caddy'; winsw = 'WinSW' }
+# What a service needs running (the <depend> entries of the service files).
+$ServiceNeeds = @{ SquorliPostgres = @(); SquorliLiveKit = @(); SquorliServer = @('SquorliPostgres', 'SquorliLiveKit'); SquorliCaddy = @('SquorliServer') }
 $FirewallGroup = 'Squorli'
 # Well-known accounts by their SID: their names differ with the language of Windows.
 $SidSystem = 'S-1-5-18'; $SidAdministrators = 'S-1-5-32-544'; $SidLocalService = 'S-1-5-19'
 # What the questions fill; read by every step.
-$S = @{ Lang = 'en'; Changes = New-Object Collections.Generic.List[string]; Closed = @() }
+# Replace: the services that get new programs. Written: the files Write-Template wrote. Restart: the services whose
+# configuration changed while they ran.
+$S = @{ Lang = 'en'; Changes = New-Object Collections.Generic.List[string]; Closed = @(); Replace = @($ServiceNames)
+  Written = New-Object Collections.Generic.List[string]; Restart = New-Object Collections.Generic.List[string] }
 
 # ---- Output
 function T([string]$de, [string]$en) { if ($S.Lang -eq 'de') { $de } else { $en } }
@@ -172,6 +186,36 @@ function Test-IPv4([string]$value) {
   return $true
 }
 function Test-Service([string]$name) { return $null -ne (Get-Service -Name $name -ErrorAction SilentlyContinue) }
+function Test-ServiceRunning([string]$name) {
+  $service = Get-Service -Name $name -ErrorAction SilentlyContinue
+  return ($null -ne $service -and $service.Status -ne 'Stopped')
+}
+# The services that need this one, directly or through another.
+function Get-Dependents([string]$name) {
+  $found = @()
+  foreach ($other in $ServiceNames) { if ($ServiceNeeds[$other] -contains $name) { $found += $other; $found += @(Get-Dependents $other) } }
+  return @($found | Select-Object -Unique)
+}
+# The given services and the ones that need them, in the order of a start.
+function Get-WithDependents([string[]]$names) {
+  $all = @($names)
+  foreach ($name in $names) { $all += @(Get-Dependents $name) }
+  return @($ServiceNames | Where-Object { $all -contains $_ })
+}
+function Get-Manifest([string]$folder) {
+  $file = Join-Path $folder 'manifest.json'
+  if (-not (Test-Path -LiteralPath $file)) { return $null }
+  try { return ([IO.File]::ReadAllText($file, $Utf8) | ConvertFrom-Json) } catch { return $null }
+}
+# The version a manifest names for a program; empty when it names none.
+function Get-PartVersion($manifest, [string]$part) {
+  if ($null -eq $manifest) { return '' }
+  $names = @($manifest.PSObject.Properties | ForEach-Object { $_.Name })
+  if ($part -eq 'server') { if ($names -contains 'version') { return "$($manifest.version)" } else { return '' } }
+  if ($names -notcontains 'components' -or $null -eq $manifest.components) { return '' }
+  if (@($manifest.components.PSObject.Properties | ForEach-Object { $_.Name }) -notcontains $part) { return '' }
+  return "$($manifest.components.$part)"
+}
 # The SID of a service's own account (NT SERVICE\<name>); it follows from the name, the service need not exist.
 function Get-ServiceSid([string]$name) {
   $text = (Invoke-Program 'sc.exe' @('showsid', $name) -Quiet) -join ' '
@@ -635,7 +679,7 @@ function Set-StartMode([string]$name, [string]$mode) {
 # takes the services it needs along. That must not happen while the programs are replaced: a program that runs cannot
 # be overwritten, and one that is half copied must not start. Open-Services lets them start again, however the copy ended.
 function Close-Services {
-  $S.Closed = @($ServiceNames | Where-Object { Test-Service $_ })
+  $S.Closed = @(Get-WithDependents $S.Replace | Where-Object { Test-Service $_ })
   foreach ($name in $S.Closed) { Set-StartMode $name 'disabled' }
 }
 function Open-Services {
@@ -643,15 +687,65 @@ function Open-Services {
   $S.Closed = @()
 }
 
-function Stop-Services {
-  $running = @($ServiceNames | Where-Object { $svc = Get-Service -Name $_ -ErrorAction SilentlyContinue; $svc -and $svc.Status -ne 'Stopped' })
-  if ($running.Count -eq 0) { return }
-  Step (T 'Dienste anhalten' 'Stopping services')
+# Which services get new programs. An update to another version replaces the programs whose version changed and
+# leaves the other services running; everything else replaces all of them: a first installation, changed settings, the
+# same version once more (which repairs an installation), a manifest that names no versions.
+function Read-Changes {
+  $S.Replace = @($ServiceNames)
+  if ($S.Mode -ne 'update' -or $PSScriptRoot.TrimEnd('\') -eq $S.InstallDir) { return }
+  $old = Get-Manifest $S.InstallDir
+  $new = Get-Manifest $PSScriptRoot
+  $have = Get-PartVersion $old 'server'
+  $next = Get-PartVersion $new 'server'
+  if (-not $have -or -not $next -or $have -eq $next) { return }
+  Step (T 'Was sich ändert' 'What changes')
+  # Caddy's service exists in the bundled mode only
+  $mine = @($ServiceNames | Where-Object { $_ -ne 'SquorliCaddy' -or $S.Setup -eq 'bundled' })
+  $changed = @()
+  foreach ($part in @('server', 'node', 'postgresql', 'livekit', 'caddy', 'winsw')) {
+    if (@($mine | Where-Object { $Programs[$_].Parts -contains $part }).Count -eq 0) { continue }
+    $a = Get-PartVersion $old $part
+    $b = Get-PartVersion $new $part
+    if ($a -and $b -and $a -eq $b) { Note "$($PartNames[$part]) $a $(T '(unverändert)' '(unchanged)')"; continue }
+    $changed += $part
+    if (-not $a) { $a = '?' }
+    Ok "$($PartNames[$part]) $a -> $b"
+  }
+  # A service this installation does not have runs nothing: its programs are replaced in any case
+  $S.Replace = @($ServiceNames | Where-Object { $name = $_; $mine -notcontains $name -or @($Programs[$name].Parts | Where-Object { $changed -contains $_ }).Count -gt 0 })
+  $stop = @(Get-WithDependents $S.Replace | Where-Object { $mine -contains $_ })
+  $keep = @($mine | Where-Object { $stop -notcontains $_ -and (Test-ServiceRunning $_) })
+  if ($keep.Count -gt 0) { Note (T "Laufen weiter: $($keep -join ', ')" "Keep running: $($keep -join ', ')") }
+  Note (T "Werden angehalten und neu gestartet: $($stop -join ', ')" "Are stopped and started again: $($stop -join ', ')")
+}
+
+function Invoke-ServiceStop([string]$name) {
+  Stop-Service -Name $name -Force -ErrorAction Stop
+  (Get-Service -Name $name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
+}
+# Stops the given services and the ones that need them, in the order of a stop; the ones that do not run are left out.
+function Stop-Running([string[]]$names) {
+  $running = @(Get-WithDependents $names | Where-Object { Test-ServiceRunning $_ })
   [array]::Reverse($running)
   foreach ($name in $running) {
-    try { Stop-Service -Name $name -Force -ErrorAction Stop; (Get-Service -Name $name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60)); Ok $name }
+    try { Invoke-ServiceStop $name; Ok $name }
     catch { Die (T "$name lässt sich nicht anhalten: $($_.Exception.Message)" "$name cannot be stopped: $($_.Exception.Message)") }
   }
+}
+function Stop-Services {
+  if (@(Get-WithDependents $S.Replace | Where-Object { Test-ServiceRunning $_ }).Count -eq 0) { return }
+  Step (T 'Dienste anhalten' 'Stopping services')
+  Stop-Running $S.Replace
+}
+# A service reads its configuration at its start: one whose files changed while it ran is stopped here, with the
+# services that need it, and started again with the others.
+function Stop-Changed {
+  $names = @($S.Restart | Select-Object -Unique)
+  $S.Restart.Clear()
+  $running = @(Get-WithDependents $names | Where-Object { Test-ServiceRunning $_ })
+  if ($running.Count -eq 0) { return }
+  Note (T "Konfiguration geändert, Neustart: $($running -join ', ')" "Configuration changed, restarting: $($running -join ', ')")
+  Stop-Running $names
 }
 
 function Copy-Folder([string]$from, [string]$to) {
@@ -674,7 +768,11 @@ function Copy-Programs {
     if ($said -notmatch "\) $([regex]::Escape($have))\.") { Die (T "Die Datenbank stammt von PostgreSQL $have, das Paket bringt '$said'. Ein Wechsel der Hauptversion braucht eine Sicherung und ein Zurückspielen (squorli backup, squorli restore)." "The database was made by PostgreSQL $have, the package brings '$said'. A change of the major version needs a backup and a restore (squorli backup, squorli restore).") }
   }
   New-Item -ItemType Directory -Force -Path $S.InstallDir | Out-Null
+  # The programs of a service that keeps running stay as they are: they are in use, and the package brings the same
+  $kept = @()
+  foreach ($name in $ServiceNames) { if ($S.Replace -notcontains $name) { $kept += $Programs[$name].Folders } }
   foreach ($folder in @('app', 'node', 'livekit', 'caddy', 'pgsql', 'templates', 'licenses', 'proxies', 'bin')) {
+    if ($kept -contains $folder) { continue }
     if (Test-Path -LiteralPath (Join-Path $source $folder)) { Copy-Folder (Join-Path $source $folder) (Join-Path $S.InstallDir $folder) }
   }
   # winsw holds the filled service files of this installation next to the program: only the program is replaced.
@@ -683,7 +781,7 @@ function Copy-Programs {
   foreach ($file in @(Get-ChildItem -LiteralPath $source -File)) { Copy-Item -LiteralPath $file.FullName -Destination $S.InstallDir -Force }
   # Files out of a downloaded ZIP carry the mark "from the internet", which makes PowerShell refuse or ask.
   Get-ChildItem -LiteralPath $S.InstallDir -Recurse -File -Include '*.ps1', '*.cmd', '*.exe', '*.dll' | Unblock-File -ErrorAction SilentlyContinue
-  Ok $S.InstallDir
+  if ($kept.Count -gt 0) { Ok "$($S.InstallDir) ($(T 'unverändert' 'unchanged'): $($kept -join ', '))" } else { Ok $S.InstallDir }
 }
 
 function Write-Env {
@@ -763,6 +861,7 @@ function Write-Template([string]$template, [string]$target, [hashtable]$values, 
     }
   }
   [IO.File]::WriteAllText($target, $text, $Utf8)
+  $S.Written.Add($target)
 }
 
 function Write-Configuration {
@@ -781,11 +880,20 @@ function Write-Configuration {
   $yaml = Join-Path $config 'livekit.yaml'
   if (-not (Test-Path -LiteralPath $yaml)) { [IO.File]::WriteAllText($yaml, '', $Utf8); Set-Access $yaml }
   Write-Template 'livekit.yaml' $yaml $values
-  if ($S.Setup -eq 'bundled') { Write-Template 'Caddyfile' (Join-Path $config 'Caddyfile') $values }
+  if ($S.Written -contains $yaml) { $S.Restart.Add('SquorliLiveKit') }
+  if ($S.Setup -eq 'bundled') {
+    Write-Template 'Caddyfile' (Join-Path $config 'Caddyfile') $values
+    if ($S.Written -contains (Join-Path $config 'Caddyfile')) { $S.Restart.Add('SquorliCaddy') }
+  }
   foreach ($name in $WrappedServices) {
     if ($name -eq 'SquorliCaddy' -and $S.Setup -ne 'bundled') { continue }
-    Write-Template "$name.xml" (Join-Path $S.InstallDir "winsw\$name.xml") $values -Xml
-    Copy-Item -LiteralPath (Join-Path $S.InstallDir 'winsw\WinSW.exe') -Destination (Join-Path $S.InstallDir "winsw\$name.exe") -Force
+    $xml = Join-Path $S.InstallDir "winsw\$name.xml"
+    Write-Template "$name.xml" $xml $values -Xml
+    if ($S.Written -contains $xml) { $S.Restart.Add($name) }
+    # A service that kept running holds its copy of WinSW open; it is the same version, or the service would be stopped
+    $exe = Join-Path $S.InstallDir "winsw\$name.exe"
+    if ((Test-Path -LiteralPath $exe) -and (Test-ServiceRunning $name)) { continue }
+    Copy-Item -LiteralPath (Join-Path $S.InstallDir 'winsw\WinSW.exe') -Destination $exe -Force
   }
   Ok $config
 }
@@ -839,9 +947,13 @@ function Show-ServiceLog([string]$name) {
   }
 }
 
-function Start-SquorliService([string]$name) {
+function Invoke-ServiceStart([string]$name) {
   try { Start-Service -Name $name -ErrorAction Stop } catch { Show-ServiceLog $name; Die (T "$name startet nicht: $($_.Exception.Message)" "$name does not start: $($_.Exception.Message)") }
   if (-not (Wait-Service $name 'Running')) { Show-ServiceLog $name; Die (T "$name läuft nach 60 Sekunden nicht." "$name is not running after 60 seconds.") }
+}
+function Start-SquorliService([string]$name) {
+  if (Test-ServiceRunning $name) { Ok "$name $(T '(lief weiter)' '(kept running)')"; return }
+  Invoke-ServiceStart $name
   Ok $name
 }
 
@@ -870,8 +982,10 @@ function Install-Postgres {
   }
   Write-Template 'postgresql.squorli.conf' (Join-Path $pgdata 'postgresql.squorli.conf') $S.Values
   Write-Template 'pg_hba.conf' (Join-Path $pgdata 'pg_hba.conf') $S.Values
+  if (@($S.Written | Where-Object { $_ -like (Join-Path $pgdata '*') }).Count -gt 0) { $S.Restart.Add('SquorliPostgres') }
   $conf = Join-Path $pgdata 'postgresql.conf'
-  if (([IO.File]::ReadAllText($conf)) -notmatch "(?m)^include = 'postgresql\.squorli\.conf'") { [IO.File]::AppendAllText($conf, "`ninclude = 'postgresql.squorli.conf'`n") }
+  if (([IO.File]::ReadAllText($conf)) -notmatch "(?m)^include = 'postgresql\.squorli\.conf'") { [IO.File]::AppendAllText($conf, "`ninclude = 'postgresql.squorli.conf'`n"); $S.Restart.Add('SquorliPostgres') }
+  Stop-Changed
 
   Start-SquorliService 'SquorliPostgres'
   $ready = $false
@@ -961,6 +1075,7 @@ function Wait-Http([string]$url, [int]$status, [int]$tries = 30, [int]$pause = 2
 
 function Start-All {
   Step (T 'Dienste starten' 'Starting services')
+  Stop-Changed
   Start-SquorliService 'SquorliLiveKit'
   Start-SquorliService 'SquorliServer'
   if ($S.Setup -eq 'bundled') { Start-SquorliService 'SquorliCaddy' }
@@ -1062,6 +1177,7 @@ function Show-Finish {
     Write-Host "  squorli backup      $(T "Datenbank, Dateien und .env nach $($S.DataDir)\backups sichern" "back up database, files and .env to $($S.DataDir)\backups")"
     Write-Host "  squorli restore <$(T 'Ordner' 'dir')>  $(T 'eine Sicherung zurückspielen (ersetzt Datenbank und Dateien)' 'restore a backup (replaces database and files)')"
     Write-Host "  squorli doctor      $(T 'prüfen, was bei der Einrichtung am häufigsten schiefgeht' 'check what goes wrong most often in a setup')"
+    Write-Host "  squorli autoupdate  $(T 'automatische Updates ein- und ausschalten (on, off)' 'switch automatic updates on and off (on, off)')"
   } else {
     Write-Host (T 'Dienste ansehen: Get-Service Squorli*   Logs: ' 'Show the services: Get-Service Squorli*   Logs: ') -NoNewline; Write-Host (Join-Path $S.DataDir 'logs')
   }
@@ -1077,6 +1193,7 @@ function Main {
   Read-Ports
   if ($S.Mode -eq 'update') {
     Read-Existing
+    Read-Changes
     Note (T 'Vorher sichern: squorli backup' 'Back up first: squorli backup')
     if (-not (Confirm (T 'Jetzt aktualisieren?' 'Update now?') $true)) { Stop-Log; exit 0 }
   } else {

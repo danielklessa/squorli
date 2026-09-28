@@ -15,7 +15,9 @@
   What it checks: the ZIP against its .sha256 file, install.ps1 -Unattended, the services (running, automatic, an account
   of their own), the access rights of .env and of a backup, the PATH, /api/health and /rtc/validate, squorli status,
   doctor, logs, backup, restore (its own backup and the one of a Linux installation in linux-backup\), stop, start,
-  restart, update -Package (the same package, and one whose app server ends at its start: the way back), uninstall.ps1.
+  restart, update -Package (the same package; the next version, which leaves PostgreSQL and LiveKit running; one that
+  asks for work by hand, which the run of the task leaves alone; one whose app server ends at its start: the way back),
+  update -Check, autoupdate (the task runs as SYSTEM), uninstall.ps1.
 
   -Smoke runs the other part instead: an installation whose first sign-in becomes the owner, and the server's smoke test
   (apps/server/scripts/smoke.mjs) against it. It needs the repository with its packages installed and a node in the PATH,
@@ -30,7 +32,7 @@ param(
   # Where the package is unpacked; with a space in its name on purpose.
   [string]$WorkDir = '',
   [switch]$Smoke,
-  # Leave out the update to a package that breaks (it builds a second ZIP: about three minutes).
+  # Leave out the update to a package that breaks (it builds another ZIP: about three minutes).
   [switch]$SkipBroken,
   [ValidateSet('yes', 'no')][string]$Firewall = 'no',
   [int]$AppPort = 0,
@@ -260,19 +262,26 @@ function Test-ServiceControl {
   Test-ServicesUp 'after the restart'
 }
 
-# The unpacked package under another version number, with an app server that ends at its start.
-function New-BrokenPackage {
+# The unpacked package under another version number; -Broken: with an app server that ends at its start; -From: the
+# version from which on an installation may update to it by itself (manifest.json, autoUpdateFrom).
+function New-TestPackage([string]$version, [switch]$Broken, [string]$From = '') {
   Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
-  $name = 'squorli-server-99.0.0-windows-x64'
-  $stage = Join-Path $script:Work "broken\$name"
+  $name = "squorli-server-$version-windows-x64"
+  $stage = Join-Path $script:Work "made\$name"
   $null = Invoke-Captured 'robocopy.exe' @($script:Unpacked, $stage, '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP') -Quiet
   foreach ($file in @('manifest.json', 'app\package.json')) {
     $path = Join-Path $stage $file
-    $text = [regex]::Replace([IO.File]::ReadAllText($path, $Utf8), '("version":\s*")[^"]+(")', '${1}99.0.0${2}', 1)
+    $text = [regex]::Replace([IO.File]::ReadAllText($path, $Utf8), '("version":\s*")[^"]+(")', "`${1}$version`${2}", 1)
     [IO.File]::WriteAllText($path, $text, $Utf8)
   }
-  [IO.File]::WriteAllText((Join-Path $stage 'app\dist\index.js'), "console.error('broken on purpose (acceptance test)'); process.exit(1);`n", $Utf8)
+  if ($From) {
+    $path = Join-Path $stage 'manifest.json'
+    $text = [regex]::Replace([IO.File]::ReadAllText($path, $Utf8), '\s*"autoUpdateFrom":\s*"[^"]*",', '')
+    $text = [regex]::Replace($text, '("version":\s*"[^"]+",)', "`${1}`n    `"autoUpdateFrom`":  `"$From`",", 1)
+    [IO.File]::WriteAllText($path, $text, $Utf8)
+  }
+  if ($Broken) { [IO.File]::WriteAllText((Join-Path $stage 'app\dist\index.js'), "console.error('broken on purpose (acceptance test)'); process.exit(1);`n", $Utf8) }
   $zipPath = Join-Path $script:Work "$name.zip"
   $zip = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
   try {
@@ -298,17 +307,84 @@ function Test-Update {
   Check "squorli update -Package (the same package): code 0, version $($script:Version) answers" ($r.Code -eq 0 -and $null -ne $health -and $health.version -eq $script:Version) "exit $($r.Code)"
   Check 'the update made a backup first' (@(Get-ChildItem -LiteralPath (Join-Path $DataDir 'backups') -Directory).Count -eq $before + 1)
   Test-ServicesUp 'after the update'
+
+  Step 'update to the next version: only what changed is stopped'
+  $next = New-TestPackage '98.0.0'
+  $before = @{}
+  foreach ($service in (Get-Services)) { $before[$service.Name] = $service.ProcessId }
+  $r = Invoke-Squorli @('update', '-Package', $next)
+  $health = Get-Health
+  Check 'squorli update -Package (version 98.0.0): code 0, version 98.0.0 answers' ($r.Code -eq 0 -and $null -ne $health -and $health.version -eq '98.0.0') "exit $($r.Code)"
+  $after = @{}
+  foreach ($service in (Get-Services)) { $after[$service.Name] = $service.ProcessId }
+  $said = ($ServiceNames | ForEach-Object { "$_ $($before[$_]) -> $($after[$_])" }) -join '; '
+  Check 'PostgreSQL and LiveKit kept running (the same processes), the app server is a new one' (
+    $after['SquorliPostgres'] -gt 0 -and $after['SquorliPostgres'] -eq $before['SquorliPostgres'] -and $after['SquorliLiveKit'] -eq $before['SquorliLiveKit'] -and
+    $after['SquorliServer'] -gt 0 -and $after['SquorliServer'] -ne $before['SquorliServer']) $said
+  Check 'the setup named what keeps running' ($r.Text -match 'Keep running: SquorliPostgres, SquorliLiveKit') ''
+  Test-ServicesUp 'after the update to the next version'
+  $script:Version = '98.0.0'
   if ($SkipBroken) { return }
 
+  Step 'a version that asks for work by hand: not by itself'
+  $broken = New-TestPackage '99.0.0' -Broken -From '99.0.0'
+  $r = Invoke-Squorli @('update', '-Auto', '-Package', $broken)
+  $health = Get-Health
+  Check 'the run of the task leaves it alone (code 10) and says why' ($r.Code -eq 10 -and $r.Text -match 'asks for work by hand first' -and $null -ne $health -and $health.version -eq $script:Version) "exit $($r.Code)"
+  Check 'the working folder is gone' (-not (Test-Path -LiteralPath (Join-Path $DataDir 'update')))
+
   Step 'update to a version that breaks, and the way back'
-  $broken = New-BrokenPackage
-  $r = Invoke-Squorli @('update', '-Package', $broken)
+  $r = Invoke-Squorli @('update', '-Package', $broken, '-Yes')
   Check 'the update ends with code 1 and says that migrations are not undone' ($r.Code -eq 1 -and $r.Text -match 'NOT undone' -and $r.Text -match 'squorli restore') "exit $($r.Code)"
   $health = Get-Health
   Check "version $($script:Version) answers again" ($null -ne $health -and $health.version -eq $script:Version) "$($health | ConvertTo-Json -Compress)"
   Test-ServicesUp 'after the way back'
   $r = Invoke-Squorli @('status') -Quiet
   Check 'squorli status: code 0' ($r.Code -eq 0) "exit $($r.Code)"
+}
+
+# The installation carries the test's version 98.0.0 here, so no release can be newer and no run changes it.
+function Test-AutoUpdate {
+  Step 'update -Check, autoupdate'
+  $r = Invoke-Squorli @('update', '-Check')
+  if ($r.Code -eq 1 -and $r.Text -match 'GitHub') { Write-Host '  skip  squorli update -Check: GitHub did not answer (it limits how often a machine may ask)' -ForegroundColor Yellow }
+  else { Check 'squorli update -Check: code 0, no release is newer' ($r.Code -eq 0) "exit $($r.Code)" }
+  $r = Invoke-Squorli @('autoupdate') -Quiet
+  Check 'squorli autoupdate: off' ($r.Code -eq 0 -and $r.Text -match 'Automatic updates: off') "exit $($r.Code)"
+  $r = Invoke-Squorli @('autoupdate', 'on', '25') -Quiet
+  $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate', '/XML') -Quiet
+  Check 'an interval of 25 hours is refused, no task is made' ($r.Code -eq 1 -and $task.Code -ne 0) "exit $($r.Code)"
+  $r = Invoke-Squorli @('autoupdate', 'on', '6')
+  $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate', '/XML') -Quiet
+  Check 'squorli autoupdate on 6: a task of SYSTEM, every 6 hours, that calls squorli.ps1 update -Auto' (
+    $r.Code -eq 0 -and $task.Code -eq 0 -and $task.Text -match '<UserId>S-1-5-18</UserId>' -and $task.Text -match '<Interval>PT6H</Interval>' -and
+    $task.Text -match 'squorli\.ps1(&quot;|") update -Auto') "exit $($r.Code)"
+  $r = Invoke-Squorli @('autoupdate') -Quiet
+  Check 'squorli autoupdate: on, every 6 hours' ($r.Code -eq 0 -and $r.Text -match 'Automatic updates: on, every 6 hours') "exit $($r.Code)"
+
+  $log = Join-Path $DataDir 'logs\autoupdate.log'
+  # The log may hold lines of the update tests already
+  $before = 0
+  if (Test-Path -LiteralPath $log) { $before = @(Get-Content -LiteralPath $log -Encoding UTF8).Count }
+  $null = Invoke-Captured 'schtasks.exe' @('/Run', '/TN', 'SquorliAutoUpdate') -Quiet
+  $lines = @()
+  foreach ($i in 1..60) {
+    if (Test-Path -LiteralPath $log) { $lines = @(Get-Content -LiteralPath $log -Encoding UTF8) }
+    if ($lines.Count -gt $before) { break }
+    Start-Sleep -Seconds 2
+  }
+  foreach ($line in $lines) { Write-Host "        $line" }
+  Check 'the task ran as SYSTEM and wrote what it found into logs\autoupdate.log' ($lines.Count -gt $before -and "$($lines[-1])" -match 'nothing to do|is the newest|GitHub') "$($lines.Count) lines, $before before"
+  Test-ServicesUp 'after the task'
+  $health = Get-Health
+  Check "version $($script:Version) still answers" ($null -ne $health -and $health.version -eq $script:Version) "$($health | ConvertTo-Json -Compress)"
+
+  $r = Invoke-Squorli @('autoupdate', 'off') -Quiet
+  $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate') -Quiet
+  Check 'squorli autoupdate off removes the task' ($r.Code -eq 0 -and $task.Code -ne 0) "exit $($r.Code)"
+  # Left on: the removal has to take the task along
+  $r = Invoke-Squorli @('autoupdate', 'on', '24') -Quiet
+  Check 'squorli autoupdate on 24' ($r.Code -eq 0 -and $r.Text -match 'once a day at 04:17') "exit $($r.Code)"
 }
 
 function Uninstall-Package {
@@ -322,6 +398,7 @@ function Uninstall-Package {
   Check 'the program folder and the data folder are gone' (-not (Test-Path -LiteralPath $InstallDir) -and -not (Test-Path -LiteralPath $DataDir))
   Check 'the PATH of the machine holds no entry of Squorli' (@(Get-MachinePath | Where-Object { $_ -like "$InstallDir*" }).Count -eq 0)
   Check 'no firewall rule of the group Squorli is left' (@(Get-NetFirewallRule -Group 'Squorli' -ErrorAction SilentlyContinue).Count -eq 0)
+  Check 'no task SquorliAutoUpdate is left' ((Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate') -Quiet).Code -ne 0)
 }
 
 function Test-Smoke {
@@ -357,6 +434,7 @@ try {
     Test-BackupAndRestore
     Test-ServiceControl
     Test-Update
+    Test-AutoUpdate
   }
 } catch {
   Write-Host ''

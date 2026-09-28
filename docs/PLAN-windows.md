@@ -6,8 +6,8 @@ Target: Windows 10 from 22H2 and Windows 11 (Home included), Windows Server 2019
 
 ## Open
 
-1. **The acceptance on real machines** after the checklist of the feature note (phase 5): a PC with the bundled Caddy and a real domain, a Windows Server with IIS in front (`deploy/proxies/iis/`), a proxy on another machine, Windows 10. Until then the README and the website say what was run and what was not; change both when it is.
-2. **An installation with Docker from before 0.6.0 that takes over the renamed service by another way than the install script:** a Portainer stack, an overlay of one's own (`docs/features/windows.md`, "The service's name"; `deploy/AGENTS.md`). The way with the install script ran.
+1. **The acceptance on machines the user does not have** (28 September 2026: no Windows Server with IIS, no Windows 10): a Windows Server with IIS in front (`deploy/proxies/iis/`, never run against a real IIS), Windows 10 from 22H2, a Windows Server with people on it, a proxy on another machine in front of a Windows installation. They wait for a machine (a virtual one will do for IIS and Windows 10) or for an operator's report. Until then the README and the website say what was run and what was not; change both when it is.
+2. **Two lines of the checklist (feature note, phase 5) on the PC with the bundled Caddy:** Verwaltung > Server > Verbindung prüfen from a browser in another network (UDP), and `squorli update` from GitHub on an installation with the bundled Caddy (it ran on Windows 11 without it). Every other line of that column ran at the user's on 28 September 2026.
 
 Released on 28 September 2026 as Squorli Server 0.6.0: the package is attached to the release, `squorli update` ran against it, the website's guide is live.
 

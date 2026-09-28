@@ -148,34 +148,36 @@ Released by the user on 28 September 2026 ("phase 5 kann gestartet werden").
 
 ### Checklist for the acceptance on real machines
 
-Two machines: **a PC with Windows 11** (or 10 22H2) and **a Windows Server** (2019, 2022 or 2025). Each line is done when it was seen, with the date and the version in "Acceptance by the user" below.
+Two machines: **a PC with Windows 11** (or 10 22H2) and **a Windows Server** (2019, 2022 or 2025). Each line is done when it was seen, with the date and the version in "Acceptance by the user" below. The column of the PC holds what the user answered on 28 September 2026, asked line by line (Windows 11, the package of the release 0.6.0).
 
 Before: `deploy\windows\test\acceptance.ps1 -Package <zip>` as administrator on each machine (installation, the commands, update, removal; about ten minutes). What it cannot see is the list here.
 
 | | PC, the bundled Caddy (a real domain, 80/443 forwarded) | Server, IIS in front (`deploy/proxies/iis/`) |
 |---|---|---|
-| Unpacked from the downloaded ZIP (Explorer or `tar`), `Unblock-File` or the question of Windows answered, no block by Defender or Smart App Control | | |
-| `install.ps1` with questions, in German and in English; the firewall question answered with yes | | |
-| The certificate is there, `https://<domain>` opens the client | | not applicable: IIS holds the certificate |
+| Unpacked from the downloaded ZIP (Explorer or `tar`), `Unblock-File` or the question of Windows answered, no block by Defender or Smart App Control | ran, 28 September 2026 | |
+| `install.ps1` with questions, in German and in English; the firewall question answered with yes | ran, 28 September 2026 | |
+| The certificate is there, `https://<domain>` opens the client | ran, 28 September 2026 | not applicable: IIS holds the certificate |
 | IIS set up after the README; `/`, `/api/ws` and `/rtc` arrive | not applicable | |
-| `squorli doctor`: every check ok, with a directory also the ones from outside | | |
-| Verwaltung > Server > Verbindung prüfen from a browser in another network: UDP | | |
-| Sign-in with a Squorli account (`@name`) and with a server account (`~name`) | | |
-| A text message, an attachment (picture, a file of 20 MB), an avatar, the server icon replaced twice in a row | | |
-| Voice with two people from two networks, one of them on mobile data | | |
-| Camera, screen share with sound, the radio | | |
-| The desktop app connected to this server | | |
-| Restart of the machine: the services run before anybody signs in, clients reconnect | | |
-| A PC only: the machine does not go to sleep after the time of the power plan (`-KeepAwake yes`) | | not applicable |
-| `squorli backup`, then `squorli restore` of it | | |
-| A backup of a Linux installation of one's own restored (`squorli restore <folder with .tar.gz>`) | | |
-| `squorli update` from version N to N+1 from GitHub (the first release after the one installed) | | |
-| `squorli logs -Follow` while somebody signs in; Ctrl+C ends it | | |
-| `uninstall.ps1` with the data kept, a new installation on top of the kept data (asks for the old database password only without `.env`) | | |
-| `uninstall.ps1` with "löschen": nothing left but the firewall of the router and the DNS record | | |
+| `squorli doctor`: every check ok, with a directory also the ones from outside | ran, 28 September 2026 | |
+| Verwaltung > Server > Verbindung prüfen from a browser in another network: UDP | open | |
+| Sign-in with a Squorli account (`@name`) and with a server account (`~name`) | ran, 28 September 2026 | |
+| A text message, an attachment (picture, a file of 20 MB), an avatar, the server icon replaced twice in a row | ran, 28 September 2026 | |
+| Voice with two people from two networks, one of them on mobile data | ran, 28 September 2026 | |
+| Camera, screen share with sound, the radio | ran, 28 September 2026 | |
+| The desktop app connected to this server | ran, 28 September 2026 | |
+| Restart of the machine: the services run before anybody signs in, clients reconnect | ran, 28 September 2026 | |
+| A PC only: the machine does not go to sleep after the time of the power plan (`-KeepAwake yes`) | ran, 28 September 2026 | not applicable |
+| `squorli backup`, then `squorli restore` of it | ran, 28 September 2026 | |
+| A backup of a Linux installation of one's own restored (`squorli restore <folder with .tar.gz>`) | ran, 28 September 2026 | |
+| `squorli update` from version N to N+1 from GitHub (the first release after the one installed) | open with the bundled Caddy; ran on the user's Windows 11 against 0.6.0 (below) | |
+| `squorli logs -Follow` while somebody signs in; Ctrl+C ends it | ran, 28 September 2026 | |
+| `uninstall.ps1` with the data kept, a new installation on top of the kept data (asks for the old database password only without `.env`) | ran, 28 September 2026 | |
+| `uninstall.ps1` with "löschen": nothing left but the firewall of the router and the DNS record | ran, 28 September 2026 | |
 
 ### Acceptance by the user
 
+- **28 September 2026, the bundled Caddy, and what the user cannot run:** the user ran the package with the bundled Caddy ("Mit Caddy getestet"), after the release of 0.6.0: Windows 11, a real domain, Caddy obtained the Let's Encrypt certificate. Asked line by line after the checklist above ("frag mich einfach nochmal die Checkliste ab"), they answered that all of this ran: the ZIP downloaded with the browser and unpacked without a block by Windows, Defender or Smart App Control; `install.ps1` with its questions in German and in English, the firewall question answered with yes; `https://<domain>` opens the client; `squorli doctor` with every check ok; the sign-in with a Squorli account and with a server account; a message, attachments, an avatar, the server icon replaced twice; voice with two people from two networks, one on mobile data; camera, screen share with sound, the radio; the desktop app; the restart of the machine; no standby; `squorli logs -Follow`; backup and restore; a Linux backup of their own restored; the removal with the data kept and a new installation on top; the removal with everything deleted. **Two lines did not run on this installation:** Verwaltung > Server > Verbindung prüfen from a browser in another network (UDP), and `squorli update` from GitHub (which ran on their Windows 11 the same day, the entry below). The answers are the user's word; no output was sent. The README and the website count the bundled Caddy as run since then. **The user has no Windows Server with IIS and no Windows 10** ("ich habe leider keinen Server mit IIS zur Verfügung. Windows 10 habe ich leider auch nichtmehr"): the checklist's column for the server and Windows 10 wait for a machine or for an operator's report, and the template `deploy/proxies/iis/` stays marked as not checked.
+- **28 September 2026, the user's Portainer stack:** updated to 0.6.0 by changing the stack to the renamed service (`server:`), not by the new image alone ("Ich habe den Weg B genommen um alles up to date zu haben, alles läuft einwandfrei"). Not run: an overlay of one's own, which is the same change in a file of the operator.
 - **28 September 2026, `squorli update` from GitHub and the website:** the user updated an installation on Windows 11 with `squorli update` against the published release 0.6.0 ("das update über github habe ich erfolgreich getestet"): the list of releases read, the package and its checksum fetched from the release, installed. That was the last way of the command that had never run. The website is pushed; the live installation guide shows the tabs and the package in both languages (looked at from outside).
 - **28 September 2026, the release 0.6.0 published by the user:** the job `test` of the tag's `ci.yml` passed in its second run, `image` published `ghcr.io/danielklessa/squorli-server:v0.6.0` (the same digest as `:latest`). Seen from outside without a sign-in: the release "Squorli Server 0.6.0" carries `squorli-server-0.6.0-windows-x64.zip` (115 MB) and its `.sha256` file, both can be downloaded under the addresses `squorli update` asks for, the hash of the ZIP is the one the file names, and the release's text names the package.
 - **28 September 2026, the first tag with a package (`v0.6.0`, commit `abf040c`), the run of `server-release.yml` on GitHub:** all three jobs green in nine minutes: `release` wrote the draft, `windows / package` built the package of the tag and passed the acceptance test on the runner, `attach` took the artifact and attached it to the draft (its step ended without an error; a draft and its files cannot be seen without a sign-in, so the two files themselves were not looked at from here). **The run of `ci.yml` for the same tag failed** in the job `test` at `pnpm test`, so its job `image` was skipped and the image `:v0.6.0` was not published; the same commit had passed `test` on `main` a minute before, and the suite passed 8 times on Windows and 12 times on Linux (`node:24`, two processors) afterwards. The user sent the log: `apps/web/src/dmPreviews.test.ts`, "Cipher job failed". The test, not the client, was wrong: the pictures of two links are sealed and stored at the same time, and the test opened the store's first entry with the first preview's key, which fails whenever the second link's picture arrives first. The test finds a picture by its blob id now, and a second test forces that order (`docs/features/link-previews.md`). Way out for the tag: run the failed job again; the tag needs no change.
@@ -225,7 +227,7 @@ The services are plain processes there, found by the port they listen on; replac
 
 ### Not checked: everything the command does as administrator
 
-Written before the user's runs, which answer most of it ("Acceptance by the user" below). Still not checked after them: `update` from GitHub, the rights of the files a restore unpacks (the restore worked, the rights were not looked at), WinSW's rotation of a log, the bundled mode, Windows 10 and Windows Server.
+Written before the user's runs, which answer most of it ("Acceptance by the user" below). Still not checked after them: the rights of the files a restore unpacks (the restore worked, the rights were not looked at), WinSW's rotation of a log, Windows 10 and a Windows Server in use. `update` from GitHub and the bundled mode ran at the user's later that day (phase 5, "Acceptance by the user"); `update` with the bundled Caddy did not.
 
 - The real services: `Get-CimInstance Win32_Service`, `Start-Service`, `Stop-Service` in the command's order, the stop of a service with services that depend on it.
 - The access rights of a backup with the real accounts, `pg_dump` and `psql` from an elevated shell, the files a restore unpacks under the app server's own account (they must inherit its rights from the data folder).
@@ -248,7 +250,7 @@ The user's runs, the newest first.
 
 ## Phase 3, built and accepted for Windows 11 (28 September 2026): the setup
 
-`deploy/windows/install.ps1` and `uninstall.ps1`, in the package's root. How the setup works, its modes, parameters and pitfalls: `deploy/windows/AGENTS.md`, "The setup". The user runs it on their own machine ("Ich würde das Script für Phase 3 selbst ausführen"): the shell this was built in has no administrator rights, so nothing that needs them has run. The runs are recorded under "Acceptance by the user" below; what the list "Not checked" names was written before them and is answered there, except the bundled mode, a proxy on another machine, IIS, the firewall rules, the power settings, the installation of the Visual C++ runtime, Windows 10 and Windows Server.
+`deploy/windows/install.ps1` and `uninstall.ps1`, in the package's root. How the setup works, its modes, parameters and pitfalls: `deploy/windows/AGENTS.md`, "The setup". The user runs it on their own machine ("Ich würde das Script für Phase 3 selbst ausführen"): the shell this was built in has no administrator rights, so nothing that needs them has run. The runs are recorded under "Acceptance by the user" below; what the list "Not checked" names was written before them and is answered there, except a proxy on another machine, IIS, the installation of the Visual C++ runtime, Windows 10 and Windows Server. The bundled mode, the firewall question and the power settings ran at the user's later that day (phase 5, "Acceptance by the user").
 
 ### Decisions made by Claude, confirmed by the user on 28 September 2026 ("Die Entscheidungen bestätige ich")
 

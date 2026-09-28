@@ -2,6 +2,9 @@
   "name": "@squorli/server",
   "version": "0.6.0",
   "private": true,
+  "squorli": {
+    "autoUpdateFrom": "0.6.0"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {

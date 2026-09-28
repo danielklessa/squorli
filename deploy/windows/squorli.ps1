@@ -15,6 +15,8 @@
     squorli backup [folder]            database, files and .env into <folder>\<time> (default: the data folder's backups)
     squorli restore <folder> [-Yes]    replaces database and files by a backup, also by one made on Linux
     squorli update [-Version x.y.z]    the newest release from GitHub; -Package <file or address> takes that ZIP
+    squorli update -Check              only looks for a newer release: exit code 10 when there is one, 0 when not
+    squorli autoupdate [on|off]        a task that looks for a new version every 1 to 24 hours and installs it
     squorli doctor                     the setup check (docs/features/doctor.md)
 
   Services: server, postgres, livekit, caddy ("app" means server).
@@ -30,6 +32,12 @@ param(
   [string]$Version = '',
   # update: a package's ZIP (a file or an address) in place of the release on GitHub; its .sha256 file lies next to it.
   [string]$Package = '',
+  # update: look for a newer release and change nothing.
+  [switch]$Check,
+  # update: the run of the scheduled task (no question, one line per run in logs\autoupdate.log).
+  [switch]$Auto,
+  # autoupdate on: the hours between two runs, 1 to 24.
+  [int]$Hours = 0,
   # Only for an installation whose data folder cannot be read from its service file.
   [string]$DataDir = '',
   [Alias('h')][switch]$Help,
@@ -42,6 +50,8 @@ $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Repository = 'danielklessa/squorli-server'
+# The task of Windows' scheduler that runs the automatic updates
+$TaskName = 'SquorliAutoUpdate'
 $Utf8 = New-Object Text.UTF8Encoding $false
 # The command's names and the Windows services, in the order they start; they stop the other way round.
 $Services = [ordered]@{ postgres = 'SquorliPostgres'; livekit = 'SquorliLiveKit'; server = 'SquorliServer'; caddy = 'SquorliCaddy' }
@@ -57,7 +67,12 @@ function Ok([string]$text) { Write-Host '  ok ' -ForegroundColor Green -NoNewlin
 function Warn([string]$text) { Write-Host "  !  $text" -ForegroundColor Yellow }
 function Bad([string]$text) { Write-Host "  x  $text" -ForegroundColor Red }
 function Note([string]$text) { Write-Host "     $text" -ForegroundColor DarkGray }
-function Die([string]$text) { Write-Host ''; Write-Host "x $text" -ForegroundColor Red; exit 1 }
+function Die([string]$text) { Write-Host ''; Write-Host "x $text" -ForegroundColor Red; Write-AutoLog "x $text"; exit 1 }
+# The log of the automatic updates: one line per run and result. Only the run of the scheduled task writes it.
+function Write-AutoLog([string]$text) {
+  if (-not $S.ContainsKey('AutoLog')) { return }
+  try { [IO.File]::AppendAllText($S.AutoLog, "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $text`r`n", $Utf8) } catch { }
+}
 
 # ---- Programs. stderr never stops the script by itself (Windows PowerShell 5.1 turns a redirected stderr line into an
 # error), the exit code decides.
@@ -609,6 +624,30 @@ function Find-Release {
   if (-not $best) { Die (T "Unter https://github.com/$Repository/releases gibt es noch keine Version mit einem Paket für Windows." "There is no release with a package for Windows at https://github.com/$Repository/releases yet.") }
   return $best
 }
+# What a release says about updating by itself: the version from which on an installation may, read from
+# apps/server/package.json at the release's tag (squorli.autoUpdateFrom). Empty: it says nothing (a release from before
+# the mark). Nothing at all: the file could not be read.
+function Get-ReleaseRule([string]$version) {
+  $r = Get-Web "https://raw.githubusercontent.com/$Repository/v$version/apps/server/package.json" @{ 'User-Agent' = 'squorli' } 30
+  if ($r.Status -ne 200) { return $null }
+  try { $package = $r.Text | ConvertFrom-Json } catch { return $null }
+  return (Get-Rule $package.PSObject.Properties 'squorli')
+}
+# The mark out of a manifest.json (autoUpdateFrom) or a package.json (squorli.autoUpdateFrom); empty when there is none.
+function Get-Rule($properties, [string]$inside = '') {
+  $found = @($properties | Where-Object { $_.Name -eq $inside -or (-not $inside -and $_.Name -eq 'autoUpdateFrom') })
+  if ($found.Count -eq 0 -or $null -eq $found[0].Value) { return '' }
+  if ($inside) { return (Get-Rule $found[0].Value.PSObject.Properties) }
+  return "$($found[0].Value)"
+}
+# Does the step from the installed version to one with this mark ask for a person? It does when the installation is
+# older than the mark says and does not carry the same mark itself.
+function Test-ByHand([string]$have, [string]$haveRule, [string]$rule) {
+  if ($rule -notmatch '^\d+\.\d+\.\d+$' -or $rule -eq $haveRule) { return $false }
+  return ([version]$have -lt [version]$rule)
+}
+function Get-NotesUrl([string]$version) { return "https://github.com/$Repository/releases/tag/v$version" }
+
 function Get-File([string]$url, [string]$path) {
   Note $url
   try { Invoke-WebRequest -Uri $url -OutFile $path -UseBasicParsing -Headers @{ 'User-Agent' = 'squorli' } }
@@ -673,16 +712,53 @@ function Invoke-Update {
   $work = Join-Path $S.DataDir 'update'
   $S.KeepWork = $false
   try { Invoke-UpdateSteps $work }
-  finally { if (-not $S.KeepWork -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue } }
+  finally {
+    if (-not $S.KeepWork -and (Test-Path -LiteralPath $work)) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($S.ContainsKey('Transcript')) { try { Stop-Transcript | Out-Null } catch { }; $S.Remove('Transcript') }
+  }
+}
+
+# The run of the task found a version that asks for a person: it says so and changes nothing. Exit code 10, as for
+# "there is something new".
+function Stop-ByHand([string]$have, [string]$next) {
+  $text = T "Version $next ist da (installiert: $have), verlangt aber vorher Handarbeit und wird nicht automatisch eingespielt. Versionshinweise lesen ($(Get-NotesUrl $next)), dann: squorli update" "Version $next is there (installed: $have), but it asks for work by hand first and is not installed automatically. Read the release notes ($(Get-NotesUrl $next)), then: squorli update"
+  Write-Host ''
+  Warn $text
+  Write-AutoLog "!  $text"
+  exit 10
+}
+
+# An automatic run that found something to do: what it writes goes into a file of its own, the log names it.
+function Start-AutoRun([string]$have, [string]$next) {
+  if (-not $S.ContainsKey('AutoLog')) { return }
+  $file = Join-Path $S.Logs "update-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+  try { Start-Transcript -Path $file | Out-Null; $S.Transcript = $file } catch { }
+  Write-AutoLog (T "Update von $have auf $next beginnt; Einzelheiten: $file" "Update from $have to $next begins; details: $file")
 }
 
 function Invoke-UpdateSteps([string]$work) {
   $installed = Get-Manifest $S.InstallDir
   if ($null -eq $installed -or "$($installed.version)" -notmatch '^\d+\.\d+\.\d+$') { Die (T "$($S.InstallDir)\manifest.json nennt keine Version." "$($S.InstallDir)\manifest.json names no version.") }
   $have = "$($installed.version)"
+  $haveRule = Get-Rule $installed.PSObject.Properties
   Step (T "Neue Version suchen (installiert: $have)" "Looking for the new version (installed: $have)")
 
-  $zipUrl = ''; $zipFile = ''
+  if ($Check) {
+    if ($Package -or $Version) { Die (T '-Check fragt GitHub nach der neuesten Version und verträgt sich nicht mit -Version oder -Package.' '-Check asks GitHub for the newest release and does not go with -Version or -Package.') }
+    $want = Find-Release
+    if ([version]$want -gt [version]$have) {
+      Write-Host (T "Version $want ist da (installiert: $have). Einspielen mit: squorli update" "Version $want is available (installed: $have). Install it with: squorli update")
+      $rule = Get-ReleaseRule $want
+      if ($null -ne $rule -and (Test-ByHand $have $haveRule $rule)) {
+        Warn (T "Sie verlangt vorher Handarbeit und wird nicht automatisch eingespielt. Versionshinweise: $(Get-NotesUrl $want)" "It asks for work by hand first and is not installed automatically. Release notes: $(Get-NotesUrl $want)")
+      }
+      exit 10
+    }
+    Ok (T "Version $have ist die neueste." "Version $have is the newest.")
+    return
+  }
+
+  $zipUrl = ''; $zipFile = ''; $want = ''
   if ($Package) {
     if ($Package -match '^https?://') { $zipUrl = $Package } else {
       $zipFile = Resolve-Place $Package
@@ -694,11 +770,22 @@ function Invoke-UpdateSteps([string]$work) {
       if ($want -notmatch '^\d+\.\d+\.\d+$') { Die (T "'$Version' ist keine Version (erwartet: 1.2.3)." "'$Version' is no version (expected: 1.2.3).") }
     } else {
       $want = Find-Release
-      if ($want -eq $have) { Ok (T "Version $have ist die neueste." "Version $have is the newest."); return }
-      if ([version]$want -lt [version]$have) { Ok (T "Installiert ist $have, die neueste veröffentlichte Version ist ${want}: nichts zu tun." "Installed is $have, the newest published version is ${want}: nothing to do."); return }
+      if ($want -eq $have) { Ok (T "Version $have ist die neueste." "Version $have is the newest."); Write-AutoLog (T "Version $have ist die neueste." "Version $have is the newest."); return }
+      if ([version]$want -lt [version]$have) {
+        Ok (T "Installiert ist $have, die neueste veröffentlichte Version ist ${want}: nichts zu tun." "Installed is $have, the newest published version is ${want}: nothing to do.")
+        Write-AutoLog (T "Installiert ist $have, veröffentlicht ist ${want}: nichts zu tun." "Installed is $have, published is ${want}: nothing to do.")
+        return
+      }
     }
     $zipUrl = "https://github.com/$Repository/releases/download/v$want/squorli-server-$want-windows-x64.zip"
+    # Before 115 MB are fetched every so many hours: may this installation take that version by itself?
+    if ($Auto) {
+      $rule = Get-ReleaseRule $want
+      if ($null -eq $rule) { Die (T "Version $want ist da, aber was sie über das Update sagt, ließ sich nicht lesen (raw.githubusercontent.com). Nichts wurde verändert." "Version $want is there, but what it says about the update could not be read (raw.githubusercontent.com). Nothing was changed.") }
+      if (Test-ByHand $have $haveRule $rule) { Stop-ByHand $have $want }
+    }
   }
+  if ($want) { Start-AutoRun $have $want } else { Start-AutoRun $have $Package }
 
   $drive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($S.DataDir))
   if ($drive.AvailableFreeSpace -lt 2GB) { Die (T "Auf $($drive.Name) sind nur $([int]($drive.AvailableFreeSpace / 1MB)) MB frei; das Update braucht 2 GB für Paket, Sicherung und die alten Programmdateien." "Only $([int]($drive.AvailableFreeSpace / 1MB)) MB are free on $($drive.Name); the update needs 2 GB for the package, the backup and the old program files.") }
@@ -737,6 +824,15 @@ function Invoke-UpdateSteps([string]$work) {
     }
   }
   Ok "Squorli Server $next"
+  # What the package itself says counts: its checksum was checked
+  if (Test-ByHand $have $haveRule (Get-Rule $new.PSObject.Properties)) {
+    if ($Auto) { Stop-ByHand $have $next }
+    Warn (T "Version $next verlangt vor dem Update Handarbeit, wenn die Installation älter ist als $(Get-Rule $new.PSObject.Properties). Versionshinweise, Abschnitt `"Before you update`": $(Get-NotesUrl $next)" "Version $next asks for work by hand before the update when the installation is older than $(Get-Rule $new.PSObject.Properties). Release notes, section `"Before you update`": $(Get-NotesUrl $next)")
+    if (-not $Yes) {
+      $answer = (Read-Host (T 'Gelesen und erledigt? Dann ja eingeben' 'Read and done? Then type yes')).Trim().ToLowerInvariant()
+      if (@('yes', 'ja') -notcontains $answer) { Write-Host (T 'Abgebrochen.' 'Cancelled.'); exit 1 }
+    }
+  }
 
   Step (T 'Sichern' 'Backing up')
   $backup = New-Backup ''
@@ -753,8 +849,13 @@ function Invoke-UpdateSteps([string]$work) {
     Step (T 'Das Update ist fehlgeschlagen: alte Programmdateien zurückholen' 'The update failed: bringing the old program files back')
     $back = Restore-Previous $previous
     Write-Host ''
-    if ($back) { Write-Host (T "Version $have läuft wieder." "Version $have is running again.") -ForegroundColor Yellow }
-    else { Write-Host (T "Die Programmdateien von Version $have sind zurück, aber der Server antwortet nicht (squorli status, squorli logs server)." "The program files of version $have are back, but the server does not answer (squorli status, squorli logs server).") -ForegroundColor Red }
+    if ($back) {
+      Write-Host (T "Version $have läuft wieder." "Version $have is running again.") -ForegroundColor Yellow
+      Write-AutoLog (T "x Das Update auf $next ist fehlgeschlagen, Version $have läuft wieder. Sicherung von vorher: $backup" "x The update to $next failed, version $have is running again. Backup from before: $backup")
+    } else {
+      Write-Host (T "Die Programmdateien von Version $have sind zurück, aber der Server antwortet nicht (squorli status, squorli logs server)." "The program files of version $have are back, but the server does not answer (squorli status, squorli logs server).") -ForegroundColor Red
+      Write-AutoLog (T "x Das Update auf $next ist fehlgeschlagen, und der Server antwortet nicht. Sicherung von vorher: $backup" "x The update to $next failed, and the server does not answer. Backup from before: $backup")
+    }
     Write-Host (T "Migrationen der Datenbank, die Version $next schon ausgeführt hat, sind damit NICHT rückgängig gemacht. Kommt Version $have mit der Datenbank nicht zurecht, die Sicherung von vor dem Update zurückspielen:" "Migrations of the database that version $next has run already are NOT undone by this. If version $have cannot work with the database, restore the backup from before the update:") -ForegroundColor Yellow
     Write-Host "  squorli restore `"$backup`""
     Note (T "Das Protokoll des Setups liegt in $($S.Logs) (install-<Zeit>.log)." "The setup's log is in $($S.Logs) (install-<time>.log).")
@@ -768,7 +869,161 @@ function Invoke-UpdateSteps([string]$work) {
   Step (T 'Fertig' 'Done')
   $up = Show-Health 5
   Write-Host (T "Squorli Server $have -> $next. Sicherung von vorher: $backup" "Squorli Server $have -> $next. Backup from before: $backup")
-  if (-not $up) { exit 1 }
+  if (-not $up) {
+    Write-AutoLog (T "x Squorli Server $have -> ${next}, aber der Server antwortet nicht. Sicherung von vorher: $backup" "x Squorli Server $have -> ${next}, but the server does not answer. Backup from before: $backup")
+    exit 1
+  }
+  Write-AutoLog (T "Squorli Server $have -> $next. Sicherung von vorher: $backup" "Squorli Server $have -> $next. Backup from before: $backup")
+}
+
+# ---- Automatic updates: a task of Windows' scheduler runs "squorli update -Auto" as SYSTEM, at minute 17 so it does
+# not meet everything that starts on the hour. Every 24 hours means at 04:17, every n hours means counted from 00:17.
+function Get-AutoTimes([int]$hours) {
+  if ($hours -ge 24) { return @('04:17') }
+  $times = @()
+  for ($h = 0; $h -lt 24; $h += $hours) { $times += ('{0:00}:17' -f $h) }
+  return $times
+}
+function Get-AutoWords([int]$hours) {
+  if ($hours -ge 24) { return (T 'einmal täglich um 04:17 Uhr' 'once a day at 04:17') }
+  if ($hours -eq 1) { return (T 'jede Stunde (zur Minute 17)' 'every hour (at minute 17)') }
+  return (T "alle $hours Stunden ($((Get-AutoTimes $hours) -join ', '))" "every $hours hours ($((Get-AutoTimes $hours) -join ', '))")
+}
+# Who runs the task: SYSTEM, with every right.
+function Get-AutoPrincipal { return '<Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal>' }
+function New-AutoTaskXml([int]$hours) {
+  $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $S.InstallDir 'squorli.ps1')`" update -Auto"
+  if ($DataDir) { $arguments += " -DataDir `"$($S.DataDir)`"" }
+  $command = [Security.SecurityElement]::Escape((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'))
+  $arguments = [Security.SecurityElement]::Escape($arguments)
+  if ($hours -ge 24) { $start = '2026-01-01T04:17:00'; $repeat = '' }
+  else { $start = '2026-01-01T00:17:00'; $repeat = "<Repetition><Interval>PT${hours}H</Interval><Duration>P1D</Duration><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>" }
+  # A run that was missed (the machine was off) is made up for; a run is never ended by the clock before four hours
+  return @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Squorli Server: looks for a new version and installs it (squorli autoupdate). Interval in hours: $hours</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>$start</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+      $repeat
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>$(Get-AutoPrincipal)</Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$command</Command>
+      <Arguments>$arguments</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+}
+# A program's exit code and what it wrote, without a word on the screen (schtasks answers in the language of Windows).
+function Invoke-Tool([string]$file, [string[]]$arguments) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { $lines = @(& $file @arguments 2>&1 | ForEach-Object { "$_" }) } finally { $ErrorActionPreference = $old }
+  $code = $LASTEXITCODE
+  $global:LASTEXITCODE = 0
+  return @{ Code = $code; Text = ($lines -join "`n") }
+}
+# The hours of the task that is registered; nothing when there is none.
+function Get-AutoTask {
+  $r = Invoke-Tool 'schtasks.exe' @('/Query', '/TN', $TaskName, '/XML')
+  if ($r.Code -ne 0 -or $r.Text -notmatch '<Task') { return $null }
+  if ($r.Text -match '<Interval>PT(\d+)H</Interval>') { return @{ Hours = [int]$Matches[1] } }
+  return @{ Hours = 24 }
+}
+function Register-AutoTask([int]$hours) {
+  # In the data folder, which only administrators reach: nobody else can change the file before it is read
+  $file = Join-Path $S.DataDir 'autoupdate-task.xml'
+  [IO.File]::WriteAllText($file, (New-AutoTaskXml $hours), [Text.Encoding]::Unicode)
+  try {
+    $r = Invoke-Tool 'schtasks.exe' @('/Create', '/TN', $TaskName, '/XML', $file, '/F')
+    if ($r.Code -ne 0) { Die (T "Die Aufgabe ließ sich nicht anlegen (schtasks: $($r.Code)): $($r.Text)" "The task could not be created (schtasks: $($r.Code)): $($r.Text)") }
+  } finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+}
+function Show-AutoState {
+  $task = Get-AutoTask
+  if ($null -eq $task) {
+    Write-Host (T 'Automatische Updates: aus' 'Automatic updates: off')
+    Note (T 'Einschalten: squorli autoupdate on' 'Switch on: squorli autoupdate on')
+  } else {
+    Write-Host (T "Automatische Updates: an, $(Get-AutoWords $task.Hours)" "Automatic updates: on, $(Get-AutoWords $task.Hours)")
+    Note (T "Aufgabe `"$TaskName`" der Aufgabenplanung; ausschalten: squorli autoupdate off" "Task `"$TaskName`" of the task scheduler; switch off: squorli autoupdate off")
+  }
+  $log = Join-Path $S.Logs 'autoupdate.log'
+  if (Test-Path -LiteralPath $log) {
+    Write-Host ''
+    Write-Host "$(T 'Die letzten Läufe' 'The last runs') ($log):" -ForegroundColor DarkGray
+    Get-Content -LiteralPath $log -Tail 5 -Encoding UTF8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+  }
+}
+function Show-AutoWarning {
+  Write-Host ''
+  Write-Host (T 'Automatische Updates: bitte vorher lesen' 'Automatic updates: please read this first') -ForegroundColor Yellow
+  Warn (T 'Ein Update startet den App-Server neu, wann immer eine neue Version erscheint: wer gerade schreibt oder spricht, wird kurz getrennt.' 'An update restarts the app server whenever a new version appears: whoever is writing or talking is cut off for a moment.')
+  Warn (T 'Eine Version, die vorher Handarbeit verlangt, wird nicht automatisch eingespielt: Sie steht dann im Log und wartet auf squorli update.' 'A version that asks for work by hand first is not installed automatically: it stands in the log then and waits for squorli update.')
+  Warn (T "Vor jedem Update wird gesichert. Die Sicherungen bleiben liegen und brauchen Platz: $(Join-Path $S.DataDir 'backups')" "Every update makes a backup first. The backups stay and take space: $(Join-Path $S.DataDir 'backups')")
+  Note (T "Schlägt ein Update fehl, kommen die alten Programmdateien zurück. Was geschah, steht in $(Join-Path $S.Logs 'autoupdate.log')." "When an update fails the old program files come back. What happened is in $(Join-Path $S.Logs 'autoupdate.log').")
+  Note (T 'Empfohlen sind 24 Stunden: dann läuft die Suche einmal täglich um 04:17 Uhr.' 'Recommended are 24 hours: the search then runs once a day at 04:17.')
+}
+function Read-Hours([string]$given) {
+  $n = 0
+  if ($given) {
+    if (-not [int]::TryParse($given, [ref]$n) -or $n -lt 1 -or $n -gt 24) { Die (T "'$given' ist kein Abstand in Stunden: eine ganze Zahl von 1 bis 24." "'$given' is no interval in hours: a whole number from 1 to 24.") }
+    return $n
+  }
+  while ($true) {
+    Write-Host ''
+    Write-Host '? ' -ForegroundColor Blue -NoNewline
+    Write-Host (T 'Alle wie viele Stunden nach einer neuen Version suchen (1-24)?' 'Look for a new version every how many hours (1-24)?') -ForegroundColor White -NoNewline
+    Write-Host ' [24]' -ForegroundColor DarkGray -NoNewline
+    $answer = (Read-Host ' ').Trim()
+    if (-not $answer) { return 24 }
+    if ([int]::TryParse($answer, [ref]$n) -and $n -ge 1 -and $n -le 24) { return $n }
+    Warn (T 'Bitte eine ganze Zahl von 1 bis 24.' 'Please a whole number from 1 to 24.')
+  }
+}
+function Invoke-AutoUpdate([string[]]$words) {
+  $what = 'status'
+  if ($words.Count -gt 0) { $what = $words[0].ToLowerInvariant() }
+  switch ($what) {
+    'status' { Show-AutoState }
+    'on' {
+      $given = ''
+      if ($Hours -ne 0) { $given = "$Hours" } elseif ($words.Count -gt 1) { $given = $words[1] }
+      Show-AutoWarning
+      $n = Read-Hours $given
+      Register-AutoTask $n
+      Write-Host ''
+      Ok (T "Automatische Updates sind an: $(Get-AutoWords $n)." "Automatic updates are on: $(Get-AutoWords $n).")
+      Note (T 'Ausschalten: squorli autoupdate off   Stand und letzte Läufe: squorli autoupdate' 'Switch off: squorli autoupdate off   State and last runs: squorli autoupdate')
+    }
+    'off' {
+      if ($null -eq (Get-AutoTask)) { Ok (T 'Automatische Updates waren schon aus.' 'Automatic updates were off already.'); return }
+      $r = Invoke-Tool 'schtasks.exe' @('/Delete', '/TN', $TaskName, '/F')
+      if ($r.Code -ne 0) { Die (T "Die Aufgabe ließ sich nicht entfernen (schtasks: $($r.Code)): $($r.Text)" "The task could not be removed (schtasks: $($r.Code)): $($r.Text)") }
+      Ok (T 'Automatische Updates sind aus.' 'Automatic updates are off.')
+    }
+    default {
+      Write-Host (T "squorli autoupdate [on [Stunden] | off]   (Stunden: 1 bis 24; ohne Wort: der Stand)" "squorli autoupdate [on [hours] | off]   (hours: 1 to 24; without a word: the state)")
+      exit 1
+    }
+  }
 }
 
 # ---- The setup check (docs/features/doctor.md): the services, DNS from this machine, then the app server's own report (it
@@ -816,7 +1071,7 @@ function Invoke-Doctor {
 }
 
 function Show-Help {
-  Write-Host 'squorli status | logs [service] [-Follow] | restart [service] | stop [service] | start [service] | backup [dir] | restore <dir> [-Yes] | update [-Version x.y.z] | doctor'
+  Write-Host 'squorli status | logs [service] [-Follow] | restart [service] | stop [service] | start [service] | backup [dir] | restore <dir> [-Yes] | update [-Version x.y.z] [-Check] | autoupdate [on [hours] | off] | doctor'
   Write-Host 'services: server, postgres, livekit, caddy'
 }
 
@@ -833,17 +1088,31 @@ function Main {
     switch ($word.TrimStart('-').ToLowerInvariant()) {
       { @('yes', 'y') -contains $_ } { $script:Yes = $true }
       { @('follow', 'f') -contains $_ } { $script:Follow = $true }
+      'check' { $script:Check = $true }
+      'auto' { $script:Auto = $true }
       default { Write-Host (T "Die Option '$word' gibt es nicht." "There is no option '$word'.") -ForegroundColor Red; Show-Help; exit 1 }
     }
   }
   $words = @($words | Where-Object { $_ -notmatch '^--?[A-Za-z]+$' })
   $first = ''
   if ($words.Count -gt 0) { $first = $words[0] }
-  $known = @('status', 'ps', 'logs', 'restart', 'stop', 'down', 'start', 'up', 'backup', 'restore', 'update', 'doctor')
+  $known = @('status', 'ps', 'logs', 'restart', 'stop', 'down', 'start', 'up', 'backup', 'restore', 'update', 'autoupdate', 'doctor')
   if ($known -notcontains $name) {
     Write-Host (T "Den Befehl '$Command' gibt es nicht." "There is no command '$Command'.") -ForegroundColor Red
     Show-Help
     exit 1
+  }
+  if ($Auto -and $name -eq 'update') {
+    # Before anything can fail: the log says why a run did nothing
+    $script:Yes = $true
+    $S.AutoLog = Join-Path $S.Logs 'autoupdate.log'
+    try {
+      $null = New-Item -ItemType Directory -Force -Path $S.Logs
+      if ((Test-Path -LiteralPath $S.AutoLog) -and (Get-Item -LiteralPath $S.AutoLog).Length -gt 1MB) {
+        $kept = @(Get-Content -LiteralPath $S.AutoLog -Tail 2000 -Encoding UTF8)
+        [IO.File]::WriteAllText($S.AutoLog, (($kept -join "`r`n") + "`r`n"), $Utf8)
+      }
+    } catch { }
   }
   Assert-Installation
   try {
@@ -859,12 +1128,14 @@ function Main {
       'backup' { Invoke-Backup $first }
       'restore' { Invoke-Restore $first }
       'update' { Invoke-Update }
+      'autoupdate' { Invoke-AutoUpdate $words }
       'doctor' { Invoke-Doctor }
     }
   } catch {
     Write-Host ''
     Write-Host "x $($_.Exception.Message)" -ForegroundColor Red
     Note "$(T 'Zeile' 'line') $($_.InvocationInfo.ScriptLineNumber)"
+    Write-AutoLog "x $($_.Exception.Message)"
     exit 1
   }
 }

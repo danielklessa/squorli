@@ -73,6 +73,12 @@ This is the part the desktop notes do not have. Check each and write down what a
 - **Anything that changes access** for existing members (sign-in rules, permissions, what a role may do): say what members
   will see after the update.
 
+**Does anything of this ask an operator to do something by hand before or for the update** (a deploy file to fetch
+again, a variable that must be set, a file of their own to change)? Then this release gets the mark in step 5:
+installations with automatic updates (`squorli autoupdate`, `docs/features/auto-update.md`) must not take it by
+themselves. A backup alone is no such work (every update makes one), and neither is something only a part of the
+operators may want to do later.
+
 ## 4. Propose version numbers
 
 Semantic versioning, below 1.0 while the project is in preview. Offer the realistic candidates with one line of reasoning
@@ -92,6 +98,9 @@ AskUserQuestion (recommended option first) unless a version was passed as the ar
 
 - `apps/server/package.json`: `"version"`. Nothing else needs it (the root `package.json` stays as it is; the lock file does
   not carry it).
+- `apps/server/package.json`: `"squorli": { "autoUpdateFrom" }`, the version from which on an installation may update to
+  this release by itself. Set it to the new version when the release asks for work by hand (step 3), else leave it as
+  it is; never lower it. Tell the user which of the two it is and why.
 - `docs/MILESTONE-LOG.md`: one new row at the top of the table: "Server version <version>" with what it carries, the
   migrations and variables, which desktop app version it needs, and "Not tagged yet.".
 
@@ -105,7 +114,8 @@ Written for the people who run a server (and, in "New", for what their members g
 - English, plain words. No file names, function names, table names or internal reasons; a variable name is fine where an
   operator sets it.
 - Sections in this order, leaving out empty ones:
-  - `## Before you update`: backups because of migrations, new or removed variables, deploy files to fetch again, the
+  - `## Before you update`: whether installations with automatic updates take this version by themselves (the mark of
+    step 5), backups because of migrations, new or removed variables, deploy files to fetch again, the
     desktop app version needed, changes in who can sign in. Only what applies; this section comes first because it matters
     before anything else.
   - `## New`: a short bold name, then one or two sentences, with where it lives (Administration > …, Settings > …).

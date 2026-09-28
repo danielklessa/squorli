@@ -42,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/danielklessa/squorli-server/main/de
 sudo bash install.sh
 ```
 
-It asks for the domain, the server name, who terminates HTTPS (the bundled Caddy, a reverse proxy on the same host, or one on another host), the ports (it finds ports another service already uses and suggests free ones; the bundled Caddy always needs 80 and 443), the directory, the owner's public key and the public IP for media; installs Docker through get.docker.com if it is missing (after asking); downloads the deploy files into `/opt/squorli` (`SQUORLI_DIR` changes that); writes `.env` with fresh secrets (readable by root only); offers to open the ports in an active ufw or firewalld; pulls, starts and checks the stack. It also writes `/opt/squorli/squorli` (linked as `squorli` into `/usr/local/bin`), which runs Docker Compose with the right profile and overlays: `squorli update`, `squorli status`, `squorli logs server`, `squorli backup` (database dump, attachments and `.env` into `/opt/squorli/backups`), `squorli restore <folder>` (puts such a backup back: stops the app, replaces database and files, starts again; `.env` stays; to move hosts, install on the new one first, then restore), `squorli doctor` (checks what goes wrong most often: domain and certificate, the WebSocket upgrade and `/rtc` through the proxy, LiveKit's key, the TCP media port, the directory; a directory repeats the checks from outside; the same check with a real media connection from the browser is in Verwaltung > Server), and any other Compose command.
+It asks for the domain, the server name, who terminates HTTPS (the bundled Caddy, a reverse proxy on the same host, or one on another host), the ports (it finds ports another service already uses and suggests free ones; the bundled Caddy always needs 80 and 443), the directory, the owner's public key and the public IP for media; installs Docker through get.docker.com if it is missing (after asking); downloads the deploy files into `/opt/squorli` (`SQUORLI_DIR` changes that); writes `.env` with fresh secrets (readable by root only); offers to open the ports in an active ufw or firewalld; pulls, starts and checks the stack. It also writes `/opt/squorli/squorli` (linked as `squorli` into `/usr/local/bin`), which runs Docker Compose with the right profile and overlays: `squorli update` (pulls the images, backs up first when one of them is new, and restarts only the containers whose image changed; `--check` only says whether something is new, exit code 10; `--no-backup` leaves the backup out), `squorli autoupdate on` (a job that does this every 1 to 24 hours, [Automatic updates](#automatic-updates)), `squorli status`, `squorli logs server`, `squorli backup` (database dump, attachments and `.env` into `/opt/squorli/backups`), `squorli restore <folder>` (puts such a backup back: stops the app, replaces database and files, starts again; `.env` stays; to move hosts, install on the new one first, then restore), `squorli doctor` (checks what goes wrong most often: domain and certificate, the WebSocket upgrade and `/rtc` through the proxy, LiveKit's key, the TCP media port, the directory; a directory repeats the checks from outside; the same check with a real media connection from the browser is in Verwaltung > Server), and any other Compose command.
 
 Running the installer again on an existing installation updates it (new image and deploy files; changed files are kept as `.bak`) or changes its settings; the secrets, the database and the files stay. The published image exists for x86_64 only; on ARM build from source.
 
@@ -76,14 +76,16 @@ Afterwards, in a newly opened window as administrator:
 | `squorli restart [service]`, `stop`, `start` | with the services that depend on the one named |
 | `squorli backup [folder]` | database, files and `.env` into `C:\ProgramData\Squorli\backups\<time>` |
 | `squorli restore <folder>` | puts a backup back (asks first); also one a Linux installation wrote, which is how a server moves from Linux to Windows |
-| `squorli update` | the newest release from GitHub: checks the SHA-256, backs up, installs; when the new version does not start, the program files of before come back. Migrations of the database are not undone by that: the backup is what brings the old state back |
+| `squorli update` | the newest release from GitHub: checks the SHA-256, backs up, installs. Only the services whose programs changed are stopped: with a new version of Squorli alone, PostgreSQL and LiveKit keep running. When the new version does not start, the program files of before come back. Migrations of the database are not undone by that: the backup is what brings the old state back |
+| `squorli update -Check` | only looks for a newer release: exit code 10 when there is one, 0 when not |
+| `squorli autoupdate [on [hours] \| off]` | a task that looks for a new version every 1 to 24 hours and installs it ([Automatic updates](#automatic-updates)); without a word: the state and the last runs |
 | `squorli doctor` | the setup check, as on Linux |
 
 Change settings: run `C:\Program Files\Squorli\install.ps1` again. Remove: `C:\Program Files\Squorli\uninstall.ps1`; the data folder stays unless you type "delete".
 
 With a web server on the machine already (IIS holds 80 and 443 on many Windows Servers), choose "a reverse proxy on this machine": templates for nginx, Caddy and IIS (URL Rewrite and Application Request Routing) are in `C:\Program Files\Squorli\proxies`.
 
-**State (28 September 2026):** installed and run on Windows 11 Pro with a proxy on the same machine and on `localhost`: setup, services, voice, a restart of the machine, backup and restore (also of a Linux backup), update, removal. The package's automatic test (setup, every command, backup and restore, update, removal) also passes on Windows Server, on the runner of the CI. Not run yet: the bundled Caddy with a real certificate, IIS in front, Windows 10, and a Windows Server with people on it. The programs in the package are not signed; Windows may ask before it runs them. Details: [docs/features/windows.md](docs/features/windows.md).
+**State (28 September 2026):** installed and run on Windows 11 Pro with the bundled Caddy, with a proxy on the same machine and on `localhost`: setup, services, voice, a restart of the machine, backup and restore (also of a Linux backup), update, removal. The package's automatic test (setup, every command, backup and restore, update, removal) also passes on Windows Server, on the runner of the CI. Not run yet: IIS in front, Windows 10, and a Windows Server with people on it. The programs in the package are not signed; Windows may ask before it runs them. Details: [docs/features/windows.md](docs/features/windows.md).
 
 ## Quick start with the published image
 
@@ -186,9 +188,21 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 
 1. Back up the database, attachments and configuration.
 2. Review the release notes.
-3. Repeat `pull` and `up -d --no-build` with the same profile and overlays (after the interactive installer: `squorli backup`, then `squorli update`). On Windows: `squorli update`, which backs up first.
+3. Repeat `pull` and `up -d --no-build` with the same profile and overlays (after the interactive installer: `squorli update`, which backs up first). On Windows: `squorli update`, which backs up first.
 
 `latest` is mutable; for reproducible deployments set `APP_IMAGE` to a version tag or `ghcr.io/danielklessa/squorli-server@sha256:<digest>` and keep the repository checkout aligned with that release. Startup runs database migrations; an image rollback does not reverse them.
+
+### Automatic updates
+
+`squorli autoupdate on` (Linux: as root; Windows: as administrator) sets up a job that looks for a new version at an interval of 1 to 24 hours, which it asks for (`squorli autoupdate on 6` names it), and installs it: a timer of systemd or a file in `/etc/cron.d` on Linux, a task of the task scheduler run by SYSTEM on Windows. With 24 hours it runs once a day at 04:17, else every so many hours counted from 00:17. When nothing is new, nothing is stopped or started. `squorli autoupdate` shows the state and the last runs (`/opt/squorli/autoupdate.log`, `C:\ProgramData\Squorli\logs\autoupdate.log`), `squorli autoupdate off` removes the job.
+
+Before you switch it on:
+
+- An update restarts the app server whenever a new version appears; whoever is writing or talking is cut off for a moment. 24 hours is the calm choice.
+- A version that asks for work by hand before the update ("Before you update" in its release notes) is not installed automatically: the job notes it in its log and waits for your `squorli update`, which asks whether that work is done.
+- Every update makes a backup first; the backups stay and take space.
+- Linux: new images of PostgreSQL and Caddy come along (their tags move), an update that fails is not taken back, and `APP_IMAGE` has to name the tag `latest` (a fixed version never changes by itself). Windows: when a new version does not start, the program files of before come back.
+- An installation from before these commands gets them on Linux by running the installer again ("Update"), on Windows with its next `squorli update`.
 
 ## Building from source
 

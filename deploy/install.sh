@@ -8,7 +8,7 @@
 # downloads the deploy files, writes .env with fresh secrets, starts the stack and checks it. Running it again on an
 # existing installation updates it or changes its settings; secrets and data are kept.
 # It also writes <dir>/squorli, a small wrapper around docker compose with the right profile and overlays
-# (squorli update | status | logs | backup | restore | doctor | restart | down | <any compose command>). Its services are
+# (squorli update | autoupdate | status | logs | backup | restore | doctor | restart | down | <any compose command>). Its services are
 # server, postgres, livekit and caddy; the server's old name "app" is still understood.
 #
 # Environment: SQUORLI_DIR (installation directory, default /opt/squorli), SQUORLI_LANG (de/en),
@@ -606,8 +606,97 @@ write_helper() {
     printf 'ARGS=(%s)\n' "${CARGS[*]}"
     cat <<'EOF'
 set -euo pipefail
-cd "$(dirname "$(readlink -f "$0")")/deploy"
+here="$(dirname "$(readlink -f "$0")")"
+cd "$here/deploy"
 dc() { docker compose "${ARGS[@]}" "$@"; }
+lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${lang:-en}"
+t() { if [ "$lang" = de ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
+
+# The services whose container runs another image than the one its tag names now, that is after a pull. A service
+# without a running container is left out: nobody starts what was stopped on purpose.
+changed_services() {
+  local s cid ref have want
+  for s in $(dc config --services); do
+    cid="$(dc ps -q "$s" 2>/dev/null | head -n1 || true)"
+    [ -n "$cid" ] || continue
+    have="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
+    ref="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+    want="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null || true)"
+    if [ -n "$have" ] && [ -n "$want" ] && [ "$want" != "$have" ]; then printf '%s\n' "$s"; fi
+  done
+}
+# What the server inside an image says about itself: "<version> <mark>". The mark is the version from which on an
+# installation may update to this image by itself (apps/server/package.json, squorli.autoUpdateFrom), "-" when the image
+# carries none. Nothing when the image cannot be asked.
+server_says() {
+  docker run --rm --entrypoint node "$1" -e 'const p = require("/app/package.json"); console.log(p.version + " " + ((p.squorli || {}).autoUpdateFrom || "-"));' 2>/dev/null || true
+}
+# Does the step from the running server to the image its tag names now ask for a person? It does when the running
+# version is older than the new image's mark says and does not carry the same mark itself. BY_HAND names that mark.
+by_hand() {
+  local cid have want
+  BY_HAND=""
+  cid="$(dc ps -q server 2>/dev/null | head -n1 || true)"
+  [ -n "$cid" ] || return 1
+  have="$(server_says "$(docker inspect -f '{{.Image}}' "$cid")")"
+  want="$(server_says "$(docker inspect -f '{{.Config.Image}}' "$cid")")"
+  case "${want#* }" in [0-9]*.[0-9]*.[0-9]*) ;; *) return 1 ;; esac
+  case "${have%% *}" in [0-9]*.[0-9]*.[0-9]*) ;; *) return 1 ;; esac
+  [ "${have#* }" != "${want#* }" ] || return 1
+  [ "${have%% *}" != "${want#* }" ] || return 1
+  [ "$(printf '%s\n%s\n' "${have%% *}" "${want#* }" | sort -V | head -n1)" = "${have%% *}" ] || return 1
+  BY_HAND="${want#* }"
+}
+# Database, files and .env into <folder>/<time>; BACKUP names the result. Half a backup is removed.
+backup_to() {
+  local dest
+  dest="$1/$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$dest"; chmod 700 "$1" "$dest"
+  if dc exec -T postgres pg_dump -U chat -d chat > "$dest/squorli-database.sql" \
+    && dc exec -T server tar czf - -C /app/data . > "$dest/squorli-files.tar.gz" \
+    && cp ../.env "$dest/env"; then
+    chmod 600 "$dest"/*
+    BACKUP="$(readlink -f "$dest")"
+  else
+    rm -rf "$dest"
+    return 1
+  fi
+}
+server_up() {
+  local _
+  for _ in $(seq 1 60); do
+    if dc exec -T server node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" >/dev/null 2>&1; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
+# Automatic updates run at minute 17, so they do not meet everything that starts on the hour: every 24 hours means at
+# 04:17, every n hours means counted from 00:17.
+auto_words() {
+  local h=0 times=""
+  if [ "$1" -ge 24 ]; then t "einmal täglich um 04:17 Uhr" "once a day at 04:17"; return; fi
+  if [ "$1" -eq 1 ]; then t "jede Stunde (zur Minute 17)" "every hour (at minute 17)"; return; fi
+  while [ "$h" -lt 24 ]; do times="$times$(printf '%02d:17' "$h"), "; h=$((h + $1)); done
+  t "alle $1 Stunden (${times%, })" "every $1 hours (${times%, })"
+}
+AUTO_TIMER=/etc/systemd/system/squorli-autoupdate.timer
+AUTO_SERVICE=/etc/systemd/system/squorli-autoupdate.service
+AUTO_CRON=/etc/cron.d/squorli-autoupdate
+# The hours of the job that is set up; nothing when there is none.
+auto_hours() {
+  local f
+  for f in "$AUTO_TIMER" "$AUTO_CRON"; do
+    if [ -f "$f" ]; then sed -n 's/^# hours: \([0-9]*\)$/\1/p' "$f" | head -n1; return; fi
+  done
+}
+auto_off() {
+  if [ -f "$AUTO_TIMER" ] || [ -f "$AUTO_SERVICE" ]; then
+    systemctl disable --now squorli-autoupdate.timer >/dev/null 2>&1 || true
+    rm -f "$AUTO_TIMER" "$AUTO_SERVICE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  rm -f "$AUTO_CRON"
+}
 # The app server's service was named "app" until 28 September 2026; whoever still types it means "server".
 if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ]; then
   cmd="$1"; shift; names=()
@@ -615,17 +704,184 @@ if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ]; then
   set -- "$cmd" "${names[@]}"
 fi
 case "${1:-help}" in
-  update)  dc pull && dc up -d --no-build --remove-orphans && dc ps ;;
+  update)
+    # Pulls the images, backs up when one of them is new, and starts what changed: Compose leaves a container whose
+    # image stayed the same as it is. --check: pull and say what is new, change nothing that runs (exit 10 when
+    # something is new). --no-backup: without the backup. --auto: the run of the job (squorli autoupdate).
+    shift; check=0; auto=0; backup=1; yes=0; BACKUP=""; stamp=""
+    # What the run of the job says, with the time in front: its log holds one line per run that found nothing
+    say() { printf '%s' "$stamp"; t "$1" "$2"; }
+    for a in "$@"; do
+      case "$a" in
+        --check) check=1 ;;
+        --auto) auto=1 ;;
+        --no-backup) backup=0 ;;
+        --yes) yes=1 ;;
+        *) echo "squorli update [--check] [--no-backup] [--yes]" >&2; exit 1 ;;
+      esac
+    done
+    if [ "$auto" = 1 ]; then
+      log="$here/autoupdate.log"
+      if [ -f "$log" ] && [ "$(wc -c < "$log")" -gt 1048576 ]; then tail -n 2000 "$log" > "$log.tmp" && mv "$log.tmp" "$log"; fi
+      exec >> "$log" 2>&1
+      stamp="$(date '+%Y-%m-%d %H:%M:%S')  "
+      if ! said="$(dc pull -q 2>&1)"; then
+        printf '%s\n' "$said"
+        say "x Die Images ließen sich nicht holen." "x The images could not be pulled."
+        exit 1
+      fi
+    else
+      dc pull
+    fi
+    changed="$(changed_services | tr '\n' ' ')"; changed="${changed% }"
+    if [ -z "$changed" ]; then
+      say "Nichts Neues: jeder laufende Container hat das neueste Image." "Nothing new: every running container has the newest image."
+      if [ "$check" = 1 ] || [ "$auto" = 1 ]; then exit 0; fi
+      dc up -d --no-build --remove-orphans && dc ps
+      exit 0
+    fi
+    say "Neue Images für: $changed" "New images for: $changed"
+    hand=0
+    case " $changed " in *" server "*) if by_hand; then hand=1; fi ;; esac
+    if [ "$hand" = 1 ]; then
+      say "!  Die neue Version von Squorli Server verlangt vorher Handarbeit, wenn die Installation älter ist als $BY_HAND, und wird nicht automatisch eingespielt. Versionshinweise, Abschnitt \"Before you update\": https://github.com/danielklessa/squorli-server/releases" \
+        "!  The new version of Squorli Server asks for work by hand first when the installation is older than $BY_HAND, and is not installed automatically. Release notes, section \"Before you update\": https://github.com/danielklessa/squorli-server/releases"
+      if [ "$auto" = 1 ]; then say "   Danach: squorli update" "   Then: squorli update"; exit 10; fi
+    fi
+    if [ "$check" = 1 ]; then t "Einspielen mit: squorli update" "Install them with: squorli update"; exit 10; fi
+    if [ "$hand" = 1 ] && [ "$yes" != 1 ]; then
+      read -r -p "$(t "Gelesen und erledigt? Dann ja eingeben: " "Read and done? Then type yes: ")" answer </dev/tty
+      case "$answer" in yes|ja) ;; *) t "Abgebrochen." "Cancelled."; exit 1 ;; esac
+    fi
+    if [ "$backup" = 1 ]; then
+      if backup_to ../backups; then echo "${stamp}Backup: $BACKUP"
+      else
+        say "x Die Sicherung ist fehlgeschlagen, das Update wurde nicht begonnen (squorli status). Ohne Sicherung: squorli update --no-backup" \
+          "x The backup failed, the update was not begun (squorli status). Without a backup: squorli update --no-backup"
+        exit 1
+      fi
+    fi
+    dc up -d --no-build --remove-orphans
+    if server_up; then
+      if [ "$auto" != 1 ]; then dc ps; fi
+      say "Aktualisiert: $changed. Der App-Server antwortet." "Updated: $changed. The app server answers."
+    else
+      dc ps || true
+      say "x Aktualisiert: $changed, aber der App-Server antwortet nicht (squorli logs server). Sicherung von vorher: ${BACKUP:-keine}" \
+        "x Updated: $changed, but the app server does not answer (squorli logs server). Backup from before: ${BACKUP:-none}"
+      exit 1
+    fi ;;
+  autoupdate)
+    # A job that runs "squorli update --auto" every 1 to 24 hours: a timer of systemd, or a file in /etc/cron.d.
+    case "${2:-status}" in
+      status)
+        hours="$(auto_hours)"
+        if [ -z "$hours" ]; then
+          t "Automatische Updates: aus" "Automatic updates: off"
+          t "Einschalten: squorli autoupdate on" "Switch on: squorli autoupdate on"
+        else
+          t "Automatische Updates: an, $(auto_words "$hours")" "Automatic updates: on, $(auto_words "$hours")"
+          if [ -f "$AUTO_TIMER" ]; then
+            next="$(systemctl show squorli-autoupdate.timer -p NextElapseUSecRealtime --value 2>/dev/null || true)"
+            if [ -n "$next" ]; then t "Nächster Lauf: $next" "Next run: $next"; fi
+          fi
+        fi
+        if [ -f "$here/autoupdate.log" ]; then
+          echo
+          t "Die letzten Läufe ($here/autoupdate.log):" "The last runs ($here/autoupdate.log):"
+          tail -n 12 "$here/autoupdate.log" | sed 's/^/  /'
+        fi ;;
+      on)
+        if [ "$(id -u)" != 0 ]; then t "Das geht nur als root (sudo squorli autoupdate on)." "This needs root (sudo squorli autoupdate on)." >&2; exit 1; fi
+        echo
+        t "Automatische Updates: bitte vorher lesen" "Automatic updates: please read this first"
+        t "  !  Ein Update startet den App-Server neu, wann immer eine neue Version erscheint: wer gerade schreibt oder spricht, wird kurz getrennt." \
+          "  !  An update restarts the app server whenever a new version appears: whoever is writing or talking is cut off for a moment."
+        t "  !  Eine Version, die vorher Handarbeit verlangt, wird nicht automatisch eingespielt: Sie steht dann im Log und wartet auf squorli update." \
+          "  !  A version that asks for work by hand first is not installed automatically: it stands in the log then and waits for squorli update."
+        t "  !  Neue Images von PostgreSQL und Caddy kommen mit: dann startet auch die Datenbank oder der Proxy neu." \
+          "  !  New images of PostgreSQL and Caddy come along: the database or the proxy restarts then, too."
+        t "  !  Vor jedem Update wird gesichert. Die Sicherungen bleiben liegen und brauchen Platz: $here/backups" \
+          "  !  Every update makes a backup first. The backups stay and take space: $here/backups"
+        t "     Ein Update, das fehlschlägt, wird nicht zurückgenommen. Was geschah, steht in $here/autoupdate.log." \
+          "     An update that fails is not taken back. What happened is in $here/autoupdate.log."
+        t "     Empfohlen sind 24 Stunden: dann läuft die Suche einmal täglich um 04:17 Uhr." \
+          "     Recommended are 24 hours: the search then runs once a day at 04:17."
+        image="$(sed -n 's/^APP_IMAGE=//p' ../.env | tail -n1 | tr -d "'\"" || true)"
+        case "$image" in
+          *:latest|"") ;;
+          *) t "  !  APP_IMAGE nennt eine feste Version ($image): eine neue Version von Squorli Server kommt so nie von selbst, nur neue Images der anderen Dienste. Für automatische Updates APP_IMAGE in $here/.env auf :latest stellen." \
+               "  !  APP_IMAGE names a fixed version ($image): a new version of Squorli Server never arrives by itself this way, only new images of the other services. For automatic updates set APP_IMAGE in $here/.env to :latest." ;;
+        esac
+        hours="${3:-}"
+        if [ -n "$hours" ]; then
+          case "$hours" in *[!0-9]*) hours=0 ;; esac
+          if [ "${#hours}" -gt 2 ] || [ "$hours" -lt 1 ] || [ "$hours" -gt 24 ]; then
+            t "'${3}' ist kein Abstand in Stunden: eine ganze Zahl von 1 bis 24." "'${3}' is no interval in hours: a whole number from 1 to 24." >&2; exit 1
+          fi
+        else
+          while true; do
+            echo
+            read -r -p "$(t "? Alle wie viele Stunden nach einer neuen Version suchen (1-24)? [24] " "? Look for a new version every how many hours (1-24)? [24] ")" hours </dev/tty
+            hours="${hours:-24}"
+            case "$hours" in *[!0-9]*) hours=0 ;; esac
+            if [ "${#hours}" -le 2 ] && [ "$hours" -ge 1 ] && [ "$hours" -le 24 ]; then break; fi
+            t "  !  Bitte eine ganze Zahl von 1 bis 24." "  !  Please a whole number from 1 to 24."
+          done
+        fi
+        hours=$((10#$hours))
+        if [ "$hours" -ge 24 ]; then calendar='*-*-* 04:17:00'; when='17 4 * * *'
+        else calendar="*-*-* 00/$hours:17:00"; when="17 */$hours * * *"; fi
+        auto_off
+        if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+          {
+            printf '# Written by squorli autoupdate on; squorli autoupdate off removes it.\n'
+            printf '[Unit]\nDescription=Squorli Server: look for a new version and install it\nAfter=docker.service network-online.target\nWants=network-online.target\n\n'
+            printf '[Service]\nType=oneshot\nExecStart=%s update --auto\n' "$here/squorli"
+          } > "$AUTO_SERVICE"
+          {
+            printf '# Written by squorli autoupdate on; squorli autoupdate off removes it.\n'
+            printf '# hours: %s\n' "$hours"
+            printf '[Unit]\nDescription=Squorli Server: automatic updates\n\n'
+            printf '[Timer]\nOnCalendar=%s\nPersistent=true\n\n' "$calendar"
+            printf '[Install]\nWantedBy=timers.target\n'
+          } > "$AUTO_TIMER"
+          systemctl daemon-reload
+          systemctl enable --now squorli-autoupdate.timer >/dev/null 2>&1
+        elif [ -d /etc/cron.d ]; then
+          {
+            printf '# Written by squorli autoupdate on; squorli autoupdate off removes it.\n'
+            printf '# hours: %s\n' "$hours"
+            printf 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
+            printf '%s root %s update --auto\n' "$when" "$here/squorli"
+          } > "$AUTO_CRON"
+          chmod 644 "$AUTO_CRON"
+        else
+          t "Hier gibt es weder systemd noch /etc/cron.d. Diese Zeile in die Crontab von root eintragen (crontab -e):" \
+            "There is neither systemd nor /etc/cron.d here. Put this line into root's crontab (crontab -e):" >&2
+          echo "  $when $here/squorli update --auto" >&2
+          exit 1
+        fi
+        echo
+        t "  ok Automatische Updates sind an: $(auto_words "$hours")." "  ok Automatic updates are on: $(auto_words "$hours")."
+        t "     Ausschalten: squorli autoupdate off   Stand und letzte Läufe: squorli autoupdate" \
+          "     Switch off: squorli autoupdate off   State and last runs: squorli autoupdate" ;;
+      off)
+        if [ "$(id -u)" != 0 ]; then t "Das geht nur als root (sudo squorli autoupdate off)." "This needs root (sudo squorli autoupdate off)." >&2; exit 1; fi
+        if [ -z "$(auto_hours)" ]; then t "  ok Automatische Updates waren schon aus." "  ok Automatic updates were off already."
+        else auto_off; t "  ok Automatische Updates sind aus." "  ok Automatic updates are off."; fi ;;
+      *)
+        t "squorli autoupdate [on [Stunden] | off]   (Stunden: 1 bis 24; ohne Wort: der Stand)" \
+          "squorli autoupdate [on [hours] | off]   (hours: 1 to 24; without a word: the state)" >&2
+        exit 1 ;;
+    esac ;;
   status)  dc ps ;;
   logs)    shift; dc logs --tail=200 -f "$@" ;;
   restart) shift; dc restart "$@" ;;
   down)    dc down ;;
   backup)
-    dest="${2:-../backups}/$(date +%Y%m%d-%H%M%S)"; mkdir -p "$dest"; chmod 700 "$(dirname "$dest")" "$dest"
-    dc exec -T postgres pg_dump -U chat -d chat > "$dest/squorli-database.sql"
-    dc exec -T server tar czf - -C /app/data . > "$dest/squorli-files.tar.gz"
-    cp ../.env "$dest/env"; chmod 600 "$dest"/*
-    echo "Backup: $(readlink -f "$dest")" ;;
+    if backup_to "${2:-../backups}"; then echo "Backup: $BACKUP"
+    else t "Die Sicherung ist fehlgeschlagen (squorli status: laufen postgres und server?)." "The backup failed (squorli status: are postgres and server running?)." >&2; exit 1; fi ;;
   restore)
     src="${2:-}"
     if [ -z "$src" ] || [ ! -f "$src/squorli-database.sql" ] || [ ! -f "$src/squorli-files.tar.gz" ]; then
@@ -647,7 +903,6 @@ case "${1:-help}" in
   doctor)
     # Setup check (docs/features/doctor.md): containers, DNS from this machine, then the app server's own report (it reaches its
     # public address, LiveKit and the directory; a directory repeats the address checks from outside). Exit 1 when a check fails.
-    lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${lang:-en}"
     domain="$(sed -n 's/^PUBLIC_DOMAIN=//p' ../.env | tail -n1 | tr -d "'\"" || true)"
     if [ "$lang" = de ]; then echo "Container:"; else echo "Containers:"; fi
     dc ps
@@ -676,7 +931,7 @@ case "${1:-help}" in
     else echo "Whether voice and video (UDP) arrive can only be checked from a browser: Verwaltung > Server > Check the connection."; fi
     exit $rc ;;
   help|-h|--help)
-    echo "squorli update | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
+    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
     echo "services: server, postgres, livekit, caddy" ;;
   *) dc "$@" ;;
 esac
@@ -775,7 +1030,8 @@ finish() {
   printf '%s\n' "$(t "Verwalten:" "Manage:")" \
     "  $HELPER status      $(t "Container anzeigen" "show containers")" \
     "  $HELPER logs server $(t "Logs verfolgen" "follow logs")" \
-    "  $HELPER update      $(t "neues Image holen und neu starten (vorher Backup)" "pull the new image and restart (back up first)")" \
+    "  $HELPER update      $(t "neue Images holen und neu starten, was sich geändert hat (sichert vorher)" "pull new images and restart what changed (backs up first)")" \
+    "  $HELPER autoupdate  $(t "automatische Updates ein- und ausschalten (on, off)" "switch automatic updates on and off (on, off)")" \
     "  $HELPER backup      $(t "Datenbank, Dateien und .env nach $DIR/backups sichern" "back up database, files and .env to $DIR/backups")" \
     "  $HELPER restore <$(t "Ordner" "dir")>  $(t "eine Sicherung zurückspielen (ersetzt Datenbank und Dateien)" "restore a backup (replaces database and files)")" \
     "  $HELPER doctor      $(t "prüfen, was bei der Einrichtung am häufigsten schiefgeht (Domain, Proxy, LiveKit, Ports, Verzeichnis)" "check what goes wrong most often in a setup (domain, proxy, LiveKit, ports, directory)")" \

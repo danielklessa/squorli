@@ -5,8 +5,8 @@
   Squorli Server: removes the installation made by install.ps1.
 
 .DESCRIPTION
-  Stops and removes the services (SquorliCaddy, SquorliServer, SquorliLiveKit, SquorliPostgres), the firewall rules of the
-  group "Squorli", the entry in the machine's PATH and the program folder. The data folder (database, files, secrets,
+  Stops and removes the services (SquorliCaddy, SquorliServer, SquorliLiveKit, SquorliPostgres), the task of the automatic
+  updates, the firewall rules of the group "Squorli", the entry in the machine's PATH and the program folder. The data folder (database, files, secrets,
   backups) stays unless the question about it is answered with yes.
 
     powershell -ExecutionPolicy Bypass -File "C:\Program Files\Squorli\uninstall.ps1"
@@ -91,6 +91,12 @@ foreach ($name in $ServiceNames) {
 Start-Sleep -Seconds 2
 foreach ($name in $ServiceNames) {
   if (Get-Service -Name $name -ErrorAction SilentlyContinue) { Warn (T "$name ist noch zum Löschen vorgemerkt: die Dienste-Verwaltung schließen oder den Rechner neu starten." "$name is still marked for deletion: close the service manager or restart the machine.") }
+}
+
+# The task of the automatic updates (squorli autoupdate on)
+if ((Invoke-Program 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate')) -eq 0) {
+  if ((Invoke-Program 'schtasks.exe' @('/Delete', '/TN', 'SquorliAutoUpdate', '/F')) -eq 0) { Ok (T 'Aufgabe der automatischen Updates entfernt' 'Task of the automatic updates removed') }
+  else { Warn (T 'Die Aufgabe SquorliAutoUpdate ließ sich nicht entfernen (Aufgabenplanung).' 'The task SquorliAutoUpdate could not be removed (task scheduler).') }
 }
 
 Step 'Firewall'
