@@ -2,11 +2,13 @@
 # Traefik v3.6 (docs/features/proxy-tests.md); the Let's Encrypt resolver is replaced by a test certificate there.
 # docker compose --env-file ../.env -f compose.yml -f proxies/traefik.labels.yml --profile external up -d
 services:
-  app:
-    networks: [internal, proxy]
+  server:
+    networks:
+      internal: { aliases: [app] }
+      proxy: {}
     labels:
       traefik.enable: "true"
-      # app and livekit sit in two networks; without this Traefik may pick the internal one it cannot reach (502/504).
+      # server and livekit sit in two networks; without this Traefik may pick the internal one it cannot reach (502/504).
       traefik.docker.network: proxy   # <- the network of your Traefik, as below
       traefik.http.routers.chat.rule: "Host(`chat.example.org`)"
       traefik.http.routers.chat.entrypoints: websecure

@@ -1,7 +1,9 @@
 # Server release: for a tag `v<version>` a DRAFT GitHub release whose text is apps/server/release-notes/<version>.md (written
 # with the `server-release` skill) plus a standing text about updating. The image itself is built by ci.yml (job `image` on
-# tags `v*`: ghcr.io/<repo>:v<version> and latest); this workflow only writes the release. Publishing the draft is a person's
-# step. Tags `desktop-v*` belong to the desktop app (desktop-release.yml); the two never overlap.
+# tags `v*`: ghcr.io/<repo>:v<version> and latest). The package for Windows is built and tested here (windows-package.yml)
+# and attached to the release with its .sha256 file: `squorli update` of an installation on Windows asks for exactly these
+# two names under the tag. Publishing the draft is a person's step, after this workflow has ended. Tags `desktop-v*` belong
+# to the desktop app (desktop-release.yml); the two never overlap.
 name: Server release
 
 on:
@@ -38,11 +40,45 @@ jobs:
           version="${TAG#v}"
           notes="apps/server/release-notes/$version.md"
           image="ghcr.io/${{ github.repository }}:$TAG"
-          footer="Image: \`$image\` (also \`:latest\`). Update an installation made with the install script: \`squorli backup\`, then \`squorli update\`; with Compose by hand: set \`APP_IMAGE=$image\` in \`.env\`, then \`docker compose pull\` and \`up -d\`. Database migrations run by themselves at the start and cannot be undone: back up first. Guide: https://squorli.com/en/docs/install/"
+          footer="Image: \`$image\` (also \`:latest\`). Update an installation made with the install script: \`squorli backup\`, then \`squorli update\`; with Compose by hand: set \`APP_IMAGE=$image\` in \`.env\`, then \`docker compose pull\` and \`up -d\`. Windows without Docker: the package \`squorli-server-$version-windows-x64.zip\` below, with its \`.sha256\` file; update an installation with \`squorli update\` in a window opened as administrator (it backs up first). Database migrations run by themselves at the start and cannot be undone: back up first. Guide: https://squorli.com/en/docs/install/"
           if [ -f "$notes" ]; then { cat "$notes"; echo; echo "---"; echo; echo "$footer"; } > body.md; else echo "$footer" > body.md; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             # A run repeated for the same tag brings the notes up to date, but never rewrites a release a person has published.
             if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ]; then gh release edit "$TAG" --notes-file body.md; fi
           else
             gh release create "$TAG" --draft --verify-tag --title "Squorli Server $version" --notes-file body.md
+          fi
+
+  # The package for Windows of this tag, built and tested on a Windows runner.
+  windows:
+    needs: release
+    uses: ./.github/workflows/windows-package.yml
+    with:
+      ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+  attach:
+    needs: [release, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: squorli-server-windows-x64
+          path: package
+      - name: Attach the package to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${TAG#v}"
+          zip="squorli-server-$version-windows-x64.zip"
+          cd package
+          if [ ! -f "$zip" ] || [ ! -f "$zip.sha256" ]; then echo "::error::The build gave no $zip with its .sha256 file"; ls -la; exit 1; fi
+          sha256sum -c "$zip.sha256"
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ]; then
+            gh release upload "$TAG" "$zip" "$zip.sha256" --clobber
+          elif gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx "$zip"; then
+            # Installations check the package against the hash of the release: a published package is never replaced.
+            echo "::notice::Release $TAG is published and carries $zip already; left as it is."
+          else
+            gh release upload "$TAG" "$zip" "$zip.sha256"
           fi

@@ -1,0 +1,29 @@
+<!--
+  LiveKit as a Windows service (WinSW 2.12, element names of version 2; see SquorliServer.xml).
+  Ports, the public address and the API key stand in config\livekit.yaml of the data folder, not here: this folder is readable
+  by every user of the machine, and LiveKit's key file option refuses every file on Windows.
+-->
+<service>
+  <id>SquorliLiveKit</id>
+  <name>Squorli LiveKit</name>
+  <description>Squorli: media server for voice, camera and screen share (LiveKit).</description>
+  <executable>{{INSTALL_DIR}}\livekit\livekit-server.exe</executable>
+  <arguments>--config "{{DATA_DIR}}\config\livekit.yaml"</arguments>
+  <workingdirectory>{{INSTALL_DIR}}\livekit</workingdirectory>
+  <startmode>Automatic</startmode>
+  <!-- LiveKit waits on the first Ctrl+C until its rooms are empty; with members in a room it is killed after this time. -->
+  <stoptimeout>10 sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="15 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>{{DATA_DIR}}\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+  </serviceaccount>
+</service>

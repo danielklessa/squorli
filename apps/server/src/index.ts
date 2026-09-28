@@ -57,6 +57,7 @@ import { registerRateLimits } from "./rateLimits";
 import { PAGE_HEADERS } from "./webHeaders";
 import { logOptions } from "./logRedact";
 import { loadLinkSecret } from "./attachmentLinks";
+import { installShutdown } from "./shutdown";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** Version from the server's package.json (dev: apps/server, container: /app); the client shows it on the login screen. */
@@ -95,6 +96,11 @@ async function main() {
   // server rail). Auth runs exclusively through the bearer token in the header (no cookies), and the login signature stays bound to
   // PUBLIC_DOMAIN; so a foreign origin cannot do anything on the user's behalf without holding their token.
   await app.register(cors, { origin: true });
+  // While the server closes, the members' connections end one after the other. What reacts to that in the background
+  // (member list, AFK move, radio) would ask a database that is closing and log a warning per member. Registered before
+  // the WebSocket plugin, whose own hook is the one that ends the connections.
+  let closing = false;
+  app.addHook("preClose", async () => { closing = true; });
   await app.register(websocket);
   // Before every route: a refused request costs no database work (docs/features/rate-limits.md).
   const wsLimit = registerRateLimits(app, config.RATE_LIMIT_FACTOR);
@@ -166,7 +172,7 @@ async function main() {
   hub.setVisibility((userId, channelId) => visibility.canSee(userId, channelId));
   await visibility.refresh(db);
   // Online and AFK status change everyone's member list.
-  hub.onPresence(() => { void broadcastStructure(db, hub, ["members"]).catch((err) => app.log.warn({ err }, "presence broadcast")); });
+  hub.onPresence(() => { if (!closing) void broadcastStructure(db, hub, ["members"]).catch((err) => app.log.warn({ err }, "presence broadcast")); });
   const lk = new LivekitAdmin(config, app.log);
   // Suspended directory accounts (users/suspension.ts): whoever is connected when the directory tells of a suspension is
   // disconnected; the sign-in, the requests and the WebSocket refuse by themselves.
@@ -193,7 +199,7 @@ async function main() {
   };
   const afkTimer = setInterval(() => { void afkSweep().catch((err) => app.log.warn({ err }, "afk sweep")); }, 5_000);
   app.addHook("onClose", async () => clearInterval(afkTimer));
-  hub.onPresence(() => { void afkSweep().catch((err) => app.log.warn({ err }, "afk sweep")); }); // right away when somebody turns absent
+  hub.onPresence(() => { if (!closing) void afkSweep().catch((err) => app.log.warn({ err }, "afk sweep")); }); // right away when somebody turns absent
 
   // Web radio "now playing": the server reads a station's titles only while somebody sits in a voice channel playing it.
   const radioMeta = new RadioMetadata((channelId, title) => hub.broadcastToChannel(channelId, { type: "radio.meta", channelId, title }), app.log);
@@ -209,6 +215,7 @@ async function main() {
     })().catch((err) => app.log.warn({ err }, "radio idle stop"));
   }, config.RADIO_IDLE_STOP_MS ?? RADIO_IDLE_STOP_MS);
   const syncRadioMeta = () => {
+    if (closing) return;
     void Promise.all([loadChannels(db), loadSettings(db)]).then(([all, settings]) => {
       const playing = all.filter((c) => c.radio);
       radioMeta.sync(playing.flatMap((c) => (!c.radio!.twitchChannel && !c.radio!.youtubeVideo && presence.members(c.id).length > 0 ? [{ channelId: c.id, streamUrl: c.radio!.streamUrl, stationName: c.radio!.name }] : [])));
@@ -328,7 +335,8 @@ async function main() {
       "Variable entfernen (Standard wss://PUBLIC_DOMAIN) oder auf die öffentliche Adresse setzen.");
   }
 
-  await app.listen({ port: config.PORT, host: "0.0.0.0" });
+  await app.listen({ port: config.PORT, host: config.LISTEN_HOST });
+  installShutdown(app);
   app.log.info({ proxyMode: config.PROXY_MODE, domain: config.PUBLIC_DOMAIN }, "app-server up");
   if (directory.enabled) {
     // Register, then reconcile all users' names every 5 minutes (changes on the account page arrive without a reload this way).

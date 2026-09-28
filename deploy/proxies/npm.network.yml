@@ -1,10 +1,13 @@
-# Overlay for Nginx Proxy Manager (or another proxy container): additionally attaches app and livekit
-# to the proxy's Docker network so that it reaches them under the names "app" and "livekit".
+# Overlay for Nginx Proxy Manager (or another proxy container): additionally attaches server and livekit
+# to the proxy's Docker network so that it reaches them under the names "server" and "livekit" ("app", the
+# server's name until 28 September 2026, keeps working).
 #   docker compose --env-file ../.env -f compose.yml -f proxies/npm.network.yml --profile external up -d
 # Adjust the network name below: `docker inspect <npm-container> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'`
 services:
-  app:
-    networks: [internal, proxy]
+  server:
+    networks:
+      internal: { aliases: [app] }
+      proxy: { aliases: [app] }
   livekit:
     networks: [internal, proxy]
 networks:

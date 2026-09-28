@@ -10,8 +10,8 @@ The user asked for it as the second item of `docs/PLAN.md` 2.1 ("Lass uns erst P
 
 | Container | Level | Holds | IP addresses |
 |---|---|---|---|
-| `app` | `info` (`LOG_LEVEL`) | start and configuration warnings, directory registration and sync, sign-ups of members and server accounts (user id, handle), moderation actions (who did what to whom: kick, ban, move, channel blocks, vote kicks, owner changes, reports opened and closed, the status API switched; ids, no message text), WebSocket connect/close per user id, periodic sweeps, requests that end in a server error (method, URL with secrets redacted, status, time) | only three security lines: a rate limit reached (`Rate-Limit erreicht`: rule, IP, path), a wrong password for a server account's key backup (handle, IP), a WebSocket closed for flooding (user id, IP) |
-| `app` with `LOG_REQUESTS=true` | as above | additionally Fastify's request log: one line when a request comes in, one when it is answered, "not found" lines | every request with the caller's IP and port |
+| `server` | `info` (`LOG_LEVEL`) | start and configuration warnings, directory registration and sync, sign-ups of members and server accounts (user id, handle), moderation actions (who did what to whom: kick, ban, move, channel blocks, vote kicks, owner changes, reports opened and closed, the status API switched; ids, no message text), WebSocket connect/close per user id, periodic sweeps, requests that end in a server error (method, URL with secrets redacted, status, time) | only three security lines: a rate limit reached (`Rate-Limit erreicht`: rule, IP, path), a wrong password for a server account's key backup (handle, IP), a WebSocket closed for flooding (user id, IP) |
+| `server` with `LOG_REQUESTS=true` | as above | additionally Fastify's request log: one line when a request comes in, one when it is answered, "not found" lines | every request with the caller's IP and port |
 | `livekit` | `warn` | configuration problems, failures | none of the members' (its own public IP in a start warning) |
 | `caddy` (bundled mode) | Caddy's default | certificate management, errors; **no access log** (the Caddyfile has no `log` directive) | an error line about a request can carry the caller's address |
 | `postgres` | the image's default | start, checkpoints, errors; no connection log | none |
@@ -31,7 +31,7 @@ and in `/etc/systemd/journald.conf`: `MaxRetentionSec=14day`, then `systemctl re
 
 ### Troubleshooting
 
-- A proxy or client problem that needs every request: `LOG_REQUESTS=true` in `.env`, `squorli restart app`, reproduce, set it back and restart again. The lines with addresses stay in the log until rotation pushes them out.
+- A proxy or client problem that needs every request: `LOG_REQUESTS=true` in `.env`, `squorli restart server`, reproduce, set it back and restart again. The lines with addresses stay in the log until rotation pushes them out.
 - A media connection problem: `level: info` in `deploy/livekit/livekit.yaml`, `squorli restart livekit`; the lines "participant active" and "ice reconnected or switched pair" show the chosen candidate pair. Set it back to `warn` afterwards. `squorli doctor` and Verwaltung > Server > "Verbindung prüfen" answer most of these questions without logs (`docs/features/doctor.md`).
 - `LOG_LEVEL=debug` adds the LiveKit admin client's failures (`livekit/admin.ts`) and nothing personal beyond ids.
 

@@ -6,7 +6,7 @@ services:
     volumes:
       - ./proxytest/site.conf:/etc/nginx/conf.d/default.conf:ro
       - ../certs:/certs:ro
-    depends_on: [app, livekit]
+    depends_on: [server, livekit]
     networks:
       internal: { aliases: [chat.test] }
     profiles: [external]

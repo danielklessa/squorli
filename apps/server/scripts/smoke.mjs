@@ -423,7 +423,13 @@ check("listing: description too long -> 400", sldBad === 400);
       && docRep.checks.every((c) => typeof c.text?.de === "string" && typeof c.text?.en === "string" && statuses.includes(c.status)) && typeof docRep.mediaPorts?.tcp === "number");
   check("doctor: the server reaches its own address and LiveKit (dev: the self check and the internal ping)",
     ["self", "websocket", "rtc", "livekit"].every((id) => docRep.checks.find((c) => c.id === id)?.status === "ok"), JSON.stringify(docRep.checks.filter((c) => c.status !== "ok").map((c) => [c.id, c.status, c.detail])));
-  const [dcLoop, loopRep] = await api("GET", "/api/doctor");
+  // SMOKE_DOCTOR_TOKEN = the server's DOCTOR_TOKEN (an installation without containers): the token opens, loopback alone does not.
+  const doctorToken = process.env.SMOKE_DOCTOR_TOKEN;
+  if (doctorToken) {
+    const [dcBare] = await api("GET", "/api/doctor");
+    check("doctor: with a token configured, loopback alone is refused", dcBare === 401);
+  }
+  const [dcLoop, loopRep] = await api("GET", "/api/doctor", undefined, undefined, false, doctorToken ? { "x-squorli-doctor": doctorToken } : {});
   check("doctor: from the machine itself without a session (squorli doctor), without the request view", dcLoop === 200 && Array.isArray(loopRep.checks) && loopRep.checks[0].id !== "request");
   const [dcFwd] = await api("GET", "/api/doctor", undefined, undefined, false, { "x-forwarded-for": "203.0.113.5" });
   check("doctor: a forwarded request without a session is refused", dcFwd === 401);

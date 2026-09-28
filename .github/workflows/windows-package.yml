@@ -1,0 +1,68 @@
+# The package for Windows without Docker (deploy/windows/, docs/features/windows.md): typecheck, tests and the server and
+# web build on Windows (the builds as in the Dockerfile; without the desktop package, which desktop-release.yml builds on
+# Windows), then the package, its acceptance test on this runner, and the package as an artifact of the run.
+# Called by ci.yml (every push of a branch and every pull request) and by server-release.yml (tags v*, which attaches the
+# artifact to the release). GitHub only: the GitLab runner has no Windows.
+name: Windows package
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: What to check out; empty = what started the calling workflow
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      # Git for Windows would check the files out with CRLF; the repository's files are LF (.editorconfig).
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "!@squorli/desktop" -r typecheck
+      - run: pnpm --filter "!@squorli/desktop" -r test
+      - run: pnpm --filter @squorli/web build
+      - run: pnpm --filter @squorli/server build
+      # The package (deploy/windows/build-package.ps1), in Windows PowerShell 5.1 like on an operator's machine. The
+      # downloads (about 450 MB, PostgreSQL most of it) are kept between runs for as long as versions.json stays the same.
+      - uses: actions/cache@v4
+        with:
+          path: build-cache
+          key: windows-package-${{ hashFiles('deploy/windows/versions.json') }}
+      - name: Build the package
+        shell: powershell
+        run: ./deploy/windows/build-package.ps1 -SkipBuild -CacheDir build-cache
+      # Installs the package on this runner, runs every command of "squorli" against the real services, updates it (also to
+      # a package that breaks, for the way back) and removes it (deploy/windows/AGENTS.md, "The acceptance test").
+      - name: Acceptance test (install, squorli, update, uninstall)
+        shell: powershell
+        run: ./deploy/windows/test/acceptance.ps1 -Package (Get-Item dist/windows/*.zip).FullName -Firewall yes
+      # The server's smoke test against a second installation. It talks to services outside (Discord, YouTube), so a
+      # failure shows in the run without failing it.
+      - name: Smoke test against an installation (does not count)
+        continue-on-error: true
+        shell: powershell
+        run: ./deploy/windows/test/acceptance.ps1 -Package (Get-Item dist/windows/*.zip).FullName -Smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squorli-server-windows-x64
+          path: |
+            dist/windows/*.zip
+            dist/windows/*.sha256
+          retention-days: 5
+          compression-level: 0

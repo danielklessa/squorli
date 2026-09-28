@@ -2,7 +2,7 @@
 # the certificate: the test serves its own certificate as Traefik's default instead of a Let's Encrypt resolver.
 # The network "proxy" is the one the labels overlay expects; run.sh creates it.
 services:
-  app:
+  server:
     labels:
       traefik.http.routers.chat.rule: "Host(`chat.test`)"
       traefik.http.routers.chat.tls.certresolver: ""

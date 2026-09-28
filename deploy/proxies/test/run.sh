@@ -6,7 +6,8 @@
 #   deploy/proxies/test/run.sh [nginx|traefik|caddy]...     (default: all three, one after the other)
 #
 # APP_IMAGE=<image> tests that image; unset, the script builds the Dockerfile's target "app" as squorli/app:proxytest.
-# Needs docker with compose and openssl. Publishes nothing but the media ports 17881/tcp and 17882/udp on the host.
+# Needs docker with compose and openssl. Publishes nothing but the media ports on the host: 17881/tcp and 17882/udp,
+# or MEDIA_TCP_PORT and MEDIA_UDP_PORT when something else holds those.
 # CI: .github/workflows/ci.yml, job "proxies".
 set -euo pipefail
 # Git Bash on Windows would turn container paths such as /certs/ca.pem into Windows paths; docker gets only relative host paths here.
@@ -67,8 +68,8 @@ env_set POSTGRES_PASSWORD proxytestpassword
 env_set LIVEKIT_API_KEY squorli
 env_set LIVEKIT_API_SECRET proxytest-secret-proxytest-secret-proxytest
 env_set LIVEKIT_NODE_IP 127.0.0.1
-env_set LIVEKIT_TCP_PORT 17881
-env_set LIVEKIT_UDP_PORT 17882
+env_set LIVEKIT_TCP_PORT "${MEDIA_TCP_PORT:-17881}"
+env_set LIVEKIT_UDP_PORT "${MEDIA_UDP_PORT:-17882}"
 env_set DIRECTORY_URL ""
 env_set MAX_UPLOAD_MB "$MAX_UPLOAD_MB"
 
@@ -83,11 +84,11 @@ env_set MAX_UPLOAD_MB "$MAX_UPLOAD_MB"
 )
 
 # ---- each proxy's configuration, adapted the way its header comment says ----
-sed -e "s/chat\.example\.org/$DOMAIN/g" -e 's/127\.0\.0\.1:3000/app:3000/g' -e 's/127\.0\.0\.1:7880/livekit:7880/g' \
+sed -e "s/chat\.example\.org/$DOMAIN/g" -e 's/127\.0\.0\.1:3000/server:3000/g' -e 's/127\.0\.0\.1:7880/livekit:7880/g' \
   -e 's|#[[:space:]]*ssl_certificate[[:space:]].*|ssl_certificate /certs/cert.pem;|' \
   -e 's|#[[:space:]]*ssl_certificate_key[[:space:]].*|ssl_certificate_key /certs/key.pem;|' \
   "$REPO/deploy/proxies/nginx.conf" > "$WORK/deploy/proxytest/site.conf"
-sed -e "s/chat\.example\.org {/$DOMAIN {\n\ttls \/certs\/cert.pem \/certs\/key.pem/" -e 's/127\.0\.0\.1:3000/app:3000/g' -e 's/127\.0\.0\.1:7880/livekit:7880/g' \
+sed -e "s/chat\.example\.org {/$DOMAIN {\n\ttls \/certs\/cert.pem \/certs\/key.pem/" -e 's/127\.0\.0\.1:3000/server:3000/g' -e 's/127\.0\.0\.1:7880/livekit:7880/g' \
   "$REPO/deploy/proxies/Caddyfile.external" > "$WORK/deploy/proxytest/Caddyfile"
 cat > "$WORK/deploy/proxytest/traefik-tls.yml" <<'EOF'
 tls:
@@ -109,7 +110,7 @@ check_proxy() {
     [ "$code" = 200 ] && break
     sleep 2
   done
-  if [ "$code" != 200 ]; then bad "https://$DOMAIN/api/health never answered 200 (last: $code)"; ccurl -v "https://$DOMAIN/api/health" 2>&1 | tail -n 15 || true; dc logs --tail=30 proxy app || true; return; fi
+  if [ "$code" != 200 ]; then bad "https://$DOMAIN/api/health never answered 200 (last: $code)"; ccurl -v "https://$DOMAIN/api/health" 2>&1 | tail -n 15 || true; dc logs --tail=30 proxy server || true; return; fi
 
   body="$(ccurl "https://$DOMAIN/api/health?probe=$proxy")"
   if grep -q '"proxyMode":"external"' <<<"$body"; then ok "health through the proxy, proxyMode external"; else bad "health answered $body"; fi
@@ -128,7 +129,7 @@ check_proxy() {
   if [ "$code" = 101 ]; then ok "WebSocket upgrade on /api/ws (101)"; else bad "WebSocket upgrade on /api/ws answered $code"; fi
 
   # The app has to see the client's address (X-Forwarded-For from a trusted proxy), not the proxy's.
-  seen="$(dc logs --no-log-prefix app 2>/dev/null | grep "probe=$proxy" | grep -o '"remoteAddress":"[^"]*"' | head -n1 | cut -d'"' -f4 || true)"
+  seen="$(dc logs --no-log-prefix server 2>/dev/null | grep "probe=$proxy" | grep -o '"remoteAddress":"[^"]*"' | head -n1 | cut -d'"' -f4 || true)"
   client_ips="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$(dc ps -q client)")"
   if [ -n "$seen" ] && grep -qw -- "$seen" <<<"$client_ips"; then ok "the app sees the client's address ($seen)"
   else bad "the app saw '$seen', the client has $client_ips (X-Forwarded-For or TRUSTED_PROXIES)"; fi
@@ -139,7 +140,7 @@ check_proxy() {
 
   # The server's own setup check (squorli doctor): it reaches https://chat.test through the proxy.
   local report
-  report="$(dc exec -T app node -e '
+  report="$(dc exec -T server node -e '
     fetch("http://127.0.0.1:3000/api/doctor", { signal: AbortSignal.timeout(90000) }).then((r) => r.json()).then((d) => {
       for (const c of d.checks) console.log(c.id + " " + c.status + " " + c.text.en);
     }).catch((e) => { console.log("request fail " + e.message); });' 2>&1 || true)"

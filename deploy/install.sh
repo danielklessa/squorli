@@ -8,7 +8,8 @@
 # downloads the deploy files, writes .env with fresh secrets, starts the stack and checks it. Running it again on an
 # existing installation updates it or changes its settings; secrets and data are kept.
 # It also writes <dir>/squorli, a small wrapper around docker compose with the right profile and overlays
-# (squorli update | status | logs | backup | restore | doctor | restart | down | <any compose command>).
+# (squorli update | status | logs | backup | restore | doctor | restart | down | <any compose command>). Its services are
+# server, postgres, livekit and caddy; the server's old name "app" is still understood.
 #
 # Environment: SQUORLI_DIR (installation directory, default /opt/squorli), SQUORLI_LANG (de/en),
 # SQUORLI_REF (git ref of the deploy files, default main), SQUORLI_RAW_BASE (base URL of the files; tests use file://).
@@ -607,6 +608,12 @@ write_helper() {
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/deploy"
 dc() { docker compose "${ARGS[@]}" "$@"; }
+# The app server's service was named "app" until 28 September 2026; whoever still types it means "server".
+if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ]; then
+  cmd="$1"; shift; names=()
+  for a in "$@"; do [ "$a" = app ] && a=server; names+=("$a"); done
+  set -- "$cmd" "${names[@]}"
+fi
 case "${1:-help}" in
   update)  dc pull && dc up -d --no-build --remove-orphans && dc ps ;;
   status)  dc ps ;;
@@ -616,7 +623,7 @@ case "${1:-help}" in
   backup)
     dest="${2:-../backups}/$(date +%Y%m%d-%H%M%S)"; mkdir -p "$dest"; chmod 700 "$(dirname "$dest")" "$dest"
     dc exec -T postgres pg_dump -U chat -d chat > "$dest/squorli-database.sql"
-    dc exec -T app tar czf - -C /app/data . > "$dest/squorli-files.tar.gz"
+    dc exec -T server tar czf - -C /app/data . > "$dest/squorli-files.tar.gz"
     cp ../.env "$dest/env"; chmod 600 "$dest"/*
     echo "Backup: $(readlink -f "$dest")" ;;
   restore)
@@ -630,11 +637,11 @@ case "${1:-help}" in
       read -r -p "Type yes to continue: " answer </dev/tty
       [ "$answer" = yes ] || { echo "Cancelled."; exit 1; }
     fi
-    dc stop app
+    dc stop server
     dc up -d --wait postgres
     dc exec -T postgres psql -q -v ON_ERROR_STOP=1 -U chat -d postgres -c 'DROP DATABASE IF EXISTS chat WITH (FORCE)' -c 'CREATE DATABASE chat OWNER chat'
     dc exec -T postgres psql -q -v ON_ERROR_STOP=1 -U chat -d chat < "$src/squorli-database.sql" > /dev/null
-    dc run --rm --no-deps -T --entrypoint sh app -c 'find /app/data -mindepth 1 -delete && tar xzf - -C /app/data' < "$src/squorli-files.tar.gz"
+    dc run --rm --no-deps -T --entrypoint sh server -c 'find /app/data -mindepth 1 -delete && tar xzf - -C /app/data' < "$src/squorli-files.tar.gz"
     dc up -d --no-build
     echo "Restored from $src. The .env was left as it is; the backup's copy is $src/env (PUBLIC_DOMAIN, OWNER_PUBLIC_KEY and DIRECTORY_URL should match it)." ;;
   doctor)
@@ -655,7 +662,7 @@ case "${1:-help}" in
     if [ "$lang" = de ]; then echo "Prüfungen des App-Servers (aus dem Container heraus; ein Verzeichnis prüft zusätzlich von außen):"
     else echo "Checks of the app server (from inside the container; a directory also checks from outside):"; fi
     rc=0
-    dc exec -T app node -e '
+    dc exec -T server node -e '
       const lang = process.argv[1]; const mark = { ok: "  ok  ", warn: "  !   ", fail: "  x   ", skip: "  -   " };
       fetch("http://127.0.0.1:3000/api/doctor").then(async (r) => {
         if (!r.ok) { console.log("  x   /api/doctor -> HTTP " + r.status); process.exit(1); }
@@ -669,7 +676,8 @@ case "${1:-help}" in
     else echo "Whether voice and video (UDP) arrive can only be checked from a browser: Verwaltung > Server > Check the connection."; fi
     exit $rc ;;
   help|-h|--help)
-    echo "squorli update | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>" ;;
+    echo "squorli update | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
+    echo "services: server, postgres, livekit, caddy" ;;
   *) dc "$@" ;;
 esac
 EOF
@@ -689,6 +697,15 @@ start_stack() {
     (cd "$DIR/deploy" && docker compose --env-file ../.env -f compose.yml --profile bundled rm -sf caddy) || true
   fi
   dc pull
+  # An installation from before 28 September 2026 runs the app server as the service "app", which compose.yml no longer
+  # knows: its container goes before the new one starts, or it would keep the port the new one needs; after the pull, so a pull that
+  # fails leaves the old server running. The data volume stays.
+  old="$(docker ps -aq --filter label=com.docker.compose.project=squorli --filter label=com.docker.compose.service=app)"
+  if [ -n "$old" ]; then
+    # shellcheck disable=SC2086
+    docker rm -f $old >/dev/null
+    note "$(t "Der Dienst des App-Servers heißt jetzt server (bisher app); der alte Container ist entfernt." "The app server's service is named server now (app before); the old container is removed.")"
+  fi
   dc up -d --no-build --remove-orphans
 }
 
@@ -696,12 +713,12 @@ verify() {
   step "$(t "Prüfen" "Checking")"
   local up=0
   for _ in $(seq 1 60); do
-    if dc exec -T app node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" >/dev/null 2>&1; then up=1; break; fi
+    if dc exec -T server node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" >/dev/null 2>&1; then up=1; break; fi
     sleep 2
   done
   if [ "$up" != 1 ]; then
-    dc ps || true; dc logs --tail=40 app || true
-    die "$(t "Der App-Server antwortet nicht. Logs: $HELPER logs app" "The app server does not answer. Logs: $HELPER logs app")"
+    dc ps || true; dc logs --tail=40 server || true
+    die "$(t "Der App-Server antwortet nicht. Logs: $HELPER logs server" "The app server does not answer. Logs: $HELPER logs server")"
   fi
   ok "$(t "App-Server läuft" "App server is running")"
 
@@ -757,7 +774,7 @@ finish() {
   fi
   printf '%s\n' "$(t "Verwalten:" "Manage:")" \
     "  $HELPER status      $(t "Container anzeigen" "show containers")" \
-    "  $HELPER logs app    $(t "Logs verfolgen" "follow logs")" \
+    "  $HELPER logs server $(t "Logs verfolgen" "follow logs")" \
     "  $HELPER update      $(t "neues Image holen und neu starten (vorher Backup)" "pull the new image and restart (back up first)")" \
     "  $HELPER backup      $(t "Datenbank, Dateien und .env nach $DIR/backups sichern" "back up database, files and .env to $DIR/backups")" \
     "  $HELPER restore <$(t "Ordner" "dir")>  $(t "eine Sicherung zurückspielen (ersetzt Datenbank und Dateien)" "restore a backup (replaces database and files)")" \

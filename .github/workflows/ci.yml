@@ -2,6 +2,8 @@
 # image: production image (Dockerfile, target "app") into the GitHub Container Registry
 #        on the default branch (tags <branch>, sha-<short-sha>, latest) and on git tags (<tag>, latest).
 #        Use it on the servers via APP_IMAGE in .env, see deploy/compose.yml.
+# windows: typecheck + vitest + server and web build on Windows, then the package for Windows (deploy/windows/), its
+#        acceptance test and the package as an artifact of the run (windows-package.yml; GitHub only).
 # proxies: the reference proxy configurations against the real stack (GitHub only).
 # Mirrors .gitlab-ci.yml (test, image); keep both in step.
 
@@ -30,9 +32,18 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The package for Windows pins the versions the Compose files and .nvmrc name (deploy/windows/AGENTS.md).
+      - run: node deploy/windows/check-versions.mjs
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  # The server also runs on Windows without Docker (docs/features/windows.md): typecheck, tests and builds on Windows,
+  # the package and its acceptance test (windows-package.yml). Not for tags: a tag v* runs the same through
+  # server-release.yml, which attaches the package to the release, and the commit was tested when its branch was pushed.
+  windows:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    uses: ./.github/workflows/windows-package.yml
 
   # The reference proxy configurations (deploy/proxies/) against the real stack: nginx, Traefik and Caddy in front of the
   # production compose.yml, checked through the proxy (docs/features/proxy-tests.md). GitHub only: the GitLab runner's

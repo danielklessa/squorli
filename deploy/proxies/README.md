@@ -3,7 +3,7 @@
 Your proxy must:
 
 1. forward `https://chat.example.org/rtc*` (incl. WebSocket) to LiveKit (`livekit:7880`)
-2. forward everything else under `https://chat.example.org` (incl. WebSocket `/api/ws`) to the app server (`app:3000`)
+2. forward everything else under `https://chat.example.org` (incl. WebSocket `/api/ws`) to the app server (`server:3000`)
 3. set `X-Forwarded-For` and `X-Forwarded-Proto` and pass the WebSocket upgrade through
 
 In addition, the following must be reachable **directly** (not via the proxy): `7882/udp` and `7881/tcp` on the host.
@@ -17,12 +17,12 @@ Only subdomains are supported, no sub-path like `example.org/chat`.
 
 ## How the proxy reaches the containers
 
-In external mode `compose.yml` publishes **no** HTTP ports; `app` and `livekit` are only attached to the network `squorli_internal`.
+In external mode `compose.yml` publishes **no** HTTP ports; `server` and `livekit` are only attached to the network `squorli_internal`. The app server's service was named `app` until 28 September 2026; a proxy in a container that still points to `app:3000` keeps working, because the container answers to both names.
 
 | Proxy runs ... | Solution |
 |---|---|
 | on the host (nginx, Apache, Caddy as a package) | Start with the overlay `nginx.ports.yml`: publishes `127.0.0.1:3000` and `127.0.0.1:7880` |
-| as a container on the same host (Traefik, Nginx Proxy Manager, Caddy) | Attach the proxy container to the network `squorli_internal` or `app`/`livekit` to the proxy network (`npm.network.yml`, `traefik.labels.yml`) and use the container names `app` and `livekit` as targets |
+| as a container on the same host (Traefik, Nginx Proxy Manager, Caddy) | Attach the proxy container to the network `squorli_internal` or `server`/`livekit` to the proxy network (`npm.network.yml`, `traefik.labels.yml`) and use the container names `server` and `livekit` as targets |
 | on another host | Overlay `remote-proxy.ports.yml`: publishes 3000 and 7880 on `PROXY_BIND_IP`; the target in the proxy is the IP/hostname of the chat host. See section "Proxy on another host" |
 
 ## Proxy on another host
@@ -34,7 +34,7 @@ Applies to Nginx Proxy Manager, nginx, Traefik etc. on a second machine. What ch
    cd deploy && docker compose --env-file ../.env -f compose.yml -f proxies/remote-proxy.ports.yml --profile external up -d
    ```
    Then, via the firewall on the chat host, allow `3000/tcp` and `7880/tcp` **only** for the IP of the proxy host. Both ports speak unencrypted HTTP; there should be a private network or VPN between the hosts.
-2. **Target in the proxy:** instead of `app`/`livekit`, the IP or the internal hostname of the chat host, ports 3000 and 7880.
+2. **Target in the proxy:** instead of `server`/`livekit`, the IP or the internal hostname of the chat host, ports 3000 and 7880.
 3. **Media does not go through the proxy host.** Browsers connect directly to the **chat host** for audio: `7882/udp` and `7881/tcp` must be reachable there from the internet (public IP or port forwarding on the router). LiveKit must know this public address: the default is automatic detection (`use_external_ip`); with NAT or multiple addresses set `LIVEKIT_NODE_IP=<public IP of the chat host>` in `.env`. A chat host without its own public reachability does not work, no matter how the proxy is set up.
 4. **`TRUSTED_PROXIES`:** The app server sees the proxy host as the sender. If its IP lies in `10/8`, `172.16/12` or `192.168/16`, the default is sufficient; otherwise add the IP in `.env`. (Under Docker Desktop the sender appears as the Docker gateway `172.x`, also covered.)
 
@@ -61,8 +61,8 @@ The directory service (handles, key backup, authenticator) is a separate, unpubl
 
 ## Nginx Proxy Manager (NPM)
 
-NPM on the **same** host: NPM runs as a container and must reach `app` and `livekit` in the Docker network. For that, start with the overlay `npm.network.yml`
-(adjust the network name). NPM on **another** host: follow the section above and in the table below enter the IP of the chat host as Forward Hostname instead of `app`/`livekit`.
+NPM on the **same** host: NPM runs as a container and must reach `server` and `livekit` in the Docker network. For that, start with the overlay `npm.network.yml`
+(adjust the network name). NPM on **another** host: follow the section above and in the table below enter the IP of the chat host as Forward Hostname instead of `server`/`livekit`.
 
 ```bash
 cd deploy && docker compose --env-file ../.env -f compose.yml -f proxies/npm.network.yml --profile external up -d
@@ -75,7 +75,7 @@ Create a **Proxy Host** in the NPM interface:
 | Tab | Field | Value |
 |---|---|---|
 | Details | Domain Names | `chat.example.org` |
-| Details | Scheme / Forward Hostname / Port | `http` / `app` / `3000` |
+| Details | Scheme / Forward Hostname / Port | `http` / `server` / `3000` |
 | Details | Websockets Support | **on** (required, otherwise no `/api/ws`) |
 | Details | Cache Assets | off |
 | Details | Block Common Exploits | optional |
@@ -153,6 +153,10 @@ location ~ ^/ {
 
 The overlay expects Traefik on a Docker network named `proxy` with the entrypoint `websecure` and a certificate resolver `letsencrypt`; rename them to yours, the network in `traefik.docker.network` too (app and LiveKit sit in two networks, and without that label Traefik may pick the internal one it cannot reach: 502/504 or requests that hang for 30 seconds). Traefik passes WebSockets and sets `X-Forwarded-For` by itself and has no body size limit by default. `TRUSTED_PROXIES` can stay at the default (Traefik comes from a Docker network).
 
+## IIS (Windows Server)
+
+For an installation made with the package for Windows on a server whose IIS holds 80 and 443: [iis/README.md](iis/README.md) with [iis/web.config](iis/web.config) (URL Rewrite and Application Request Routing, WebSocket for `/api/ws` and `/rtc`). Not tested against a real IIS yet.
+
 ## Caddy
 
-For a Caddy you already run for other sites (without one, use `PROXY_MODE=bundled`: the stack brings its own Caddy). Start with `nginx.ports.yml` like nginx on the host, copy the site block of `Caddyfile.external` into your Caddyfile, replace `chat.example.org`, `caddy reload`. Caddy in a container: attach it to `squorli_internal` and use `app:3000` and `livekit:7880` as targets. Caddy gets the certificate, redirects HTTP to HTTPS, passes WebSockets and sets `X-Forwarded-For` by itself. Firewall and checks as with nginx.
+For a Caddy you already run for other sites (without one, use `PROXY_MODE=bundled`: the stack brings its own Caddy). Start with `nginx.ports.yml` like nginx on the host, copy the site block of `Caddyfile.external` into your Caddyfile, replace `chat.example.org`, `caddy reload`. Caddy in a container: attach it to `squorli_internal` and use `server:3000` and `livekit:7880` as targets. Caddy gets the certificate, redirects HTTP to HTTPS, passes WebSockets and sets `X-Forwarded-For` by itself. Firewall and checks as with nginx.

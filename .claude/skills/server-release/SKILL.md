@@ -20,7 +20,12 @@ An optional argument is the version to set (`/server-release 0.2.0`); then skip 
   publishes `:v<version>`, which operators can pin in `APP_IMAGE`. `.github/workflows/server-release.yml` puts
   `apps/server/release-notes/<version>.md` into a **draft** GitHub release titled "Squorli Server <version>" and refuses a
   tag that does not match `apps/server/package.json`.
-- The version in `apps/server/package.json` is what the login screen's footer and `/api/health` show.
+- **The package for Windows** (`deploy/windows/`, installations without Docker) is built and tested by the same workflow
+  on a Windows runner and attached to the release as `squorli-server-<version>-windows-x64.zip` with its `.sha256` file,
+  about half an hour after the draft was written. `squorli update` on Windows reads the published releases and takes
+  the newest one that carries the package, so these two names and the tag `v<version>` are fixed.
+- The version in `apps/server/package.json` is what the login screen's footer and `/api/health` show, and what the
+  package for Windows carries in its name and its `manifest.json`.
 - Tags `desktop-v*` are the desktop app's (skill `desktop-release`); never mix the two.
 
 ## 1. Find the last release
@@ -53,10 +58,14 @@ This is the part the desktop notes do not have. Check each and write down what a
 - **Database migrations:** `git diff --name-only <base>..HEAD -- apps/server/drizzle/` (new `*.sql`). They run at the
   start and cannot be undone; name what they add in plain words, and say "back up first" whenever there is one.
 - **Environment variables:** `git diff <base>..HEAD -- .env.example apps/server/src/config.ts deploy/compose.yml
-  deploy/portainer.yml`: new ones (with their default), removed or deprecated ones, changed defaults. A variable that a
-  Portainer stack must get by hand is worth a line.
+  deploy/portainer.yml deploy/windows/templates/env.example`: new ones (with their default), removed or deprecated
+  ones, changed defaults. A variable that a Portainer stack must get by hand is worth a line.
 - **Compose or proxy changes** an existing installation needs (`deploy/`): a new port, a changed Caddyfile or LiveKit config.
   The install script's `squorli update` pulls the image only, not new deploy files: say what to download again, if anything.
+- **Installations on Windows** (`git diff <base>..HEAD -- deploy/windows`): `squorli update` there runs the setup of the
+  new package, so programs, templates and service files come by themselves. Worth a line: a new port to open in the
+  firewall or to forward, a changed proxy template (`deploy/proxies/`, IIS included), a new version of PostgreSQL,
+  LiveKit or Caddy inside the package (`deploy/windows/versions.json`), and the first release that carries a package.
 - **Clients:** a change of `PROTOCOL_VERSION` (`packages/protocol/src/index.ts`), or behaviour older desktop apps cannot
   handle (the milestone log's rows say "Needs a desktop app release"): name the desktop app version that is needed, or say
   that a new one follows (skill `desktop-release`). The server goes out **before** the app.
@@ -112,7 +121,9 @@ Written for the people who run a server (and, in "New", for what their members g
 - Run `git status --short` and show which files changed.
 - Show the user the notes in the reply (in German: a short summary plus the English text as written).
 - End with what remains for them, in order: commit (squorli-server), push the default branch (CI publishes `:latest`),
-  tag `v<version>` on that commit and push the tag (CI publishes `:v<version>`, the release workflow writes the draft), check
-  and publish the draft on GitHub, update the servers (`squorli backup`, `squorli update`). If a desktop app release is
+  tag `v<version>` on that commit and push the tag (CI publishes `:v<version>`, the release workflow writes the draft and
+  attaches the package for Windows once it is built and tested), wait for that workflow to end, check the draft (the ZIP
+  and its `.sha256` file are attached) and publish it on GitHub, update the servers (`squorli backup`, `squorli update`;
+  on Windows `squorli update` alone, it backs up first). If a desktop app release is
   needed, it follows after the server (skill `desktop-release`). Website texts that describe the change go out with a push
   of `squorli-website` after the server is pushed.

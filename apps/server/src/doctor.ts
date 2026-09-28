@@ -23,6 +23,13 @@ type Text = { de: string; en: string };
 const T = (de: string, en: string): Text => ({ de, en });
 const TIMEOUT_MS = 6000;
 
+/**
+ * An installation from the package for Windows (deploy/windows) runs Windows services, not containers, and its `squorli`
+ * command has no `up`: where a text names what the operator has to look at, it has two wordings. A server on Windows is
+ * always such an installation (or a developer's machine); a container is Linux (tested).
+ */
+export const onPlatform = <V>(docker: V, windows: V, platform: string = process.platform): V => (platform === "win32" ? windows : docker);
+
 const mk = (status: DoctorCheck["status"]) => (id: string, text: Text, detail: string | null = null): DoctorCheck => ({ id, status, text, detail });
 const ok = mk("ok");
 const warn = mk("warn");
@@ -67,8 +74,8 @@ export function requestCheck(view: RequestView, config: Pick<Config, "PUBLIC_DOM
   const trusted = view.forwardedFor !== null && view.remoteAddress !== null && view.ip !== view.remoteAddress;
   if (view.forwardedFor !== null && !trusted) {
     return warn("request", T(
-      `Der Proxy (${view.remoteAddress ?? "?"}) schickt X-Forwarded-For, steht aber nicht in TRUSTED_PROXIES (${config.trustedProxies.join(", ")}). Der Server sieht dann alle Mitglieder unter der Adresse des Proxys: die Rate-Limits treffen alle gemeinsam, und das Log nennt niemanden. Die Adresse in der .env eintragen und squorli up -d.`,
-      `The proxy (${view.remoteAddress ?? "?"}) sends X-Forwarded-For but is not in TRUSTED_PROXIES (${config.trustedProxies.join(", ")}). The server then sees every member under the proxy's address: the rate limits hit everybody together, and the log names nobody. Add the address in .env and run squorli up -d.`), `remote ${view.remoteAddress ?? "?"}`);
+      `Der Proxy (${view.remoteAddress ?? "?"}) schickt X-Forwarded-For, steht aber nicht in TRUSTED_PROXIES (${config.trustedProxies.join(", ")}). Der Server sieht dann alle Mitglieder unter der Adresse des Proxys: die Rate-Limits treffen alle gemeinsam, und das Log nennt niemanden. Die Adresse in der .env eintragen und ${onPlatform("squorli up -d", "squorli restart server")}.`,
+      `The proxy (${view.remoteAddress ?? "?"}) sends X-Forwarded-For but is not in TRUSTED_PROXIES (${config.trustedProxies.join(", ")}). The server then sees every member under the proxy's address: the rate limits hit everybody together, and the log names nobody. Add the address in .env and run ${onPlatform("squorli up -d", "squorli restart server")}.`), `remote ${view.remoteAddress ?? "?"}`);
   }
   if (view.forwardedFor === null && view.remoteAddress && isInternalAddress(view.remoteAddress)) {
     return warn("request", T(
@@ -176,8 +183,8 @@ export class Doctor {
           `Das Zertifikat von ${domain} ist ungültig (${code}). Mit dem mitgelieferten Caddy müssen Port 80 und 443 von außen erreichbar sein und der DNS-Eintrag hierher zeigen, dann holt Caddy das Zertifikat selbst (squorli logs caddy). Mit eigenem Proxy: dessen Zertifikat für ${domain} prüfen.`,
           `The certificate of ${domain} is invalid (${code}). With the bundled Caddy, ports 80 and 443 have to be reachable from outside and the DNS record has to point here, then Caddy fetches the certificate itself (squorli logs caddy). With your own proxy: check its certificate for ${domain}.`), code);
         case "refused": return fail("self", T(
-          `Unter ${origin} lauscht nichts (Verbindung abgelehnt): der Proxy oder Caddy läuft nicht, oder Port 443 wird nicht an diesen Rechner weitergeleitet. squorli status zeigt die Container.`,
-          `Nothing listens at ${origin} (connection refused): the proxy or Caddy is not running, or port 443 is not forwarded to this machine. squorli status shows the containers.`), code);
+          `Unter ${origin} lauscht nichts (Verbindung abgelehnt): der Proxy oder Caddy läuft nicht, oder Port 443 wird nicht an diesen Rechner weitergeleitet. squorli status zeigt die ${onPlatform("Container", "Dienste")}.`,
+          `Nothing listens at ${origin} (connection refused): the proxy or Caddy is not running, or port 443 is not forwarded to this machine. squorli status shows the ${onPlatform("containers", "services")}.`), code);
         case "timeout": return warn("self", T(
           `${origin} antwortet nicht (Zeitüberschreitung). Entweder lässt eine Firewall Port 443 nicht durch, oder dieser Rechner erreicht seine eigene öffentliche Adresse nicht (Hairpin-NAT, häufig hinter einem Heimrouter). Dann zählt nur die Prüfung von außen oder die aus dem Browser.`,
           `${origin} does not answer (timeout). Either a firewall blocks port 443, or this machine cannot reach its own public address (hairpin NAT, common behind a home router). Then only the check from outside or the one from the browser counts.`), code);
@@ -187,8 +194,8 @@ export class Doctor {
     const body = await res.json().catch(() => null) as { serverKey?: unknown } | null;
     if (res.status >= 500) {
       return fail("self", T(
-        `Der Proxy unter ${domain} antwortet mit HTTP ${res.status}: er erreicht den App-Server nicht. Prüfe, wohin er weiterleitet (App-Server, Port 3000 im Container bzw. APP_PORT) und ob der Container läuft (squorli status).`,
-        `The proxy at ${domain} answers HTTP ${res.status}: it does not reach the app server. Check where it forwards to (the app server, port 3000 in the container or APP_PORT) and whether the container runs (squorli status).`), `status ${res.status}`);
+        `Der Proxy unter ${domain} antwortet mit HTTP ${res.status}: er erreicht den App-Server nicht. Prüfe, wohin er weiterleitet (${onPlatform("App-Server, Port 3000 im Container bzw. APP_PORT", "App-Server, APP_PORT")}) und ob ${onPlatform("der Container", "der Dienst SquorliServer")} läuft (squorli status).`,
+        `The proxy at ${domain} answers HTTP ${res.status}: it does not reach the app server. Check where it forwards to (${onPlatform("the app server, port 3000 in the container or APP_PORT", "the app server, APP_PORT")}) and whether ${onPlatform("the container", "the service SquorliServer")} runs (squorli status).`), `status ${res.status}`);
     }
     if (!res.ok || !body || typeof body.serverKey !== "string") {
       return fail("self", T(
@@ -222,8 +229,8 @@ export class Doctor {
       await res.body?.cancel().catch(() => {});
       if (res.status === 401) return ok("rtc", T(`Der Proxy leitet /rtc an LiveKit weiter (${url} antwortet 401, wie erwartet).`, `The proxy forwards /rtc to LiveKit (${url} answers 401, as expected).`));
       if (res.status >= 502 && res.status <= 504) return fail("rtc", T(
-        `Der Proxy erreicht LiveKit nicht (${url} antwortet HTTP ${res.status}): Ziel für /rtc muss LiveKit auf Port 7880 (LIVEKIT_HTTP_PORT) sein, und der Container livekit muss laufen.`,
-        `The proxy does not reach LiveKit (${url} answers HTTP ${res.status}): the target for /rtc has to be LiveKit on port 7880 (LIVEKIT_HTTP_PORT), and the livekit container has to run.`), `status ${res.status}`);
+        `Der Proxy erreicht LiveKit nicht (${url} antwortet HTTP ${res.status}): Ziel für /rtc muss LiveKit auf Port 7880 (LIVEKIT_HTTP_PORT) sein, und ${onPlatform("der Container livekit", "der Dienst SquorliLiveKit")} muss laufen.`,
+        `The proxy does not reach LiveKit (${url} answers HTTP ${res.status}): the target for /rtc has to be LiveKit on port 7880 (LIVEKIT_HTTP_PORT), and ${onPlatform("the livekit container", "the service SquorliLiveKit")} has to run.`), `status ${res.status}`);
       return fail("rtc", T(
         `Der Proxy leitet /rtc nicht an LiveKit weiter (${url} antwortet HTTP ${res.status} statt 401): Sprachkanäle verbinden so nicht („could not establish signal connection“). Route /rtc* zu LiveKit ergänzen, mit WebSocket-Upgrade (deploy/proxies/).`,
         `The proxy does not forward /rtc to LiveKit (${url} answers HTTP ${res.status} instead of 401): voice channels cannot connect this way ("could not establish signal connection"). Add the route /rtc* to LiveKit, with the WebSocket upgrade (deploy/proxies/).`), `status ${res.status}`);
@@ -238,11 +245,11 @@ export class Doctor {
     const url = this.config.LIVEKIT_URL;
     if (r.ok) return ok("livekit", T(`LiveKit antwortet intern (${url}) und nimmt den API-Schlüssel an.`, `LiveKit answers internally (${url}) and accepts the API key.`));
     if (r.kind === "auth") return fail("livekit", T(
-      `LiveKit lehnt den API-Schlüssel ab (${r.detail}): LIVEKIT_API_KEY und LIVEKIT_API_SECRET in der .env müssen zu LIVEKIT_KEYS des LiveKit-Containers passen. Nach einer Änderung beide Container neu starten (squorli up -d).`,
-      `LiveKit refuses the API key (${r.detail}): LIVEKIT_API_KEY and LIVEKIT_API_SECRET in .env have to match LIVEKIT_KEYS of the LiveKit container. After a change restart both containers (squorli up -d).`), r.detail);
+      `LiveKit lehnt den API-Schlüssel ab (${r.detail}): LIVEKIT_API_KEY und LIVEKIT_API_SECRET in der .env müssen zu ${onPlatform("LIVEKIT_KEYS des LiveKit-Containers", "keys in config\\livekit.yaml")} passen. Nach einer Änderung ${onPlatform("beide Container neu starten (squorli up -d)", "beide Dienste neu starten (squorli restart)")}.`,
+      `LiveKit refuses the API key (${r.detail}): LIVEKIT_API_KEY and LIVEKIT_API_SECRET in .env have to match ${onPlatform("LIVEKIT_KEYS of the LiveKit container", "keys in config\\livekit.yaml")}. After a change restart ${onPlatform("both containers (squorli up -d)", "both services (squorli restart)")}.`), r.detail);
     return fail("livekit", T(
-      `LiveKit antwortet nicht unter ${url} (${r.detail}): Container livekit prüfen (squorli status, squorli logs livekit).`,
-      `LiveKit does not answer at ${url} (${r.detail}): check the livekit container (squorli status, squorli logs livekit).`), r.detail);
+      `LiveKit antwortet nicht unter ${url} (${r.detail}): ${onPlatform("Container livekit", "Dienst SquorliLiveKit")} prüfen (squorli status, squorli logs livekit).`,
+      `LiveKit does not answer at ${url} (${r.detail}): check the ${onPlatform("livekit container", "service SquorliLiveKit")} (squorli status, squorli logs livekit).`), r.detail);
   }
 
   /** The TCP media port from this process; the result from the machine's own address is only a hint (hairpin NAT). */
@@ -281,8 +288,8 @@ export class Doctor {
     const detail = p ? [p.status ? `status ${p.status}` : null, p.error, p.detail].filter(Boolean).join(", ") : null;
     if (!p || p.kind === "unreachable") {
       return { registered: false, check: fail("directory", T(
-        `Das Verzeichnis ${url} ist von diesem Server aus nicht erreichbar (${p?.detail ?? "?"}). Ausgehendes HTTPS und DNS im Container prüfen.`,
-        `The directory ${url} is not reachable from this server (${p?.detail ?? "?"}). Check outgoing HTTPS and DNS in the container.`), detail) };
+        `Das Verzeichnis ${url} ist von diesem Server aus nicht erreichbar (${p?.detail ?? "?"}). Ausgehendes HTTPS und DNS ${onPlatform("im Container", "dieses Rechners")} prüfen.`,
+        `The directory ${url} is not reachable from this server (${p?.detail ?? "?"}). Check outgoing HTTPS and DNS ${onPlatform("in the container", "of this machine")}.`), detail) };
     }
     if (p.kind === "challenge") {
       return { registered: false, check: fail("directory", T(

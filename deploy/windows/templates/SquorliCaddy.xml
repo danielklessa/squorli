@@ -1,0 +1,30 @@
+<!--
+  Caddy as a Windows service, bundled mode only (WinSW 2.12, element names of version 2; see SquorliServer.xml).
+  Certificates and state live in the folder caddy of the data folder (Caddy puts a folder "caddy" below XDG_DATA_HOME).
+-->
+<service>
+  <id>SquorliCaddy</id>
+  <name>Squorli Caddy</name>
+  <description>Squorli: HTTPS on ports 80 and 443 with a Let's Encrypt certificate (Caddy).</description>
+  <executable>{{INSTALL_DIR}}\caddy\caddy.exe</executable>
+  <arguments>run --config "{{DATA_DIR}}\config\Caddyfile" --adapter caddyfile</arguments>
+  <workingdirectory>{{INSTALL_DIR}}\caddy</workingdirectory>
+  <env name="XDG_DATA_HOME" value="{{DATA_DIR}}\caddy"/>
+  <env name="XDG_CONFIG_HOME" value="{{DATA_DIR}}\caddy"/>
+  <startmode>Automatic</startmode>
+  <depend>SquorliServer</depend>
+  <stoptimeout>15 sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="15 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>{{DATA_DIR}}\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+  </serviceaccount>
+</service>

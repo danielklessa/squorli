@@ -3,6 +3,12 @@ import { z } from "zod";
 const Env = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(3000),
+  /**
+   * Address the server listens on. Default: every interface, which a container needs (its port is only reachable through
+   * Docker's network). An installation without Docker (deploy/windows/) sets 127.0.0.1 when the proxy runs on the same
+   * machine, so that only the proxy reaches the port, or the machine's LAN/VPN address for a proxy on another one.
+   */
+  LISTEN_HOST: z.string().min(1).default("0.0.0.0"),
   PUBLIC_DOMAIN: z.string().min(1),
   DATABASE_URL: z.string().url(),
   PROXY_MODE: z.enum(["bundled", "external"]).default("bundled"),
@@ -80,6 +86,13 @@ const Env = z.object({
   LOG_REQUESTS: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").default("false"),
   /** Scales every rate limit (rateLimits.ts, docs/features/rate-limits.md): 2 = twice as many requests, 0 = no limits (load tests only). */
   RATE_LIMIT_FACTOR: z.coerce.number().min(0).default(1),
+  /**
+   * Who may read the setup check without a session (`squorli doctor`, docs/features/doctor.md). Empty (Docker): a request
+   * from loopback without a forwarding header, which only `docker compose exec` can send. Set (an installation without
+   * containers, deploy/windows/): whoever sends this value in the header x-squorli-doctor; loopback proves nothing there,
+   * a proxy on the same machine arrives from 127.0.0.1 too. The setup for Windows makes one.
+   */
+  DOCTOR_TOKEN: z.string().min(32).max(256).optional(),
   /**
    * For tests only: one origin (e.g. http://127.0.0.1:3198) the preview fetcher may reach although it is not public, so the
    * smoke test can play the linked website. Never set it on a real server: it opens that address to every member.

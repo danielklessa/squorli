@@ -3,7 +3,7 @@
 # Host ports: APP_PORT (default 3000) and LIVEKIT_HTTP_PORT (default 7880) in .env.
 #   docker compose --env-file ../.env -f compose.yml -f proxies/nginx.ports.yml --profile external up -d
 services:
-  app:
+  server:
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
   livekit:

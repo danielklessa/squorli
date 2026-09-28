@@ -1,11 +1,11 @@
 # Caddy as an existing reverse proxy (PROXY_MODE=external), for a Caddy you already run for other sites.
 # Without one, prefer PROXY_MODE=bundled: the stack brings its own Caddy (deploy/caddy/Caddyfile).
 #
-# Prerequisite: app:3000 and livekit:7880 are reachable for Caddy.
+# Prerequisite: server:3000 and livekit:7880 are reachable for Caddy.
 #   - Caddy on the host:    docker compose --env-file ../.env -f compose.yml -f proxies/nginx.ports.yml --profile external up -d
 #                           (publishes both ports only on 127.0.0.1)
 #   - Caddy in a container: attach it to the network "squorli_internal" and below
-#                           replace 127.0.0.1:3000 -> app:3000, 127.0.0.1:7880 -> livekit:7880.
+#                           replace 127.0.0.1:3000 -> server:3000, 127.0.0.1:7880 -> livekit:7880.
 # Copy the site block into your Caddyfile, replace chat.example.org, `caddy reload`. Caddy gets the certificate itself,
 # redirects HTTP to HTTPS, passes WebSocket upgrades and sets X-Forwarded-For/-Proto; no body size limit by default.
 #

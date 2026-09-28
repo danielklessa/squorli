@@ -5,7 +5,7 @@
 #   then ABSOLUTELY restrict via firewall to the IP of the proxy host. Both ports speak HTTP only.
 #   docker compose --env-file ../.env -f compose.yml -f proxies/remote-proxy.ports.yml --profile external up -d
 services:
-  app:
+  server:
     ports:
       - "${PROXY_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3000"
   livekit:

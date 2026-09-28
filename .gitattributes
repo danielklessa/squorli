@@ -1,0 +1,5 @@
+# cmd.exe needs CRLF in a batch file, whatever core.autocrlf says (deploy/windows/squorli.cmd; the build checks it)
+*.cmd text eol=crlf
+# A backup as it was written, byte for byte (deploy/windows/test/linux-backup/README.md)
+deploy/windows/test/linux-backup/squorli-database.sql -text
+deploy/windows/test/linux-backup/squorli-files.tar.gz binary

@@ -1,0 +1,49 @@
+{
+  "node": {
+    "name": "Node.js",
+    "version": "24.21.0",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+    "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+    "license": "MIT",
+    "source": "https://nodejs.org",
+    "includes": "V8, libuv, OpenSSL, ICU, zlib and others, each under its own license (listed in the license file)"
+  },
+  "postgresql": {
+    "name": "PostgreSQL",
+    "version": "16.15",
+    "build": "16.15-4",
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-16.15-4-windows-x64-binaries.zip",
+    "sha256": "f5f55b03bd54ce0dd1c51d524b54c7e015abd4d620af27d6971288a2dbe4a8f8",
+    "license": "PostgreSQL",
+    "source": "https://www.postgresql.org",
+    "includes": "OpenSSL (Apache-2.0), ICU (ICU License), zlib (Zlib), libxml2 and libxslt (MIT), LZ4 (BSD-2-Clause), Zstandard (BSD-3-Clause), gettext libintl, libiconv and winpthreads (LGPL-2.1, as separate DLLs)"
+  },
+  "livekit": {
+    "name": "LiveKit Server",
+    "version": "1.13.7",
+    "url": "https://github.com/livekit/livekit/releases/download/v1.13.7/livekit_1.13.7_windows_amd64.zip",
+    "sha256": "e539e7d2f75807b9c9202cd2a0bf2cb3d52fc4c52978a6953e0f47bc339fe77f",
+    "license": "Apache-2.0",
+    "source": "https://github.com/livekit/livekit",
+    "includes": "Go modules compiled into the program, each under its own license"
+  },
+  "caddy": {
+    "name": "Caddy",
+    "version": "2.11.4",
+    "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_windows_amd64.zip",
+    "sha256": "1708333f79e274c7697285afe6d592ab39314e0b131e9ec6bea08ad27df62ebf",
+    "license": "Apache-2.0",
+    "source": "https://github.com/caddyserver/caddy",
+    "includes": "Go modules compiled into the program, each under its own license"
+  },
+  "winsw": {
+    "name": "WinSW (Windows Service Wrapper)",
+    "version": "2.12.0",
+    "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe",
+    "sha256": "b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f",
+    "licenseUrl": "https://raw.githubusercontent.com/winsw/winsw/v2.12.0/LICENSE.txt",
+    "licenseSha256": "1cdf703c10a70e5973bf3acf2a5eeabe7746237155b92db2034aeae26fdf7802",
+    "license": "MIT",
+    "source": "https://github.com/winsw/winsw"
+  }
+}

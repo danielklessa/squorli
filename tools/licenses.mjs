@@ -11,6 +11,9 @@
  *   THIRD-PARTY-NOTICES.md                the same for readers of the repository and of the container image
  * The walk lists every package that can end up in the bundle (a superset: a package the bundler drops is listed anyway).
  * The server's packages keep their own license files in node_modules of the image and are not part of this.
+ * The programs that ship in the package for Windows (deploy/windows/versions.json: Node.js, PostgreSQL, LiveKit, Caddy,
+ * WinSW) get a table of their own in THIRD-PARTY-NOTICES.md; their license texts come out of the downloads when the
+ * package is built (deploy/windows/build-package.ps1) and travel in its folder `licenses`.
  * Runs in `pnpm build` and via `pnpm run licenses` (`pnpm licenses` is pnpm's own command); fails when a package states no license.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
@@ -39,6 +42,8 @@ const MODELS = [
  * LICENSES.chromium.html next to the program.
  */
 const desktopDir = join(root, "apps", "desktop");
+/** Programs shipped next to the server in the package for Windows, with the version that is pinned there. */
+const PROGRAMS = Object.values(JSON.parse(readFileSync(join(root, "deploy", "windows", "versions.json"), "utf8")));
 const DESKTOP_ROOTS = ["electron-updater", "@squorli/protocol", "@squorli/link-preview"];
 
 /** Directory of `name` as seen from the package in `fromDir` (Node's lookup, which also follows pnpm's layout). */
@@ -133,6 +138,16 @@ writeFileSync(join(root, "THIRD-PARTY-NOTICES.md"), [
   "|---|---|---|---|",
   ...packages.map((p) => `| ${p.name}${p.note ? ` (${p.note})` : ""} | ${p.version} | ${p.license} | ${p.url} |`),
   "",
+  "## Programs in the package for Windows",
+  "",
+  "The package for Windows (`squorli-server-<version>-windows-x64.zip`) ships these programs unmodified next to the app",
+  "server, which the Docker installation gets as container images. Their license texts, as their publishers ship them,",
+  "are in the package's folder `licenses`, one folder per program.",
+  "",
+  "| Program | Version | License | Source | Includes |",
+  "|---|---|---|---|---|",
+  ...PROGRAMS.map((p) => `| ${p.name} | ${p.build ?? p.version} | ${p.license} | ${p.source} | ${p.includes ?? ""} |`),
+  "",
   ...texts.flatMap((text, i) => [
     `## License text ${i + 1}`,
     "",
@@ -146,4 +161,4 @@ writeFileSync(join(root, "THIRD-PARTY-NOTICES.md"), [
 ].join("\n"));
 
 const missing = packages.filter((p) => p.text < 0).map((p) => p.name);
-console.log(`[licenses] ${packages.length} Pakete, ${texts.length} Lizenztexte${missing.length ? `; ohne Lizenzdatei (nur SPDX-Angabe): ${missing.join(", ")}` : ""}`);
+console.log(`[licenses] ${packages.length} Pakete, ${texts.length} Lizenztexte, ${PROGRAMS.length} Programme im Windows-Paket${missing.length ? `; ohne Lizenzdatei (nur SPDX-Angabe): ${missing.join(", ")}` : ""}`);

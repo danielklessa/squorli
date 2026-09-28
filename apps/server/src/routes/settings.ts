@@ -3,7 +3,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireMember } from "../auth/session";
@@ -17,6 +17,7 @@ import { SETTINGS_ID, broadcastStructure, loadSettings, loadState } from "../sta
 import { syncVoiceAccessOf } from "../livekit/sync";
 import { visibility } from "../visibility";
 import { compact } from "../util";
+import { replaceFile } from "../replaceFile";
 import type { DirectoryClient } from "../directory";
 import type { VoicePresence } from "../voice/presence";
 import type { Suspensions } from "../users/suspension";
@@ -142,7 +143,7 @@ export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: 
       const tooLarge = err instanceof Error && (err.message === "too_large" || (err as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE");
       return reply.code(tooLarge ? 413 : 500).send({ error: tooLarge ? "too_large" : "upload_failed", maxMb: 2 });
     }
-    await rename(tmp, iconPath);
+    await replaceFile(tmp, iconPath);
     await db.update(serverSettings).set({ iconMime: part.mimetype, iconUpdatedAt: new Date() }).where(eq(serverSettings.id, SETTINGS_ID));
     await broadcastStructure(db, hub, ["settings"]);
     req.log.info({ by: m.userId, type: part.mimetype }, "Server-Icon gesetzt");

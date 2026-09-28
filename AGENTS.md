@@ -20,6 +20,7 @@ Read the file of every area a task touches before changing it. Agents that load 
 | Link lookup `packages/link-preview/` (node only; also copied to the directory repo) | `packages/link-preview/AGENTS.md` | the address rules against requests to private networks, the guarded GET, reading a page's head, YouTube's oEmbed; security rules for changes |
 | Protocol `packages/protocol/` | `packages/protocol/AGENTS.md` | files, `PROTOCOL_VERSION` rule, adding and ordering permissions, key backup |
 | `deploy/`, `Dockerfile`, `.dockerignore`, CI | `deploy/AGENTS.md` | Compose files, published image, standard installation, image/Compose pitfalls, LiveKit connectivity |
+| The package for Windows without Docker `deploy/windows/` | `deploy/windows/AGENTS.md` | the pinned programs (`versions.json`), the package build, the templates of the services and configurations, what the package holds, pitfalls (pnpm deploy, WinSW, LiveKit on Windows, PowerShell 5.1) |
 | `tools/` | `tools/AGENTS.md` | dev wrapper, generators, load-test bots |
 | Brand and design | `docs/brand/AGENTS.md` | binding design rules (mirrored to the sibling repos, section 1) |
 
@@ -54,6 +55,7 @@ Feature notes (dated entries: wishes, decisions, consequences, what was checked)
 | Proxy tests (27 September 2026): `deploy/proxies/test/run.sh` starts the production stack behind a real nginx, Traefik and Caddy and checks health, redirect, `/rtc`, the WebSocket upgrade, the client's address, an upload of `MAX_UPLOAD_MB` and `squorli doctor` through each; CI job `proxies`; `Caddyfile.external` for an existing Caddy | `docs/features/proxy-tests.md` |
 | Logging (27 September 2026): what each container logs, no request log and no addresses by default (`LOG_REQUESTS` for troubleshooting, `LOG_LEVEL`), the three security lines with an IP, LiveKit at `warn`, Docker log rotation 3 × 10 MB per container (`x-logging`), journald for a time limit | `docs/features/logging.md` |
 | Rate limits (25 September 2026): one `onRequest` hook counts per IP and per session token before any route (sign-in, WebSocket, invites, status API, the directory's pushes, writes, messages, uploads), 429 `rate_limited` with `Retry-After`, events per WebSocket (close 4008), `RATE_LIMIT_FACTOR` | `docs/features/rate-limits.md` |
+| The server on Windows without Docker (28 September 2026, in phases; open ones in `docs/PLAN-windows.md`): what the server's code needed (replacing a file that is being read, stopping on a signal, `LISTEN_HOST`, the path check of the static files, the CI job `windows`), the package and its build (`deploy/windows/`), the setup and the `squorli` command, the decisions about the service wrapper (WinSW), PostgreSQL in the package, the cluster's locale, the PATH and the update | `docs/features/windows.md` |
 | A signed-in server that does not answer (26 September 2026): only a refusal (4xx) of the stored session leads to the login; a server that does not answer shows a notice with retries (15 s, then 30 s for the 2nd to 5th try, then a minute each, ten in all, then a pause until the user presses, then five a minute apart, at once when online again or on "Erneut versuchen"), the own server as `ServerOffline`, a foreign one in `ServerStatus` without the join view; `/api/health` and `/api/me` give up after 10 s / 15 s; `ServerConnState.waiting`, `serverRetry.ts` | `docs/features/offline.md` |
 
 History: `docs/VERIFIED-STATE.md` (what was run and checked per change, newest first; add an entry after every complete test run) and `docs/MILESTONE-LOG.md` (one row per change, newest first). Product plan: `docs/PLAN.md`. Developer guide: `docs/DEVELOPMENT.md`.
@@ -87,6 +89,7 @@ apps/desktop/          Desktop app (M4): Electron shell that serves apps/web/dis
 packages/link-preview/ @squorli/link-preview: looking a link up on behalf of a user (SSRF rules, guarded fetch, page head parser). Used by the server, the desktop app and, as a copy, the directory. -> packages/link-preview/AGENTS.md
 packages/protocol/     @squorli/protocol: zod schemas for REST and WebSocket, PROTOCOL_VERSION. Single source of truth for the client/server contract. -> packages/protocol/AGENTS.md
 deploy/                Compose files (prod, dev, Portainer), Caddy, LiveKit config, proxy overlays. -> deploy/AGENTS.md
+deploy/windows/        The package for Windows without Docker: pinned programs, package build, templates. -> deploy/windows/AGENTS.md
 tools/                 Dev start with cleanup, generators (icons, emoji, licenses), copy-web, load-test bots. -> tools/AGENTS.md
 docs/PLAN.md           Project plan (guidelines, risks, ranked open work, test campaign, open decisions)
 docs/DEVELOPMENT.md    Developer guide (setup, simulating restrictive networks)

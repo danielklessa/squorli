@@ -15,7 +15,7 @@ x-logging: &logging
   options: { max-size: "10m", max-file: "3" }
 
 services:
-  app:
+  server:
     image: ${APP_IMAGE:-ghcr.io/danielklessa/squorli-server:latest}
     restart: unless-stopped
     logging: *logging
@@ -46,7 +46,9 @@ services:
       - "${PROXY_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3000"   # proxy: https://PUBLIC_DOMAIN -> http://<host>:3000 (with WebSocket)
     depends_on:
       postgres: { condition: service_healthy }
-    networks: [internal]
+    networks:
+      # Named app until 28 September 2026: a proxy that points to app:3000 keeps reaching it under that name.
+      internal: { aliases: [app] }
 
   postgres:
     image: postgres:16-alpine

@@ -56,6 +56,20 @@ files, in `node_modules` of the container image.
 | webrtc-adapter | 9.0.6 | BSD-3-Clause | https://github.com/webrtchacks/adapter |
 | zod | 3.25.76 | MIT | https://zod.dev |
 
+## Programs in the package for Windows
+
+The package for Windows (`squorli-server-<version>-windows-x64.zip`) ships these programs unmodified next to the app
+server, which the Docker installation gets as container images. Their license texts, as their publishers ship them,
+are in the package's folder `licenses`, one folder per program.
+
+| Program | Version | License | Source | Includes |
+|---|---|---|---|---|
+| Node.js | 24.21.0 | MIT | https://nodejs.org | V8, libuv, OpenSSL, ICU, zlib and others, each under its own license (listed in the license file) |
+| PostgreSQL | 16.15-4 | PostgreSQL | https://www.postgresql.org | OpenSSL (Apache-2.0), ICU (ICU License), zlib (Zlib), libxml2 and libxslt (MIT), LZ4 (BSD-2-Clause), Zstandard (BSD-3-Clause), gettext libintl, libiconv and winpthreads (LGPL-2.1, as separate DLLs) |
+| LiveKit Server | 1.13.7 | Apache-2.0 | https://github.com/livekit/livekit | Go modules compiled into the program, each under its own license |
+| Caddy | 2.11.4 | Apache-2.0 | https://github.com/caddyserver/caddy | Go modules compiled into the program, each under its own license |
+| WinSW (Windows Service Wrapper) | 2.12.0 | MIT | https://github.com/winsw/winsw |  |
+
 ## License text 1
 
 Applies to: @bufbuild/protobuf 1.10.1, @mediapipe/tasks-vision 0.10.14, MediaPipe Selfie Segmenter (model) float16, 2023-05-07

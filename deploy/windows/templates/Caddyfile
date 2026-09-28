@@ -1,0 +1,22 @@
+# Bundled mode on Windows: Caddy obtains a Let's Encrypt certificate for the domain by itself.
+# The same site as deploy/caddy/Caddyfile, with the services of this machine instead of container names.
+# install.ps1 fills the {{...}} places. TURN over 443 is not covered (docs/PLAN.md).
+{
+  # No admin endpoint: on 127.0.0.1:2019 every user of the machine could change this configuration.
+  # After a change of this file restart the service (squorli restart caddy).
+  admin off
+}
+
+{{PUBLIC_DOMAIN}} {
+  encode zstd gzip
+
+  # LiveKit signaling (WebSocket) and validation
+  handle /rtc* {
+    reverse_proxy 127.0.0.1:{{LIVEKIT_HTTP_PORT}}
+  }
+
+  # Everything else: app server (API, WebSocket, static web client)
+  handle {
+    reverse_proxy 127.0.0.1:{{APP_PORT}}
+  }
+}

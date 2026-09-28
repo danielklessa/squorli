@@ -17,7 +17,7 @@ x-logging: &logging
   options: { max-size: "10m", max-file: "3" }
 
 services:
-  app:
+  server:
     build: { context: .., dockerfile: Dockerfile, target: app }
     image: ${APP_IMAGE:-squorli/app:local}
     restart: unless-stopped
@@ -39,7 +39,9 @@ services:
     volumes: [appdata:/app/data]   # attachments, pictures of link previews
     depends_on:
       postgres: { condition: service_healthy }
-    networks: [internal]
+    networks:
+      # Named app until 28 September 2026: a proxy that points to app:3000 keeps reaching it under that name.
+      internal: { aliases: [app] }
     profiles: [bundled, external]
 
   postgres:

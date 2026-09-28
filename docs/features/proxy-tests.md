@@ -13,7 +13,7 @@ The user asked for it as the first item of `docs/PLAN.md` 2.1 ("Lass uns erst Pu
 1. Builds the Dockerfile's target `app` as `squorli/app:proxytest`, or tests `APP_IMAGE`.
 2. Lays out an installation directory like `/opt/squorli` in a temp folder: the production `compose.yml`, `livekit.yaml`, the proxy files, a `.env` from `.env.example` with `PUBLIC_DOMAIN=chat.test`, `PROXY_MODE=external`, the media ports on 17881/17882 (so a running development LiveKit is not in the way) and no directory.
 3. Makes a test CA and a certificate for `chat.test`.
-4. Adapts each proxy's configuration only the way its header comment tells an operator to (domain, certificate, `127.0.0.1:3000` → `app:3000` for a proxy in a container); Traefik uses `traefik.labels.yml` unchanged apart from the host rule and the certificate (a default certificate instead of the Let's Encrypt resolver).
+4. Adapts each proxy's configuration only the way its header comment tells an operator to (domain, certificate, `127.0.0.1:3000` → `server:3000` for a proxy in a container); Traefik uses `traefik.labels.yml` unchanged apart from the host rule and the certificate (a default certificate instead of the Let's Encrypt resolver).
 5. Starts stack and proxy (the proxy carries the network alias `chat.test`, so the app's own requests to its public address go through it) and a curl container as the browser, then checks through the proxy:
    - `https://chat.test/api/health` answers with `proxyMode: external`;
    - `http://` redirects to `https://` (nginx, Caddy; Traefik's redirect is the operator's entrypoint, not ours);
@@ -32,7 +32,7 @@ The user asked for it as the first item of `docs/PLAN.md` 2.1 ("Lass uns erst Pu
 
 ### Caddy as an existing proxy
 
-`deploy/proxies/Caddyfile.external`: a site block for a Caddy that already serves other sites (`reverse_proxy /rtc* 127.0.0.1:7880`, `reverse_proxy 127.0.0.1:3000`), with `nginx.ports.yml`; in a container the targets become `app`/`livekit`. Caddy brings certificate, redirect, WebSocket and `X-Forwarded-For` by itself. The installer downloads it with the other proxy files.
+`deploy/proxies/Caddyfile.external`: a site block for a Caddy that already serves other sites (`reverse_proxy /rtc* 127.0.0.1:7880`, `reverse_proxy 127.0.0.1:3000`), with `nginx.ports.yml`; in a container the targets become `server`/`livekit`. Caddy brings certificate, redirect, WebSocket and `X-Forwarded-For` by itself. The installer downloads it with the other proxy files.
 
 ### Decisions made by Claude, confirmed by the user on 27 September 2026
 

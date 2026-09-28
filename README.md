@@ -25,13 +25,13 @@ Third-party software, fonts and data inside the client are listed with their lic
 
 ## Requirements
 
-- A Linux host with Docker and Docker Compose (v2).
+- A Linux host with Docker and Docker Compose (v2), or a Windows machine for the [package without Docker](#windows-without-docker).
 - A domain that points to the host, for example `chat.example.org`. Browsers only release microphone and camera over HTTPS.
 - Open ports: `443/tcp` (only if the bundled Caddy terminates TLS), `7881/tcp` and `7882/udp` (media, open to everyone).
 - Roughly 1 GB RAM for the app server, Postgres and LiveKit together; more with many simultaneous video streams.
 - For video: upload bandwidth at the server. LiveKit forwards every camera to every viewer without transcoding, so the upload grows with cameras times viewers: a full channel of 15 cameras watched by 15 people needs roughly 60 Mbit/s upload and 20 Mbit/s download (projected from a local measurement of 4.1 Mbit/s per viewer of 15 tiles; LiveKit took about 9 % of one CPU core and 135 MB of memory for 15 cameras and one viewer). For large video channels rent a server or VPS; a home connection is usually too weak.
 
-The stack consists of the app server (this repository, including the web client), Postgres and [LiveKit](https://livekit.io) as media server. Everything runs from `deploy/compose.yml`.
+The stack consists of the app server (this repository, including the web client), Postgres and [LiveKit](https://livekit.io) as media server. Everything runs from `deploy/compose.yml`; on Windows the same programs run as services.
 
 ## Interactive installer
 
@@ -42,9 +42,48 @@ curl -fsSL https://raw.githubusercontent.com/danielklessa/squorli-server/main/de
 sudo bash install.sh
 ```
 
-It asks for the domain, the server name, who terminates HTTPS (the bundled Caddy, a reverse proxy on the same host, or one on another host), the ports (it finds ports another service already uses and suggests free ones; the bundled Caddy always needs 80 and 443), the directory, the owner's public key and the public IP for media; installs Docker through get.docker.com if it is missing (after asking); downloads the deploy files into `/opt/squorli` (`SQUORLI_DIR` changes that); writes `.env` with fresh secrets (readable by root only); offers to open the ports in an active ufw or firewalld; pulls, starts and checks the stack. It also writes `/opt/squorli/squorli` (linked as `squorli` into `/usr/local/bin`), which runs Docker Compose with the right profile and overlays: `squorli update`, `squorli status`, `squorli logs app`, `squorli backup` (database dump, attachments and `.env` into `/opt/squorli/backups`), `squorli restore <folder>` (puts such a backup back: stops the app, replaces database and files, starts again; `.env` stays; to move hosts, install on the new one first, then restore), `squorli doctor` (checks what goes wrong most often: domain and certificate, the WebSocket upgrade and `/rtc` through the proxy, LiveKit's key, the TCP media port, the directory; a directory repeats the checks from outside; the same check with a real media connection from the browser is in Verwaltung > Server), and any other Compose command.
+It asks for the domain, the server name, who terminates HTTPS (the bundled Caddy, a reverse proxy on the same host, or one on another host), the ports (it finds ports another service already uses and suggests free ones; the bundled Caddy always needs 80 and 443), the directory, the owner's public key and the public IP for media; installs Docker through get.docker.com if it is missing (after asking); downloads the deploy files into `/opt/squorli` (`SQUORLI_DIR` changes that); writes `.env` with fresh secrets (readable by root only); offers to open the ports in an active ufw or firewalld; pulls, starts and checks the stack. It also writes `/opt/squorli/squorli` (linked as `squorli` into `/usr/local/bin`), which runs Docker Compose with the right profile and overlays: `squorli update`, `squorli status`, `squorli logs server`, `squorli backup` (database dump, attachments and `.env` into `/opt/squorli/backups`), `squorli restore <folder>` (puts such a backup back: stops the app, replaces database and files, starts again; `.env` stays; to move hosts, install on the new one first, then restore), `squorli doctor` (checks what goes wrong most often: domain and certificate, the WebSocket upgrade and `/rtc` through the proxy, LiveKit's key, the TCP media port, the directory; a directory repeats the checks from outside; the same check with a real media connection from the browser is in Verwaltung > Server), and any other Compose command.
 
 Running the installer again on an existing installation updates it (new image and deploy files; changed files are kept as `.bak`) or changes its settings; the secrets, the database and the files stay. The published image exists for x86_64 only; on ARM build from source.
+
+## Windows without Docker
+
+For a Windows machine there is a package that needs no Docker: the app server with its own Node.js, PostgreSQL, LiveKit and Caddy as Windows services. It is a ZIP of about 115 MB, attached to every [release of Squorli Server](https://github.com/danielklessa/squorli-server/releases) as `squorli-server-<version>-windows-x64.zip` with a `.sha256` file.
+
+**Requirements:** Windows 10 from 22H2, Windows 11 (Home too) or Windows Server 2019, 2022 or 2025, 64 bit (x64); an administrator; 2 GB of free disk space; domain, ports and bandwidth as [above](#requirements). Windows PowerShell 5.1 is part of Windows. The setup installs Microsoft's Visual C++ runtime when it is missing (after asking). A PC works as a server, with limits you should know: Windows Update restarts it, a PC in standby answers nobody (the setup offers to switch standby off), and the upload of a home connection is small for video; behind a router you forward the ports and need dynamic DNS when the public address changes.
+
+Download both files into one folder, then in a PowerShell opened as administrator:
+
+```powershell
+$zip = Get-Item .\squorli-server-*-windows-x64.zip
+# The two lines must be the same
+(Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+(Get-Content "$zip.sha256").Split(' ')[0]
+Unblock-File $zip
+& "$env:SystemRoot\System32\tar.exe" -xf $zip
+cd $zip.BaseName
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.ps1` asks what `deploy/install.sh` asks, in German or English (domain, server name, who takes care of HTTPS, the ports, the directory, the owner, the public IP), and what Windows adds: the two folders, the Windows firewall, standby on a PC. It copies the programs to `C:\Program Files\Squorli`, writes `C:\ProgramData\Squorli\.env` with fresh secrets (readable by administrators and the app server's service only), creates the database, registers the services `SquorliPostgres`, `SquorliLiveKit`, `SquorliServer` and, with the bundled Caddy, `SquorliCaddy` (automatic start, each under an account of its own, restarted after a crash), opens the media ports in the firewall after asking, starts and checks everything. `-Unattended` takes every answer from a parameter (`Get-Help .\install.ps1 -Detailed`).
+
+Afterwards, in a newly opened window as administrator:
+
+| Command | What it does |
+|---|---|
+| `squorli status` | the services and whether the server answers |
+| `squorli logs [service] [-Follow]` | the last lines of the logs (`server`, `postgres`, `livekit`, `caddy`) |
+| `squorli restart [service]`, `stop`, `start` | with the services that depend on the one named |
+| `squorli backup [folder]` | database, files and `.env` into `C:\ProgramData\Squorli\backups\<time>` |
+| `squorli restore <folder>` | puts a backup back (asks first); also one a Linux installation wrote, which is how a server moves from Linux to Windows |
+| `squorli update` | the newest release from GitHub: checks the SHA-256, backs up, installs; when the new version does not start, the program files of before come back. Migrations of the database are not undone by that: the backup is what brings the old state back |
+| `squorli doctor` | the setup check, as on Linux |
+
+Change settings: run `C:\Program Files\Squorli\install.ps1` again. Remove: `C:\Program Files\Squorli\uninstall.ps1`; the data folder stays unless you type "delete".
+
+With a web server on the machine already (IIS holds 80 and 443 on many Windows Servers), choose "a reverse proxy on this machine": templates for nginx, Caddy and IIS (URL Rewrite and Application Request Routing) are in `C:\Program Files\Squorli\proxies`.
+
+**State (28 September 2026):** installed and run on Windows 11 Pro with a proxy on the same machine and on `localhost`: setup, services, voice, a restart of the machine, backup and restore (also of a Linux backup), update, removal. Not run yet: the bundled Caddy with a real certificate, IIS in front, Windows 10 and Windows Server. The programs in the package are not signed; Windows may ask before it runs them. Details: [docs/features/windows.md](docs/features/windows.md).
 
 ## Quick start with the published image
 
@@ -110,6 +149,8 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 | `PROXY_BIND_IP` | External mode with the proxy on another host: address on which 3000 and 7880 listen |
 | `LIVEKIT_TCP_PORT` / `LIVEKIT_UDP_PORT` | Media ports on the host (default 7881 / 7882), when another service already uses them; LiveKit announces them to the clients, so forward the same numbers |
 | `APP_PORT` / `LIVEKIT_HTTP_PORT` | External mode with a port overlay: host ports the proxy forwards to (default 3000 / 7880) |
+| `LISTEN_HOST` | Without Docker only (the Windows package sets it): the address the app server listens on, `127.0.0.1` for a proxy on the same machine. Leave it unset with Docker Compose |
+| `DOCTOR_TOKEN` | Without Docker only (the Windows package makes one): what `squorli doctor` sends to read the setup check without a session. Leave it unset with Docker Compose |
 
 Voice quality (Opus bitrate, stereo) is configured per voice channel in the admin panel.
 
@@ -145,7 +186,7 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 
 1. Back up the database, attachments and configuration.
 2. Review the release notes.
-3. Repeat `pull` and `up -d --no-build` with the same profile and overlays (after the interactive installer: `squorli backup`, then `squorli update`).
+3. Repeat `pull` and `up -d --no-build` with the same profile and overlays (after the interactive installer: `squorli backup`, then `squorli update`). On Windows: `squorli update`, which backs up first.
 
 `latest` is mutable; for reproducible deployments set `APP_IMAGE` to a version tag or `ghcr.io/danielklessa/squorli-server@sha256:<digest>` and keep the repository checkout aligned with that release. Startup runs database migrations; an image rollback does not reverse them.
 

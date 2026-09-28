@@ -30,6 +30,8 @@ test:
     - pnpm config set store-dir $CI_PROJECT_DIR/.pnpm-store
     - pnpm install --frozen-lockfile
   script:
+    # The package for Windows pins the versions the Compose files and .nvmrc name (deploy/windows/AGENTS.md).
+    - node deploy/windows/check-versions.mjs
     - pnpm typecheck
     - pnpm test
     - pnpm build

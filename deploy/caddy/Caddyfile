@@ -10,6 +10,6 @@
 
   # Everything else: app server (API, WebSocket, static web client)
   handle {
-    reverse_proxy app:3000
+    reverse_proxy server:3000
   }
 }

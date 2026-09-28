@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { classifyFailure, errorCode, requestCheck } from "./doctor";
+import { classifyFailure, errorCode, onPlatform, requestCheck } from "./doctor";
+
+describe("onPlatform", () => {
+  it("words a text for containers, and for services on Windows", () => {
+    expect(onPlatform("container", "service", "linux")).toBe("container");
+    expect(onPlatform("container", "service", "win32")).toBe("service");
+    expect(onPlatform("container", "service")).toBe(process.platform === "win32" ? "service" : "container");
+  });
+});
 
 describe("classifyFailure", () => {
   it("sorts the codes an operator meets", () => {

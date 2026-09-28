@@ -1,0 +1,36 @@
+<!--
+  Squorli app server as a Windows service. WinSW 2.12: element names of version 2 (the documentation of the default
+  branch describes version 3, whose names this version ignores without a word).
+  install.ps1 puts a copy of WinSW.exe next to this file as SquorliServer.exe and fills the places in double braces.
+  No such place may stand inside a comment: a path with two hyphens in a row would make the file invalid XML.
+  No secret stands here: this folder is readable by every user of the machine. The whole configuration comes from
+  the file .env of the data folder, which node reads itself.
+-->
+<service>
+  <id>SquorliServer</id>
+  <name>Squorli Server</name>
+  <description>Squorli: API, WebSocket and web client (Node.js).</description>
+  <executable>{{INSTALL_DIR}}\node\node.exe</executable>
+  <arguments>"--env-file={{DATA_DIR}}\.env" "{{INSTALL_DIR}}\app\dist\index.js"</arguments>
+  <workingdirectory>{{INSTALL_DIR}}\app</workingdirectory>
+  <env name="NODE_ENV" value="production"/>
+  <startmode>Automatic</startmode>
+  <depend>SquorliPostgres</depend>
+  <depend>SquorliLiveKit</depend>
+  <!-- A stop sends Ctrl+C (the server closes its connections and the database, apps/server/src/shutdown.ts) and kills after this time. -->
+  <stoptimeout>15 sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="15 sec"/>
+  <onfailure action="restart" delay="60 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>{{DATA_DIR}}\logs</logpath>
+  <!-- roll-by-size only: roll-by-size-time crashes this version of the wrapper. 3 files of 10 MB like the containers' logs. -->
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+  </serviceaccount>
+</service>

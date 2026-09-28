@@ -1,0 +1,32 @@
+# LiveKit configuration for a single node on Windows. The same settings as deploy/livekit/livekit.yaml; keep both in step.
+# install.ps1 fills the {{...}} places and keeps this file readable for administrators and the service only: it holds the
+# API key (LiveKit's key file option refuses every file on Windows, and a service's environment would stand in a folder
+# every user can read).
+port: {{LIVEKIT_HTTP_PORT}}
+# Signaling only; a reverse proxy forwards /rtc to it and the app server asks it on 127.0.0.1. The media ports below
+# always listen on every address.
+bind_addresses: [{{LIVEKIT_BIND}}]
+rtc:
+  tcp_port: {{LIVEKIT_TCP_PORT}}
+  udp_port: {{LIVEKIT_UDP_PORT}}     # a single UDP port instead of a range
+  use_external_ip: true   # determine the public IP automatically (STUN); node_ip overrides it
+  node_ip: "{{LIVEKIT_NODE_IP}}"
+# TURN (deploy/AGENTS.md, "TURN"): for users behind restrictive firewalls. Needs a TLS certificate for the domain and
+# port 5349/tcp. Off by default, untested.
+turn:
+  enabled: false
+#  domain: chat.example.org
+#  tls_port: 5349
+#  cert_file: C:/ProgramData/Squorli/config/fullchain.pem
+#  key_file: C:/ProgramData/Squorli/config/privkey.pem
+# Report the server's speaker detection faster (default 400 ms, 2 smoothing intervals). The client measures levels
+# itself and uses these reports only as a fallback when its audio context is blocked.
+audio:
+  update_interval: 150
+  smooth_intervals: 1
+# warn, not info: at info LiveKit logs every participant who joins with all the IP addresses of their device (ICE
+# candidates). For troubleshooting a connection set info for a while and restart the service (docs/features/logging.md).
+logging:
+  level: warn
+keys:
+  {{LIVEKIT_API_KEY}}: {{LIVEKIT_API_SECRET}}
