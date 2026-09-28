@@ -17,7 +17,8 @@ An optional argument is the version to set (`/server-release 0.2.0`); then skip 
 
 - The image `ghcr.io/danielklessa/squorli-server` holds the app server **and the web client it serves**. Every push to the
   default branch already publishes `:latest` (`.github/workflows/ci.yml`, job `image`); a tag `v<version>` additionally
-  publishes `:v<version>`, which operators can pin in `APP_IMAGE`. `.github/workflows/server-release.yml` puts
+  publishes `:v<version>`, which operators can pin in `APP_IMAGE`. **Publishing the release** moves `:stable` to it
+  (`.github/workflows/stable-image.yml`), the tag the automatic updates on Linux follow. `.github/workflows/server-release.yml` puts
   `apps/server/release-notes/<version>.md` into a **draft** GitHub release titled "Squorli Server <version>" and refuses a
   tag that does not match `apps/server/package.json`.
 - **The package for Windows** (`deploy/windows/`, installations without Docker) is built and tested by the same workflow
@@ -133,7 +134,8 @@ Written for the people who run a server (and, in "New", for what their members g
 - End with what remains for them, in order: commit (squorli-server), push the default branch (CI publishes `:latest`),
   tag `v<version>` on that commit and push the tag (CI publishes `:v<version>`, the release workflow writes the draft and
   attaches the package for Windows once it is built and tested), wait for that workflow to end, check the draft (the ZIP
-  and its `.sha256` file are attached) and publish it on GitHub, update the servers (`squorli backup`, `squorli update`;
+  and its `.sha256` file are attached) and publish it on GitHub (the workflow "Stable image" then moves `:stable`; from
+  that moment installations with automatic updates take the version), update the servers (`squorli backup`, `squorli update`;
   on Windows `squorli update` alone, it backs up first). If a desktop app release is
   needed, it follows after the server (skill `desktop-release`). Website texts that describe the change go out with a push
   of `squorli-website` after the server is pushed.

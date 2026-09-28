@@ -190,7 +190,7 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 2. Review the release notes.
 3. Repeat `pull` and `up -d --no-build` with the same profile and overlays (after the interactive installer: `squorli update`, which backs up first). On Windows: `squorli update`, which backs up first.
 
-`latest` is mutable; for reproducible deployments set `APP_IMAGE` to a version tag or `ghcr.io/danielklessa/squorli-server@sha256:<digest>` and keep the repository checkout aligned with that release. Startup runs database migrations; an image rollback does not reverse them.
+`latest` is mutable and follows the development; `stable` names the newest published version. For reproducible deployments set `APP_IMAGE` to a version tag or `ghcr.io/danielklessa/squorli-server@sha256:<digest>` and keep the repository checkout aligned with that release. Startup runs database migrations; an image rollback does not reverse them.
 
 ### Automatic updates
 
@@ -201,7 +201,7 @@ Before you switch it on:
 - An update restarts the app server whenever a new version appears; whoever is writing or talking is cut off for a moment. 24 hours is the calm choice.
 - A version that asks for work by hand before the update ("Before you update" in its release notes) is not installed automatically: the job notes it in its log and waits for your `squorli update`, which asks whether that work is done.
 - Every update makes a backup first; the backups stay and take space.
-- Linux: new images of PostgreSQL and Caddy come along (their tags move), an update that fails is not taken back, and `APP_IMAGE` has to name the tag `latest` (a fixed version never changes by itself). Windows: when a new version does not start, the program files of before come back.
+- Linux: the job follows the image tag in `APP_IMAGE`. `stable` names the newest published version, and `squorli autoupdate on` offers to enter it (`--stable` without the question); `latest` changes with every change in development; a fixed version never changes by itself. New images of PostgreSQL and Caddy come along (their tags move), and an update that fails is not taken back. Windows: when a new version does not start, the program files of before come back.
 - An installation from before these commands gets them on Linux by running the installer again ("Update"), on Windows with its next `squorli update`.
 
 ## Building from source

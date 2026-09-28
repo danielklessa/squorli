@@ -612,6 +612,15 @@ dc() { docker compose "${ARGS[@]}" "$@"; }
 lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${lang:-en}"
 t() { if [ "$lang" = de ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 
+app_image() { sed -n 's/^APP_IMAGE=//p' ../.env | tail -n1 | tr -d "'\"" || true; }
+# The image a service's container should run: the one it was made from; for the server the one .env names now, which
+# may be another since (latest became stable).
+wanted_ref() {
+  local ref=""
+  if [ "$1" = server ]; then ref="$(app_image)"; fi
+  if [ -z "$ref" ]; then ref="$(docker inspect -f '{{.Config.Image}}' "$2" 2>/dev/null || true)"; fi
+  printf '%s\n' "$ref"
+}
 # The services whose container runs another image than the one its tag names now, that is after a pull. A service
 # without a running container is left out: nobody starts what was stopped on purpose.
 changed_services() {
@@ -620,7 +629,7 @@ changed_services() {
     cid="$(dc ps -q "$s" 2>/dev/null | head -n1 || true)"
     [ -n "$cid" ] || continue
     have="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
-    ref="$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null || true)"
+    ref="$(wanted_ref "$s" "$cid")"
     want="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null || true)"
     if [ -n "$have" ] && [ -n "$want" ] && [ "$want" != "$have" ]; then printf '%s\n' "$s"; fi
   done
@@ -639,7 +648,7 @@ by_hand() {
   cid="$(dc ps -q server 2>/dev/null | head -n1 || true)"
   [ -n "$cid" ] || return 1
   have="$(server_says "$(docker inspect -f '{{.Image}}' "$cid")")"
-  want="$(server_says "$(docker inspect -f '{{.Config.Image}}' "$cid")")"
+  want="$(server_says "$(wanted_ref server "$cid")")"
   case "${want#* }" in [0-9]*.[0-9]*.[0-9]*) ;; *) return 1 ;; esac
   case "${have%% *}" in [0-9]*.[0-9]*.[0-9]*) ;; *) return 1 ;; esac
   [ "${have#* }" != "${want#* }" ] || return 1
@@ -688,6 +697,17 @@ auto_hours() {
   for f in "$AUTO_TIMER" "$AUTO_CRON"; do
     if [ -f "$f" ]; then sed -n 's/^# hours: \([0-9]*\)$/\1/p' "$f" | head -n1; return; fi
   done
+}
+# APP_IMAGE gets the tag stable, which names the newest published version; only when that image can be pulled.
+use_stable() {
+  if docker pull -q "$1" >/dev/null 2>&1; then
+    cp -p ../.env "../.env.bak.$(date +%Y%m%d-%H%M%S)"
+    sed -i "s|^APP_IMAGE=.*|APP_IMAGE=$1|" ../.env
+    t "  ok APP_IMAGE=$1 ($here/.env). Das gilt mit dem nächsten Update; sofort: squorli update" \
+      "  ok APP_IMAGE=$1 ($here/.env). It applies with the next update; at once: squorli update"
+  else
+    t "  !  $1 ließ sich nicht holen: APP_IMAGE bleibt, wie es ist." "  !  $1 could not be pulled: APP_IMAGE stays as it is."
+  fi
 }
 auto_off() {
   if [ -f "$AUTO_TIMER" ] || [ -f "$AUTO_SERVICE" ]; then
@@ -807,19 +827,40 @@ case "${1:-help}" in
           "     An update that fails is not taken back. What happened is in $here/autoupdate.log."
         t "     Empfohlen sind 24 Stunden: dann läuft die Suche einmal täglich um 04:17 Uhr." \
           "     Recommended are 24 hours: the search then runs once a day at 04:17."
-        image="$(sed -n 's/^APP_IMAGE=//p' ../.env | tail -n1 | tr -d "'\"" || true)"
+        # What stands behind "on": the hours, and what to do with an image named latest
+        hours=""; tag=""; words=0
+        for a in "${@:3}"; do
+          words=1
+          case "$a" in
+            --stable) tag=stable ;;
+            --latest) tag=latest ;;
+            -*) t "squorli autoupdate on [Stunden] [--stable]" "squorli autoupdate on [hours] [--stable]" >&2; exit 1 ;;
+            *)
+              hours="$a"
+              case "$hours" in *[!0-9]*) hours=0 ;; esac
+              if [ "${#hours}" -gt 2 ] || [ "$hours" -lt 1 ] || [ "$hours" -gt 24 ]; then
+                t "'$a' ist kein Abstand in Stunden: eine ganze Zahl von 1 bis 24." "'$a' is no interval in hours: a whole number from 1 to 24." >&2; exit 1
+              fi ;;
+          esac
+        done
+        # The image the job follows
+        image="$(app_image)"
         case "$image" in
-          *:latest|"") ;;
-          *) t "  !  APP_IMAGE nennt eine feste Version ($image): eine neue Version von Squorli Server kommt so nie von selbst, nur neue Images der anderen Dienste. Für automatische Updates APP_IMAGE in $here/.env auf :latest stellen." \
-               "  !  APP_IMAGE names a fixed version ($image): a new version of Squorli Server never arrives by itself this way, only new images of the other services. For automatic updates set APP_IMAGE in $here/.env to :latest." ;;
+          ""|*:stable) ;;
+          *:latest)
+            t "  !  APP_IMAGE nennt latest: Dieses Image ändert sich mit jeder Änderung in der Entwicklung, auch zwischen zwei Versionen. ${image%:latest}:stable nennt immer die neueste veröffentlichte Version." \
+              "  !  APP_IMAGE names latest: this image changes with every change in development, between two versions too. ${image%:latest}:stable always names the newest published version."
+            if [ -z "$tag" ] && [ "$words" = 0 ]; then
+              echo
+              read -r -p "$(t "? Auf stable umstellen? Der Server nimmt dann mit dem nächsten Update die neueste veröffentlichte Version. [J/n] " "? Switch to stable? The server then takes the newest published version with the next update. [Y/n] ")" answer </dev/tty
+              case "$answer" in ""|j|J|ja|Ja|y|Y|yes|Yes) tag=stable ;; *) tag=latest ;; esac
+            fi
+            if [ "$tag" = stable ]; then use_stable "${image%:latest}:stable"
+            elif [ -z "$tag" ]; then t "     Umstellen: squorli autoupdate on <Stunden> --stable" "     To switch: squorli autoupdate on <hours> --stable"; fi ;;
+          *) t "  !  APP_IMAGE nennt eine feste Version ($image): eine neue Version von Squorli Server kommt so nie von selbst, nur neue Images der anderen Dienste. Für automatische Updates in $here/.env den Tag stable eintragen." \
+               "  !  APP_IMAGE names a fixed version ($image): a new version of Squorli Server never arrives by itself this way, only new images of the other services. For automatic updates enter the tag stable in $here/.env." ;;
         esac
-        hours="${3:-}"
-        if [ -n "$hours" ]; then
-          case "$hours" in *[!0-9]*) hours=0 ;; esac
-          if [ "${#hours}" -gt 2 ] || [ "$hours" -lt 1 ] || [ "$hours" -gt 24 ]; then
-            t "'${3}' ist kein Abstand in Stunden: eine ganze Zahl von 1 bis 24." "'${3}' is no interval in hours: a whole number from 1 to 24." >&2; exit 1
-          fi
-        else
+        if [ -z "$hours" ]; then
           while true; do
             echo
             read -r -p "$(t "? Alle wie viele Stunden nach einer neuen Version suchen (1-24)? [24] " "? Look for a new version every how many hours (1-24)? [24] ")" hours </dev/tty
@@ -871,8 +912,8 @@ case "${1:-help}" in
         if [ -z "$(auto_hours)" ]; then t "  ok Automatische Updates waren schon aus." "  ok Automatic updates were off already."
         else auto_off; t "  ok Automatische Updates sind aus." "  ok Automatic updates are off."; fi ;;
       *)
-        t "squorli autoupdate [on [Stunden] | off]   (Stunden: 1 bis 24; ohne Wort: der Stand)" \
-          "squorli autoupdate [on [hours] | off]   (hours: 1 to 24; without a word: the state)" >&2
+        t "squorli autoupdate [on [Stunden] [--stable] | off]   (Stunden: 1 bis 24; --stable: APP_IMAGE von latest auf stable stellen; ohne Wort: der Stand)" \
+          "squorli autoupdate [on [hours] [--stable] | off]   (hours: 1 to 24; --stable: set APP_IMAGE from latest to stable; without a word: the state)" >&2
         exit 1 ;;
     esac ;;
   status)  dc ps ;;
@@ -931,7 +972,7 @@ case "${1:-help}" in
     else echo "Whether voice and video (UDP) arrive can only be checked from a browser: Verwaltung > Server > Check the connection."; fi
     exit $rc ;;
   help|-h|--help)
-    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
+    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] [--stable] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
     echo "services: server, postgres, livekit, caddy" ;;
   *) dc "$@" ;;
 esac

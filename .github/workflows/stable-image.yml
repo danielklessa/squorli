@@ -1,0 +1,60 @@
+# stable: the tag `stable` of the server image names the newest published release of Squorli Server. `latest` moves with
+# every push to the default branch, `stable` only when a release is published; the automatic updates of installations
+# with Docker follow it (docs/features/auto-update.md, "The tag stable"). The image itself is built by ci.yml when the tag
+# v<version> is pushed; this workflow gives it a second name. GitHub only.
+
+name: Stable image
+
+on:
+  release:
+    types: [published]
+  # By hand, for a release that is published already: a run that failed, or a release from before this workflow.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of a published server release (v<version>)"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  stable:
+    # Releases of the desktop app carry tags desktop-v*; a prerelease is not for every installation.
+    if: github.event_name == 'workflow_dispatch' || (startsWith(github.event.release.tag_name, 'v') && !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+    steps:
+      # A fix for an older version that is published later must not take stable back to it.
+      - name: Is this the newest published release of the server?
+        id: newest
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$TAG is no tag of a server release (v<version>)"; exit 1 ;;
+          esac
+          newest="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft | not) | select(.prerelease | not) | .tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          echo "The newest published release of the server is $newest."
+          if [ "$newest" = "$TAG" ]; then
+            echo "move=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG is not the newest published release of the server ($newest): stable stays where it is."
+            echo "move=no" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-buildx-action@v3
+        if: steps.newest.outputs.move == 'yes'
+      - uses: docker/login-action@v3
+        if: steps.newest.outputs.move == 'yes'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: stable names the image of this release
+        if: steps.newest.outputs.move == 'yes'
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx imagetools create --tag "$image:stable" "$image:$TAG"
+          docker buildx imagetools inspect "$image:stable"
