@@ -1180,6 +1180,11 @@ button.emoji-open[aria-expanded="true"] { color: var(--brand); }
 .server-offline h2 { margin: 0; font-size: 1.15rem; color: var(--text); }
 .server-offline p { margin: 0; }
 .server-offline .row { justify-content: center; margin-top: 0.5rem; }
+/* The interface failed (ErrorBoundary.tsx): the same card with "Neu laden". It starts below the desktop app's title bar, whose buttons must stay within reach. */
+.app-crashed { top: var(--titlebar-h, 0px); }
+.crash-details { max-width: 100%; font-size: 0.8125rem; }
+.crash-details summary { cursor: pointer; }
+.crash-details pre { margin: 0.5rem 0 0; padding: 0.5rem 0.75rem; max-height: 8rem; overflow: auto; border-radius: var(--r); background: var(--bg); color: var(--text); text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 
 /* Einstellungen > Tastenkuerzel (HotkeysTab.tsx, docs/features/hotkeys.md): one row per shortcut, the list of control links with a copy button each. */
 .hotkey-row { margin-top: 0; gap: 0.35rem; }

@@ -41,6 +41,9 @@ export function RadioControl({ api, player, channel, stations, nowPlaying, canCo
   const video = playing?.twitchChannel ? "twitch" : playing?.youtubeVideo ? "youtube" : null;
   const title = playing ? nowPlaying : null;
   const showTitle = useFits(title, playing?.name ?? null);
+  const [readingList, setReadingList] = useState(false);
+  // Every hook stands above this line: a listener's button comes and goes with the radio, and a hook below it would run
+  // in one render and not in the next, which React answers by taking the whole client down (28 September 2026).
   if (!playing && !canControl) return null;
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -51,8 +54,7 @@ export function RadioControl({ api, player, channel, stations, nowPlaying, canCo
    * A YouTube playlist: this client reads its videos from YouTube's player and hands them to the server, which plays them
    * as a queue (youtubePlaylist.ts). An address that also names a video still plays that one when the list cannot be read.
    */
-  const [readingList, setReadingList] = useState(false);
-  const start = (address: string, send: (videoIds?: string[]) => Promise<unknown>) => act(async () => {
+  const start =(address: string, send: (videoIds?: string[]) => Promise<unknown>) => act(async () => {
     const list = youtubePlaylistOf(address);
     if (!list) return send();
     setReadingList(true);
