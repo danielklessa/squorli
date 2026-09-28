@@ -68,6 +68,10 @@ Code: `apps/server/package.json` (`squorli.autoUpdateFrom`), `deploy/install.sh`
 - **28 September 2026, `deploy\windows\test\acceptance.ps1` as administrator on Windows 11 Pro,** with the package built from the working tree (it carries the number 0.6.0 and the new scripts): all 59 checks passed (the log was read by Claude). Among them, with the real services: the update to the test's version 98.0.0 named "Keep running: SquorliPostgres, SquorliLiveKit", stopped `SquorliServer` alone, left the folders `pgsql` and `livekit` as they were, and afterwards the process ids of PostgreSQL's and LiveKit's services were the ones from before, the app server's another; the way back from the broken version 99.0.0; `squorli update -Check` against GitHub (code 0); `autoupdate on 25` refused; `autoupdate on 6` made a task of SYSTEM with the interval and the command line; started through `schtasks /Run`, the task wrote "Installed is 98.0.0, published is 0.6.0: nothing to do." into `logs\autoupdate.log`, so SYSTEM can run the command; `off` removed the task, and `uninstall.ps1` removed the one that `on 24` had made.
 - **The run before it ended without a word** right after the programs were copied (no service, no `.env`, the setup's log without an error, the test's removal not run), which looks like a process that was ended from outside; the command Claude had given sent every line into a file, so nothing was to be seen for minutes. The folders it left made the next run refuse to start. The command for a run by hand shows its lines now (`2>&1 | Tee-Object <file>`). Whether the user ended it is not known.
 
+### The release
+
+- **28 September 2026:** prepared as Squorli Server 0.6.1 (the user chose the number over 0.7.0). The mark stays `0.6.0`: the release asks for no work by hand.
+
 ### Not checked
 
 - **On GitHub's runner:** `acceptance.ps1` with these changes (it runs with the next push).
