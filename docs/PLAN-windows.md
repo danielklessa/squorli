@@ -1,15 +1,14 @@
 # Plan: Squorli Server as a package for Windows, without Docker
 
-The user's brief of 28 September 2026 had six phases (the server's code on Windows, the package and its build, the setup, the `squorli` command, release and tests, documentation). All six are built, each released by the user and, up to phase 5, accepted by their runs on Windows 11; what they did, the decisions and what was checked: `docs/features/windows.md`. How the package, the setup, the command and the test work: `deploy/windows/AGENTS.md`. This file holds what is open.
+The user's brief of 28 September 2026 had six phases (the server's code on Windows, the package and its build, the setup, the `squorli` command, release and tests, documentation). All six are built, each released by the user and, accepted by their runs on Windows 11 and, for the test of phase 5, by the first run on GitHub's Windows runner; what they did, the decisions and what was checked: `docs/features/windows.md`. How the package, the setup, the command and the test work: `deploy/windows/AGENTS.md`. This file holds what is open.
 
 Target: Windows 10 from 22H2 and Windows 11 (Home included), Windows Server 2019/2022/2025, x64 only. Nothing that only Windows Server has (IIS, server roles, the group policy editor). Every script runs in Windows PowerShell 5.1.
 
 ## Open
 
-1. **The first push:** the workflow `windows-package.yml` on GitHub's runner (`acceptance.ps1` passed on the user's machine, not on a runner: its ports, its PostgreSQL, the time the test takes).
-2. **The first tag `v*` with a package:** the job `attach` of `server-release.yml`, the published release, and `squorli update` from GitHub against it. The release notes of that version name the package for Windows, the new variables `LISTEN_HOST` and `DOCTOR_TOKEN` (both unset with Docker) and the renamed Compose service (`docs/MILESTONE-LOG.md`, 28 September 2026).
-3. **The website goes live after that release** (`../squorli-website`, its `docs/PLAN.md`): the installation guide names the package as a download of the release page.
-4. **The acceptance on real machines** after the checklist of the feature note (phase 5): a PC with the bundled Caddy and a real domain, a Windows Server with IIS in front (`deploy/proxies/iis/`), a proxy on another machine, Windows 10. Until then the README and the website say what was run and what was not; change both when it is.
+1. **The first tag `v*` with a package:** the job `attach` of `server-release.yml`, the published release, and `squorli update` from GitHub against it. The release notes of that version name the package for Windows, the new variables `LISTEN_HOST` and `DOCTOR_TOKEN` (both unset with Docker) and the renamed Compose service (`docs/MILESTONE-LOG.md`, 28 September 2026).
+2. **The website goes live after that release** (`../squorli-website`, its `docs/PLAN.md`): the installation guide names the package as a download of the release page.
+3. **The acceptance on real machines** after the checklist of the feature note (phase 5): a PC with the bundled Caddy and a real domain, a Windows Server with IIS in front (`deploy/proxies/iis/`), a proxy on another machine, Windows 10. Until then the README and the website say what was run and what was not; change both when it is.
 
 ## Not part of it, for now
 

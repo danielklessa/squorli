@@ -83,7 +83,7 @@ Change settings: run `C:\Program Files\Squorli\install.ps1` again. Remove: `C:\P
 
 With a web server on the machine already (IIS holds 80 and 443 on many Windows Servers), choose "a reverse proxy on this machine": templates for nginx, Caddy and IIS (URL Rewrite and Application Request Routing) are in `C:\Program Files\Squorli\proxies`.
 
-**State (28 September 2026):** installed and run on Windows 11 Pro with a proxy on the same machine and on `localhost`: setup, services, voice, a restart of the machine, backup and restore (also of a Linux backup), update, removal. Not run yet: the bundled Caddy with a real certificate, IIS in front, Windows 10 and Windows Server. The programs in the package are not signed; Windows may ask before it runs them. Details: [docs/features/windows.md](docs/features/windows.md).
+**State (28 September 2026):** installed and run on Windows 11 Pro with a proxy on the same machine and on `localhost`: setup, services, voice, a restart of the machine, backup and restore (also of a Linux backup), update, removal. The package's automatic test (setup, every command, backup and restore, update, removal) also passes on Windows Server, on the runner of the CI. Not run yet: the bundled Caddy with a real certificate, IIS in front, Windows 10, and a Windows Server with people on it. The programs in the package are not signed; Windows may ask before it runs them. Details: [docs/features/windows.md](docs/features/windows.md).
 
 ## Quick start with the published image
 

@@ -118,7 +118,7 @@ Released by the user on 28 September 2026 ("wir können dann mit Phase 6 weiter 
 - The links to the release page against a release that carries the package (there is none yet); the page must not go live before.
 - Whether a ZIP downloaded with a browser is held up by SmartScreen or Smart App Control.
 
-## Phase 5, built (28 September 2026): release and tests; the test ran on the user's machine, the run on GitHub and the acceptance on real machines are open
+## Phase 5, built (28 September 2026): release and tests; the test ran on the user's machine and on GitHub's runner, the first release and the acceptance on real machines are open
 
 Released by the user on 28 September 2026 ("phase 5 kann gestartet werden").
 
@@ -144,7 +144,7 @@ Released by the user on 28 September 2026 ("phase 5 kann gestartet werden").
 
 ### Not checked
 
-- **Any run on GitHub:** nothing is committed or pushed. The workflow call, the artifact, the job `attach` (`gh release upload`) and the runner itself (its ports, its PostgreSQL, the time the test takes) show with the first push and the first tag.
+- **The release on GitHub:** the job `attach` of `server-release.yml` (`gh release upload`) and a published release with the package show with the first tag `v*`. The push of a branch ran ("Acceptance by the user" below).
 - `squorli update` from GitHub: needs the first published release with a package.
 
 ### Checklist for the acceptance on real machines
@@ -177,6 +177,7 @@ Before: `deploy\windows\test\acceptance.ps1 -Package <zip>` as administrator on 
 
 ### Acceptance by the user
 
+- **28 September 2026, the first push (commit `c049a3f`), the run of `ci.yml` on GitHub:** all four jobs green in nine minutes. The job `windows / package` on `windows-latest` (the first run of the workflow call and of everything Windows on a runner): install, typecheck and tests, the builds, the package in 45 seconds, **the acceptance test in 4 minutes 21 seconds without a failed check**, the smoke test against the second installation (its step counts as passed; whether every check of it did stands in the run's log), the artifact `squorli-server-windows-x64` with 115 MB. So the setup without questions, the services under their own accounts, the firewall rules (`-Firewall yes`), every command, the Linux backup, the update and the way back, and the removal also work on a machine that is a Windows Server image in English, set up by somebody else.
 - **28 September 2026, `acceptance.ps1` as administrator on Windows 11 Pro (German), next to the development stack on ports of its own:** all 44 checks passed in its first run, in about three minutes: the package and its hash, the setup without questions, the services and their accounts, the rights of `.env`, of the backup and of the files a restore unpacked, the PATH, the setup check refused without the token, every command, the restore of the Linux backup of the repository (`tar.gz`, its owner signs in), a wrong checksum refused, the update with the same package, the update to the package that breaks and the way back, the removal with nothing left. Seen in the log: the text of a message with umlauts is shown wrong where the test prints what `node` wrote (the console's code page), the comparison itself is right.
 
 ## Phase 4, built and accepted for Windows 11 (28 September 2026): the management command

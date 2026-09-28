@@ -56,7 +56,7 @@ Recording, end-to-end encryption of media, a bot API, threads, federation betwee
 ### 2.1 Operator path
 
 - **Nginx Proxy Manager and Plesk against a real installation:** nginx, Traefik and Caddy are tested in CI since 27 September 2026 (`docs/features/proxy-tests.md`); NPM (web interface) and Plesk stay manual, together with the next item.
-- **A package for Windows without Docker** (user, 28 September 2026): all six phases are built (`docs/features/windows.md`), setup and command accepted on Windows 11. Open (`docs/PLAN-windows.md`): the first run of the workflow on GitHub, the first release that carries the package with `squorli update` against it, the website after that release, and the acceptance on real machines (a PC with the bundled Caddy and a real domain, a Windows Server with IIS, Windows 10).
+- **A package for Windows without Docker** (user, 28 September 2026): all six phases are built (`docs/features/windows.md`), setup and command accepted on Windows 11. The workflow ran on GitHub's Windows runner. Open (`docs/PLAN-windows.md`): the first release that carries the package with `squorli update` against it, the website after that release, and the acceptance on real machines (a PC with the bundled Caddy and a real domain, a Windows Server with IIS, Windows 10).
 - **The "stranger in 15 minutes" test:** somebody who has never seen Squorli installs it from the website on a fresh VPS, standalone and behind an existing proxy (test campaign T6); `squorli doctor` and the admin panel's check against that real installation and a real proxy (`docs/features/doctor.md`, "Not checked").
 
 ---
