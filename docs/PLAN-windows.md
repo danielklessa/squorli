@@ -10,7 +10,6 @@ Target: Windows 10 from 22H2 and Windows 11 (Home included), Windows Server 2019
 2. **The first tag `v*` with a package:** the job `attach` of `server-release.yml`, the published release, and `squorli update` from GitHub against it. The release notes of that version name the package for Windows, the new variables `LISTEN_HOST` and `DOCTOR_TOKEN` (both unset with Docker) and the renamed Compose service (`docs/MILESTONE-LOG.md`, 28 September 2026).
 3. **The website goes live after that release** (`../squorli-website`, its `docs/PLAN.md`): the installation guide names the package as a download of the release page.
 4. **The acceptance on real machines** after the checklist of the feature note (phase 5): a PC with the bundled Caddy and a real domain, a Windows Server with IIS in front (`deploy/proxies/iis/`), a proxy on another machine, Windows 10. Until then the README and the website say what was run and what was not; change both when it is.
-5. **The user's word on the decisions of phase 6** (the feature note lists them).
 
 ## Not part of it, for now
 

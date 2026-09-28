@@ -57,3 +57,7 @@ and in `/etc/systemd/journald.conf`: `MaxRetentionSec=14day`, then `systemctl re
 
 - A real installation over days (rotation reached, `squorli logs` after a rotation), journald on a real host.
 - The website's privacy guidance for operators does not mention the logs yet.
+
+## PostgreSQL's notices (28 September 2026, user's wish: "PostgreSQL Hinweise bitte abstellen")
+
+Every start on a database that exists made PostgreSQL say twice that something "already exists, skipping" (the migrator creates its schema and its table with `IF NOT EXISTS`). postgres-js prints a notice with `console.log`, as an object over several lines, so the app server's log, JSON line by line otherwise, held blocks of plain text (seen in the log of a Windows installation; a container's log had them too). `createDb(url, onNotice)` in `apps/server/src/db/index.ts` hands the notices to a handler and drops them without one; the server logs each as one line at debug level (`"msg":"PostgreSQL: ..."` with `code` and `severity`), so the default level `info` shows none. Tested (`db/index.test.ts`).

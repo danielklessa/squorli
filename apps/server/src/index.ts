@@ -88,7 +88,8 @@ async function main() {
     trustProxy: config.trustedProxies,
   });
 
-  const { db, client } = createDb(config.DATABASE_URL);
+  // PostgreSQL's notices as lines of the log, at debug level: the migrator's "already exists, skipping" comes on every start.
+  const { db, client } = createDb(config.DATABASE_URL, (notice) => app.log.debug({ code: notice.code, severity: notice.severity }, `PostgreSQL: ${notice.message ?? ""}`));
   // Migrations folder: in dev relative to src, in the build relative to dist -> both point at ../drizzle
   await runMigrations(db, join(here, "..", "drizzle"));
 
