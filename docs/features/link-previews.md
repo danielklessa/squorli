@@ -32,3 +32,7 @@ From `docs/PLAN.md` 3.3 (user's decision of 25 September 2026: a switch "no link
 **Decisions:** it covers sending and showing (user, 27 September 2026); it sits under Ansicht, shown only with a directory account (Claude's, confirmed by the user the same day).
 
 **Checked:** protocol tests (the value round-trips, a blob without it or with a non-boolean says nothing), typecheck, web tests. **Not checked:** the switch in the running client and its sync between two devices (the store's code follows the server order's, which the store harness checked on 21 and 27 September 2026).
+
+## A test that failed now and then (28 September 2026)
+
+`dmPreviews.test.ts` failed once in the CI run of the tag `v0.6.0` with "Cipher job failed", after passing for the same commit a minute before. `buildDmPreviews` makes the previews of a message's links at the same time, so their pictures reach the blob store in whatever order the sealing ends; every preview carries its own blob id, key and IV, so the client is right in either order. The test was not: it took the store's first entry for the first preview's picture. It keeps the stored pictures by blob id now, and a second test makes the first link's picture slow on purpose and checks that each preview still opens its own. No change to the client.

@@ -6,11 +6,12 @@ const page = { kind: "page" as const, siteName: "Beispiel", title: "Titel", desc
 
 function deps(over: Partial<PreviewDeps> = {}) {
   const asked: LookupRequest[] = [];
-  const stored: Uint8Array[] = [];
+  // By the blob's id, not in the order of arrival: the pictures of several links are sealed and stored at the same time.
+  const stored = new Map<string, Uint8Array>();
   const d: PreviewDeps = {
     lookUp: async (r) => { asked.push(r); return "youtube" in r ? { ...page, kind: "youtube", siteName: "YouTube", title: "Video", description: null } : page; },
     shrink: async (image) => ({ mime: "image/webp", bytes: image.bytes }),
-    putBlob: async (ciphertext) => { stored.push(ciphertext); return "ab".repeat(16); },
+    putBlob: async (ciphertext) => { const id = (stored.size + 1).toString(16).padStart(32, "0"); stored.set(id, ciphertext); return id; },
     ...over,
   };
   return { d, asked, stored };
@@ -23,10 +24,26 @@ describe("buildDmPreviews", () => {
     expect(asked).toEqual([{ url: "https://example.org/a" }, { youtube: "aqz-KE-bpKQ" }]);
     expect(previews.map((p) => [p.url, p.kind, p.title, p.videoId, p.start])).toEqual([["https://example.org/a", "page", "Titel", undefined, undefined], ["https://youtu.be/aqz-KE-bpKQ?t=42", "youtube", "Video", "aqz-KE-bpKQ", 42]]);
     // What went to the store is ciphertext that only the key inside the message opens.
-    expect(stored).toHaveLength(2);
-    expect([...stored[0]!.subarray(0, 4)]).not.toEqual([1, 2, 3, 4]);
-    expect([...(await openDmBlob(previews[0]!.image!, stored[0]!))]).toEqual([1, 2, 3, 4]);
-    expect(previews[0]!.image).toMatchObject({ blob: "ab".repeat(16), mime: "image/webp" });
+    expect(stored.size).toBe(2);
+    for (const preview of previews) {
+      const ciphertext = stored.get(preview.image!.blob)!;
+      expect([...ciphertext.subarray(0, 4)]).not.toEqual([1, 2, 3, 4]);
+      expect([...(await openDmBlob(preview.image!, ciphertext))]).toEqual([1, 2, 3, 4]);
+      expect(preview.image).toMatchObject({ mime: "image/webp" });
+    }
+    expect(previews[0]!.image!.blob).not.toBe(previews[1]!.image!.blob);
+  });
+
+  it("keeps preview and picture together when the second link's picture reaches the store first", async () => {
+    // The first link's picture takes longer to make small (this order failed a CI run once, when the test took the
+    // store's first entry for the first preview's picture).
+    let calls = 0;
+    const { d, stored } = deps({ shrink: async (image) => { if (++calls === 1) await new Promise((r) => setTimeout(r, 30)); return { mime: "image/webp", bytes: image.bytes }; } });
+    const previews = await buildDmPreviews("https://example.org/a https://example.org/b", d);
+    expect(previews.map((p) => p.url)).toEqual(["https://example.org/a", "https://example.org/b"]);
+    // Stored second, still the first preview's
+    expect(previews[0]!.image!.blob).toBe((2).toString(16).padStart(32, "0"));
+    for (const preview of previews) expect([...(await openDmBlob(preview.image!, stored.get(preview.image!.blob)!))]).toEqual([1, 2, 3, 4]);
   });
 
   it("goes without a picture when there is no store, the picture is none or the upload fails", async () => {
