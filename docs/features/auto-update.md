@@ -82,13 +82,16 @@ Claude had named it as open: on Linux the job follows the tag in `APP_IMAGE`, th
 
 ### The release
 
+- **28 September 2026, the user's own server runs 0.6.1** ("Meinen Server habe ich aktualisiert"). Which way it took was not said; their server is a Portainer stack, which has neither the install script's command nor automatic updates, so this says nothing about `squorli update` or `squorli autoupdate`.
+- **28 September 2026, Squorli Server 0.6.1 published by the user** (the tag `v0.6.1` on `7673af1`; `ci.yml` and `server-release.yml` of the tag green). Seen from outside without a sign-in: the release carries `squorli-server-0.6.1-windows-x64.zip` (115 MB) and its `.sha256` file, the hash of the downloaded ZIP is the one the file names; `apps/server/package.json` at the tag says version 0.6.1 and `autoUpdateFrom` 0.6.0, which is what `squorli update -Auto` on Windows reads before it downloads; the image `:v0.6.1` has the digest of `:latest`. **`stable-image.yml` ran by itself two seconds after the publication and passed:** `:stable` exists, can be pulled, and its server says "0.6.1 0.6.0". The website was pushed by the user before the publication and is live with the new sections.
+- **What the first run of `stable-image.yml` showed:** `docker buildx imagetools create` puts an index around the release's manifest, so `:stable` has another digest than `:v0.6.1` (its one entry is that manifest, the configuration is the same). With Docker's classic image store both have the same image id; with the containerd image store (seen on Docker Desktop) the ids are the two digests, so an installation that changes from `latest` to `stable` finds the server "new" once and replaces its container by the same program. The workflow copies the manifest as it is from now on (`--prefer-index=false`); for 0.6.1 that takes a run by hand with the tag `v0.6.1` after the change is pushed.
+- **28 September 2026, the push of the default branch (commit `7673af1`), `ci.yml` on GitHub:** green in eleven minutes: `test`, `proxies`, `image`, and `windows / package` with the package built and `acceptance.ps1` passed on the Windows runner as administrator, the check of the mark among them (the run of the task leaves version 99.0.0 alone), which had not run with rights before. Seen through the public API: the jobs and their steps, not the single lines of the test.
 - **28 September 2026:** prepared as Squorli Server 0.6.1 (the user chose the number over 0.7.0). The mark stays `0.6.0`: the release asks for no work by hand.
 
 ### Not checked
 
-- **`stable-image.yml` itself:** it runs for the first time when the release 0.6.1 is published; until then the tag `stable` does not exist.
-- **On GitHub's runner:** `acceptance.ps1` with these changes (it runs with the next push).
-- **The mark as administrator:** `acceptance.ps1` got a check for it (the run of the task leaves version 99.0.0 alone) after the user's run; it has not run since. The user's run of 59 checks was before the mark.
+- **`stable-image.yml` with `--prefer-index=false`:** changed after its first run, not run since.
+- **`squorli update` of an installation against the release 0.6.1,** on Windows and on Linux, and `squorli autoupdate on` on a real server.
 - **The check before the download against a real release with a mark:** there is none yet; the first will be the release that carries the mark.
 - **The update of an installation of 0.6.0 by its own `squorli update`:** in the test frame the new setup was called directly. The parameters it is called with did not change.
 - **The bundled mode on Windows** (Caddy restarting with the app server).
