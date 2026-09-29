@@ -24,7 +24,7 @@ export * from "./localAccounts";
 export * from "./reports";
 export { Iso, PublicKey, REPORT_REASONS, REPORT_TEXT_MAX, ReportReason, Signature, Uuid } from "./primitives";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
-import { DisplayName } from "./directory";
+import { DeviceProofFields, DisplayName } from "./directory";
 import { GamePresence } from "./friends";
 import { ChannelNotification, SlowmodeSeconds, UserLimit, VoiceLock } from "./channels";
 import { VoteKick, VoteKickResult } from "./votekick";
@@ -46,6 +46,8 @@ export const VerifyRequest = z.object({
   signature: Signature,
   /** Required when the server is not open and the key is not a member yet. */
   invite: InviteCode.optional(),
+  /** The device's proof over `challengeMessage` (directory.ts "Devices"); a server from before it drops the fields. */
+  ...DeviceProofFields,
 });
 export const VerifyResponse = z.object({
   sessionToken: z.string(),
@@ -73,6 +75,22 @@ export const suspendedCloseReason = (until: string): string => `${SUSPENDED_REAS
 export function suspendedUntilOf(reason: unknown): string | null {
   const text = typeof reason !== "string" ? "" : reason.startsWith(SUSPENDED_REASON) ? reason.slice(SUSPENDED_REASON.length) : reason;
   return Iso.safeParse(text).success ? text : null;
+}
+
+/**
+ * A device that is not let in (29 September 2026, directory.ts "Devices"): the sign-in answers 403 and every request with
+ * a session 401, both with the code `device_refused`; an open WebSocket closes with 4011 like every ended session and
+ * names the cause as its reason. For a directory account the client asks the directory what it says about the device
+ * before it wipes anything (a chat server's word alone never wipes a key); for a server account this server decides.
+ */
+export const DEVICE_REFUSED = "device_refused";
+export const WS_CLOSE_SESSION_ENDED = 4011;
+/** The reasons of a close with 4011; a server from before them says one of the first two only. */
+export const SESSION_END_REASONS = ["session_revoked", "session_expired", "device_revoked"] as const;
+export type SessionEndReason = typeof SESSION_END_REASONS[number];
+/** The reason out of a close with 4011; an unknown or missing one reads as a revoked session (what such a close meant before). */
+export function sessionEndReasonOf(reason: unknown): SessionEndReason {
+  return (SESSION_END_REASONS as readonly string[]).includes(reason as string) ? (reason as SessionEndReason) : "session_revoked";
 }
 
 /** What the client signs. The domain binding prevents reuse on other servers. */

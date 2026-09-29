@@ -39,6 +39,83 @@ export const EmailAddress = z.string().trim().toLowerCase().min(6).max(254).rege
 /** E-mail code (confirmation of an address, or the second factor by e-mail): 8 digits, valid once for a few minutes. */
 export const EmailCode = z.string().trim().regex(/^\d{8}$/, "8 Ziffern");
 
+// ---- Devices (29 September 2026, docs/features/devices.md; the user's decisions of that day). Until then an account was one
+// key that every device of it held, so a device that was signed out signed in again by itself. Now every installation has a
+// key of its own per account, the device key, next to the account's key:
+//  - A device is enrolled where the password is proven (the key backup's fetch, with the second factor) or where the account
+//    is made (registration). An account from before is not enforced yet: there a device that shows a valid proof is enrolled
+//    silently, until the account signs a device out for the first time.
+//  - Whatever the account's key signs, the device key signs too: `deviceProofMessage` over the very same message. The single-use
+//    nonce in that message covers a replay, the account's key in it binds the device to this account.
+//  - For a directory account the directory decides (403 `device_revoked`, `device_unknown`, `device_required`); a chat server
+//    gets the account's valid device keys with its token (`DirectoryAccount.deviceKeys`) and refuses with `device_refused`.
+//    For a server account (localAccounts.ts) the chat server decides alone.
+//  - A client wipes the account's key only on the word of the directory the device was enrolled at, never on a chat server's.
+// No version bump: every field is optional or has a default, the refusals are error codes of REST answers and close reasons.
+/** Devices of the kind `client` an account may have enrolled at once (the user's decision); one more asks which one goes. */
+export const DEVICE_MAX = 10;
+/** Sign-ins of the account page (kind `page`): they do not count towards DEVICE_MAX, the oldest makes way by itself. */
+export const DEVICE_PAGE_MAX = 5;
+/** A device that was not used for this long is signed out (the user's decision); not for an account without a key backup. */
+export const DEVICE_IDLE_MS = 90 * 86_400_000;
+/** `client` = a browser or the desktop app, `page` = a sign-in on the directory's account page (short-lived). */
+export const DeviceKind = z.enum(["client", "page"]);
+export type DeviceKind = z.infer<typeof DeviceKind>;
+/** What the device key signs next to the account's key: the account key's message itself, bound to that account. */
+export function deviceProofMessage(accountPublicKey: string, message: string): string {
+  return `squorli-device\n${accountPublicKey}\n${message}`;
+}
+/**
+ * What the device key signs where a device is enrolled with the password (the fetch of a key backup has no challenge): that
+ * the asker holds the key it names. `host` = the directory's host, or the chat server's domain for a server account.
+ */
+export function deviceEnrolMessage(host: string, handle: string, deviceKey: string): string {
+  return `squorli-device-enrol\n${host}\n${handle}\n${deviceKey}`;
+}
+/**
+ * What a sign-in's `origin` holds for the desktop app (the user's decision of 30 September 2026: every sign-in says where
+ * it came from, the app's as "über die Desktop-App"). The app's pages have no web address, they come from `app://squorli`;
+ * the whole origin is kept, scheme included, so that no host can be taken for it.
+ */
+export const DESKTOP_APP_ORIGIN = "app://squorli";
+/** What to keep of a request's Origin header: the host of a web site, `DESKTOP_APP_ORIGIN` for the desktop app, else null. */
+export function signInOrigin(header: unknown): string | null {
+  if (typeof header !== "string") return null;
+  if (header === DESKTOP_APP_ORIGIN) return DESKTOP_APP_ORIGIN;
+  try {
+    const u = new URL(header);
+    return (u.protocol === "https:" || u.protocol === "http:") && u.host ? u.host : null;
+  } catch { return null; }
+}
+/** The two fields of a device proof, for every request an account's key signs. Both or none. */
+export const DeviceProofFields = { deviceKey: PublicKey.optional(), deviceSignature: Signature.optional() };
+/** One enrolled device as the account sees it. The key itself is not told: `id` names the device. */
+export const DeviceInfo = z.object({
+  id: Uuid,
+  /** From the user agent at enrolment, e.g. "Chrome auf Windows"; null if unknown. */
+  label: z.string().nullable(),
+  /** Where the device was enrolled from (`signInOrigin`): a site's host (a chat server's web client, the account page), `DESKTOP_APP_ORIGIN`, or null if unknown. */
+  origin: z.string().nullable().default(null),
+  kind: DeviceKind.default("client"),
+  createdAt: Iso,
+  lastSeenAt: Iso.nullable(),
+  /** The device this request was made with. */
+  current: z.boolean().default(false),
+});
+export type DeviceInfo = z.infer<typeof DeviceInfo>;
+/** Single use, a few minutes: stands for the second factor when a sign-in is repeated with `replaceDevice`. */
+export const DeviceTicket = z.string().regex(/^[0-9a-f]{64}$/);
+/**
+ * 409 of a key fetch that would enrol device number DEVICE_MAX + 1: only after the password and the second factor were
+ * right. The client shows the list, the user picks, and the fetch is repeated with `ticket` and `replaceDevice`.
+ */
+export const TooManyDevicesResponse = z.object({ error: z.literal("too_many_devices"), devices: z.array(DeviceInfo), ticket: DeviceTicket.nullable().default(null) });
+export type TooManyDevicesResponse = z.infer<typeof TooManyDevicesResponse>;
+/** Error codes of a refused device at the directory (REST 403, and the socket's error before its `unauthorized`). */
+export const DEVICE_REFUSALS = ["device_revoked", "device_unknown", "device_required"] as const;
+export type DeviceRefusal = typeof DEVICE_REFUSALS[number];
+export const isDeviceRefusal = (code: unknown): code is DeviceRefusal => typeof code === "string" && (DEVICE_REFUSALS as readonly string[]).includes(code);
+
 /**
  * Registration is bound to the service's host (like sign-in is to PUBLIC_DOMAIN) so signatures cannot be moved elsewhere.
  * With an e-mail address (see DirectoryRegisterRequest) the address is part of the message, so it cannot be swapped.
@@ -62,6 +139,9 @@ export const DirectoryRegisterRequest = z.object({
   signature: Signature,
   email: EmailAddress.optional(),
   emailCode: EmailCode.optional(),
+  /** The first device of the new account (proof over the registration message); with it the account is enforced from birth. */
+  ...DeviceProofFields,
+  deviceKind: DeviceKind.optional(),
 });
 /** 202 of POST /api/register: the code was mailed; `sentTo` = the address, masked (d***@example.org). */
 export const DirectoryRegisterPending = z.object({ emailPending: z.literal(true), sentTo: z.string() });
@@ -91,6 +171,18 @@ export const DirectoryAccount = z.object({
    * switched that off (`ServerSettings.refuseSuspended`).
    */
   suspendedUntil: Iso.nullable().default(null),
+  /**
+   * Devices (above): the account lets only enrolled devices in. False for an account from before that never signed a device
+   * out, and for a directory from before it. Told to a registered chat server and to the account itself, false publicly.
+   */
+  devicesEnforced: z.boolean().default(false),
+  /**
+   * The keys of the account's enrolled devices of the kind `client`. Only a chat server the account is a member of, or signs
+   * in at with this very request, gets them with its token; empty for everybody else. A chat server admits a session of an
+   * enforced account only with one of them. (The limit here is wider than DEVICE_MAX, so that a directory with another
+   * limit does not make the whole answer unreadable.)
+   */
+  deviceKeys: z.array(PublicKey).max(64).default([]),
 });
 
 // ---- M6b: password-encrypted key backup (crypto in backup.ts)
@@ -128,22 +220,56 @@ export const BackupUploadRequest = z.object({
   authKey: BackupAuthKey,
   /** M6c: mandatory when the authenticator is active (changing the password = replacing the backup). */
   code: SecondFactorCode.optional(),
+  /**
+   * The auth key of the password so far (29 September 2026, the user's decision): mandatory when a backup exists, 401
+   * `auth_invalid` otherwise. Until then the account's key alone replaced the backup, so whoever sat at an unlocked device
+   * could set a password of their own. A forgotten password can no longer be replaced.
+   */
+  oldAuthKey: BackupAuthKey.optional(),
+  ...DeviceProofFields,
 });
 /** First step of recovery: salt and iterations so the client can derive the auth key. */
 export const BackupParamsResponse = BackupParams.omit({ iv: true });
-/** Second step; `code` is only needed after a 401 totp_required (the response only comes with the correct password). */
-export const BackupFetchRequest = z.object({ handle: Handle, authKey: BackupAuthKey, code: SecondFactorCode.optional() });
+/**
+ * Second step; `code` is only needed after a 401 totp_required (the response only comes with the correct password).
+ * `deviceKey` enrols the asking device (`deviceSignature` over `deviceEnrolMessage`), `deviceKind` "page" with `remember`
+ * is the account page's sign-in (30 days, else 12 hours). After a 409 `too_many_devices` the request is repeated with its
+ * `ticket` in place of the code and `replaceDevice` = the device that makes way.
+ */
+export const BackupFetchRequest = z.object({
+  handle: Handle, authKey: BackupAuthKey, code: SecondFactorCode.optional(),
+  ...DeviceProofFields,
+  deviceKind: DeviceKind.optional(),
+  remember: z.boolean().optional(),
+  ticket: DeviceTicket.optional(),
+  replaceDevice: Uuid.optional(),
+});
 export const BackupBlob = z.object({ handle: Handle, publicKey: PublicKey, ciphertext: z.string(), params: BackupParams, updatedAt: Iso });
 
 // ---- M6c: signed account actions (authenticator, recovery codes, account status). Same pattern as registration
 // and backup: challenge + signature over host, nonce and payload (for actions with a code, the code is the payload).
-export const DirectoryAction = z.enum(["totp-setup", "totp-enable", "totp-disable", "recovery-regenerate", "account-status", "profile-update", "friends", "server-leave", "sound-settings", "email-set", "email-verify", "email-code", "settings", "avatar-set", "link-lookup", "dm-blob-put", "settings-sealed", "report", "notice-read"]);
+export const DirectoryAction = z.enum(["totp-setup", "totp-enable", "totp-disable", "recovery-regenerate", "account-status", "profile-update", "friends", "server-leave", "sound-settings", "email-set", "email-verify", "email-code", "settings", "avatar-set", "link-lookup", "dm-blob-put", "settings-sealed", "report", "notice-read", "device-revoke"]);
 export type DirectoryAction = z.infer<typeof DirectoryAction>;
 export function directoryActionMessage(directoryHost: string, action: DirectoryAction, nonce: string, payload = ""): string {
   return `community-directory-${action}\n${directoryHost}\n${nonce}\n${payload}`;
 }
-export const SignedActionRequest = z.object({ publicKey: PublicKey, challengeId: Uuid, signature: Signature });
+/** `deviceKey`/`deviceSignature`: the device's proof over the same message (Devices, above); every request that extends this carries them. */
+export const SignedActionRequest = z.object({ publicKey: PublicKey, challengeId: Uuid, signature: Signature, ...DeviceProofFields });
 export const CodeActionRequest = SignedActionRequest.extend({ code: SecondFactorCode });
+
+// ---- Signing devices out (Devices, above): signed action `device-revoke` (POST /api/devices/revoke), payload = `target`.
+//  - a device's id or "others": needs the password's auth key and, with the authenticator on, a code (the user's decision:
+//    whoever sits at an unlocked device must not sign the owner's devices out); 409 `no_backup` for an account without a
+//    password. The first one makes the account enforced.
+//  - "self": the asking device signs itself out (the client's own "Abmelden"); its proof is enough.
+// `features.deviceRevoke` says that the directory takes the action; `features.devices` alone = it enrols and lists only.
+export const DeviceRevokeTarget = z.union([Uuid, z.literal("others"), z.literal("self")]);
+export type DeviceRevokeTarget = z.infer<typeof DeviceRevokeTarget>;
+export const DeviceRevokeRequest = SignedActionRequest.extend({ target: DeviceRevokeTarget, authKey: BackupAuthKey.optional(), code: SecondFactorCode.optional() });
+export type DeviceRevokeRequest = z.infer<typeof DeviceRevokeRequest>;
+/** `revoked` = how many devices were signed out, `devices` = the list afterwards (empty after "self"). */
+export const DeviceRevokeResponse = z.object({ ok: z.literal(true), revoked: z.number().int().min(0), devices: z.array(DeviceInfo) });
+export type DeviceRevokeResponse = z.infer<typeof DeviceRevokeResponse>;
 
 // ---- E-mail in the account (17 September 2026, only when the service has SMTP: features.email). The address is stored
 // unconfirmed first; `email-set` (payload = address, empty = remove) mails an 8-digit code, `email-verify` (payload = code)
@@ -703,6 +829,8 @@ export const AccountStatus = DirectoryAccount.extend({
    */
   notices: AccountNotices,
   suspendedReason: ReportReason.nullable().default(null).catch(null),
+  /** The account's enrolled devices, the asking one first (Devices, above); `deviceKeys` stays empty here. Empty for a directory from before them. */
+  devices: z.array(DeviceInfo).default([]),
 });
 
 export const DirectoryHealth = z.object({
@@ -710,8 +838,8 @@ export const DirectoryHealth = z.object({
   service: z.literal("directory"),
   /** Host that registration signatures are bound to. */
   host: z.string(),
-  /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). */
-  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), refusedServers: z.boolean().default(false), notices: z.boolean().default(false) }),
+  /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). `devices`: the directory enrols devices and lists them in the account's status. `deviceRevoke`: it signs devices out and enforces (action `device-revoke`, the refusals of a device). */
+  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false) }),
   time: Iso,
 });
 
@@ -735,6 +863,9 @@ export type ProbeResult = z.infer<typeof ProbeResult>;
  * signing in there. The chat server passes the nonce and that signature to the directory as the proof that the user really
  * signed in there (security review of 25 September 2026: until then any registered server could add itself to any
  * account's server list by looking the key up). Query parameters `nonce` and `sig` on GET /api/keys/:key.
+ * With devices (29 September 2026) the chat server passes the device's proof over this message too (`dkey`, `dsig`):
+ * an enforced account gets a new entry in its server list only from an enrolled device, so a copied account key cannot
+ * put a server of somebody else's into the list, where the account's clients would sign in by themselves.
  */
 export function chatLoginMessage(domain: string, nonce: string): string {
   return `community-chat-login\n${domain}\n${nonce}`;

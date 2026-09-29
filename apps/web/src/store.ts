@@ -2,7 +2,9 @@ import {
   DM_MAX_CIPHERTEXT_CHARS, DM_REPORT_CONTEXT_MAX, base64ToBytes, deriveDmKey, deriveSettingsKey, directoryServerUrl, openDm, openSettings, reportKindsOf, sealDm, sealSettings, type DmControl, type DmPreview,
   type AccountServer, type AccountSettings, type AccountStatus, type DirectoryAccount, type DirectoryServerEvent, type DmConversation, type DmMessage, type Friend, type GamePresence, type ReportReason, type ServerLeaveResponse,
   type AccountNotice, type DirectoryReportKind, type ServerReportEvidence,
+  isDeviceRefusal, type DeviceInfo, type TooManyDevicesResponse,
 } from "@squorli/protocol";
+import { afterAsking, directoryWordOf, refusalStep, stillThatDevice, type DirectoryWord } from "./deviceRefusal";
 import { REFUSED_LIST_MAX_AGE_MS, hostRefused, loadDismissedRefused, loadRefusedList, refusedList, refusedListDue, sameHidden, saveDismissedRefused, saveRefusedList, shownRefused, type RefusedList } from "./refusedServers";
 import { buildDmPreviews, type PreviewDeps } from "./dmPreviews";
 import { shrinkPreviewImage } from "./dmPreviewImage";
@@ -12,7 +14,7 @@ import * as api from "./api";
 import type { AvatarImage } from "./avatarImage";
 import { DirectoryLink, type LinkStatus } from "./directoryLink";
 import { dmReportContent } from "./dmReports";
-import { forgetServerAccount, loadOrCreateIdentity, loadServerAccounts, newIdentity, storeIdentity, storeServerAccount, type Identity, type ServerAccount } from "./identity";
+import { IDENTITY_STORAGE_KEY, deviceSignerOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
 import { ServerConnection, type ServerConnState } from "./serverConnection";
 import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSettings } from "./accountSettings";
 import { loadBlockedLists, sameBlocked, saveBlockedLists, saveBlockedName, withBlocked, type BlockedLists } from "./blocked";
@@ -72,6 +74,15 @@ export type State = {
   directoryGameLibrary: boolean;
   /** Servers the handle has signed in on (directory, AccountStatus.servers): the server rail. null = unknown/no account. */
   accountServers: AccountServer[] | null;
+  /**
+   * Devices of the directory account (docs/features/devices.md), as its status has them, the asking one first; empty without
+   * an account. `devicesKnown`: the directory knows devices at all; `deviceRevoke`: it signs them out and lets only enrolled
+   * devices into an enforced account; `devicesEnforced`: this account is such a one.
+   */
+  devices: DeviceInfo[];
+  devicesKnown: boolean;
+  deviceRevoke: boolean;
+  devicesEnforced: boolean;
   /** Last failure while saving the settings in the directory account (shown in the settings dialog); null = fine. */
   settingsSyncError: string | null;
   /** The account keeps the settings as a blob only this user's key opens (directory `features.settingsSealed`); false = in the open, or no account. */
@@ -148,7 +159,14 @@ export const activeState = (s: State): ServerConnState | null => (s.activeHost !
 
 const handlesOf = (all: Record<string, ServerAccount>): Record<string, string> => Object.fromEntries(Object.entries(all).map(([h, a]) => [h, a.localHandle]));
 
-/** A failed key restore for the login views: the directory's code and body (`totp_required` carries `email`). */
+/** After a refusal by a chat server the client signs in there again at most once in this time (deviceRefusal.ts). */
+const REFUSED_RETRY_MS = 60_000;
+/** How long a sign-out waits for the devices' own sign-out where they are enrolled; the keys go either way. */
+const SIGN_OUT_WAIT_MS = 3000;
+/** What a sign-in that met the limit of devices carries: the account's devices and the ticket for the second try. */
+export type DeviceLimit = Pick<TooManyDevicesResponse, "devices" | "ticket">;
+
+/** A failed key restore for the login views: the directory's code and body (`totp_required` carries `email`, `too_many_devices` the devices). */
 const restoreError = (err: unknown) => Object.assign(new Error("restore failed"), { code: err instanceof api.ApiError ? err.code : null, body: err instanceof api.ApiError ? err.body : {} });
 
 /** What the store needs from the platform (`platform/`): the server that serves the page, or the directory to use when there is none. */
@@ -218,6 +236,13 @@ export class Store {
   private dismissedRefused: string[] = loadDismissedRefused();
   private accountDismissed: string[] | null = null;
   private linkRun = 0;
+  /** Devices: when the client last signed in again at a server that had refused its device, and whether a wipe runs. */
+  private refusedAgainAt = new Map<string, number>();
+  private wiping = false;
+  /** The user signs out: what the servers say about this device from here on is the answer to that, nothing to act on. */
+  private leaving = false;
+  /** A sign-in met the limit of devices: the device it made, kept for the second try (the directory's ticket names its key). */
+  private limitDevice: { ticket: string; device: NewDevice } | null = null;
 
   constructor(opts: StoreOptions) {
     this.homeHost = opts.home?.host ?? null;
@@ -227,12 +252,14 @@ export class Store {
     this.state = {
       identity: null, serverAccounts: handlesOf(loadServerAccounts()), homeHost: this.homeHost, activeHost: this.homeHost, servers: home ? { [home.state.host]: home.state } : {},
       signedIn: false, localHosts: [], clientLogin: { busy: false, error: null }, joinInvites: {},
-      directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
+      directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, devices: [], devicesKnown: false, deviceRevoke: false, devicesEnforced: false, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
       directoryLink: "idle", directoryLinkError: null, dmReports: false, reportKinds: [], notices: [], suspendedUntil: null, suspendedReason: null, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
     };
     // The list of refused chat servers is good for an hour (refusedServers.ts).
     setInterval(() => { void this.refreshRefused(); }, REFUSED_LIST_MAX_AGE_MS);
     subscribeVoiceSettings((_s, source) => { if (source === "user") this.scheduleSettingsPush(); });
+    // Another tab of this browser signed out, or signed in anew: the keys live in storage all tabs share, and this tab follows.
+    if (typeof window !== "undefined") window.addEventListener("storage", (e) => { if (e.key === IDENTITY_STORAGE_KEY || e.key === null) void this.followStorage(); });
     // AFK detection: every chat server and the directory hear when the user turns idle or comes back (activity.ts).
     activity.subscribe((idle) => { for (const conn of this.conns.values()) conn.setIdle(idle); this.link?.setIdle(idle); });
   }
@@ -250,6 +277,7 @@ export class Store {
       onState: (s) => { if (this.state) this.set({ servers: { ...this.state.servers, [host]: s } }); },
       onToken: (token) => this.storeToken(host, token),
       onSessionLost: (message) => this.sessionLost(host, message),
+      onDeviceRefused: () => { void this.deviceRefused(host); },
       onRemoved: () => this.onRemoved?.(host),
       // Your own server, or a server the rail does not list yet (first sign-in there): fetch the list again. Servers connected in the
       // background are already on it, asking the directory once per server would be pointless.
@@ -275,6 +303,10 @@ export class Store {
   }
   private async start() {
     const identity = await loadOrCreateIdentity();
+    // Devices (docs/features/devices.md): the signers of the device keys this installation holds. A server account from
+    // before devices gets its device here; the main identity gets one once it is known to have a directory account.
+    await loadDeviceOf(identity);
+    await this.readyServerAccounts();
     this.set({ identity });
     const home = this.home;
     if (home) {
@@ -344,7 +376,7 @@ export class Store {
   /** The key a server signs in with: its server account's, else the main identity. */
   identityFor(host: string): Identity | null {
     const acc = this.serverAccount(host);
-    return acc ? { publicKey: acc.publicKey, privateKey: acc.privateKey } : this.state.identity;
+    return acc ? { publicKey: acc.publicKey, privateKey: acc.privateKey, device: acc.device ?? null } : this.state.identity;
   }
   private rememberServerAccount(host: string, id: Identity, localHandle: string, token: string | null) {
     storeServerAccount(host, { ...id, localHandle, token });
@@ -392,25 +424,40 @@ export class Store {
     conn.state = { ...conn.state, connection: "logging-in", error: null, removed: null };
     this.publish(conn);
     try {
-      const id = await newIdentity();
-      const session = await conn.api.localRegister(id, await this.signDomainOf(conn), handle, password, invite, ownerCode);
+      const id = { ...(await newIdentity()), device: (await newDevice()).stored };
+      const session = await conn.api.localRegister(id, await this.signDomainOf(conn), handle, password, invite, ownerCode).catch(async (err) => { await dropDevice(id.device); throw err; });
       this.rememberServerAccount(host, id, handle.trim().toLowerCase(), null);
       await conn.adopt(session);
     } catch (err) { this.failed(conn, err); }
   }
-  /** Sign in with a server account on another device: fetch its key from the server with the password, then sign in with it. */
-  async loginLocal(host: string, handle: string, password: string, invite?: string): Promise<void> {
+  /**
+   * Sign in with a server account on another device: fetch its key from the server with the password, then sign in with it.
+   * The fetch enrols this installation's device (docs/features/devices.md); at the limit of devices it throws with the code
+   * `too_many_devices` and `limit` (the account's devices), and the call comes again with `replaceDevice`.
+   */
+  async loginLocal(host: string, handle: string, password: string, invite?: string, replaceDevice?: string): Promise<void> {
     const conn = this.conns.get(host);
     if (!conn) return;
     conn.state = { ...conn.state, connection: "logging-in", error: null, removed: null };
     this.publish(conn);
     let id: Identity;
     let legacy = false;
-    try { ({ id, legacy } = await conn.api.localRestore(handle, password)); }
-    catch (err) { this.failed(conn, err); }
+    const device = await newDevice();
+    try { ({ id, legacy } = await conn.api.localRestore(handle, password, { device, domain: await this.signDomainOf(conn), replaceDevice })); }
+    catch (err) {
+      await dropDevice(device.stored);
+      if (err instanceof api.ApiError && err.code === "too_many_devices") {
+        conn.state = { ...conn.state, connection: "idle", error: null };
+        this.publish(conn);
+        throw Object.assign(new Error("too many devices"), { code: err.code, limit: deviceLimitOf(err) });
+      }
+      this.failed(conn, err);
+    }
+    // The key of an earlier sign-in with this account on this installation makes way.
+    await dropDevice(this.serverAccount(host)?.device);
     this.rememberServerAccount(host, id, handle.trim().toLowerCase(), null);
     try { await conn.login(await this.signDomainOf(conn), invite); }
-    catch (err) { this.dropServerAccount(host); throw err; }
+    catch (err) { await dropDevice(id.device); this.dropServerAccount(host); throw err; }
     // A backup from before 25 September 2026 is not bound to this server's host (backup.ts): encrypt it anew, bound, now
     // that the password is at hand (the same password; the server keeps nothing else).
     if (legacy) void conn.api.localChangePassword(id, handle.trim().toLowerCase(), password, password).catch(() => { /* next sign-in tries again */ });
@@ -426,9 +473,9 @@ export class Store {
     if (!conn || !id) return;
     const health = await conn.refreshHealth();
     if (!health?.localClaimRekey) this.failed(conn, new Error(t("err.claimNeedsUpdate")));
-    const fresh = await newIdentity();
+    const fresh = { ...(await newIdentity()), device: (await newDevice()).stored };
     try { await conn.api.localClaim(id, fresh, await this.signDomainOf(conn), handle, password); }
-    catch (err) { this.failed(conn, err); }
+    catch (err) { await dropDevice(fresh.device); this.failed(conn, err); }
     const token = conn.api.getToken();
     this.storeToken(host, null);
     this.rememberServerAccount(host, fresh, handle.trim().toLowerCase(), token);
@@ -445,7 +492,9 @@ export class Store {
   logoutServerAccount(host: string) {
     if (!this.serverAccount(host)) return;
     const conn = this.conns.get(host);
-    conn?.logout();
+    // The device signs itself out with its session (docs/features/devices.md); a server from before devices ends the session.
+    if (conn?.state.deviceList && conn.api.getToken()) { void conn.api.signOutDevice().catch(() => {}); conn.signedOut(null); } else conn?.logout();
+    void dropDevice(this.serverAccount(host)?.device);
     this.dropServerAccount(host);
     if (host !== this.homeHost) this.closeServer(host);
   }
@@ -462,7 +511,168 @@ export class Store {
     // A new password ends the account's other sessions here (security review, 25 September 2026): whoever changes it
     // because it leaked wants the other devices out. Done by the client, since the same route rebinds an old backup with
     // the same password at a sign-in (loginLocal), which must sign nobody out.
-    await conn.api.revokeOtherSessions().catch(() => { /* the password is changed; the list in Sitzungen still works */ });
+    // Since devices (29 September 2026) the other devices are signed out, which ends their sessions and keeps them out.
+    if (conn.state.deviceList) await conn.api.revokeDevice(handle, newPassword, "others").catch(() => { /* the password is changed; the list in Geräte still works */ });
+    else await conn.api.revokeOtherSessions().catch(() => { /* the password is changed; the list in Sitzungen still works */ });
+  }
+
+  // ---------- Devices (docs/features/devices.md): this installation's device key per account, what happens when a device is
+  // not let in (deviceRefusal.ts), the accounts' device lists and the sign-out that takes the keys off this installation.
+  /** The identity with a device that can sign: its own, or a new one where the entry names none or its key pair is gone. */
+  private async withDevice<T extends Identity>(id: T): Promise<T> {
+    if (await loadDeviceOf(id)) return id;
+    await dropDevice(id.device);
+    return { ...id, device: (await newDevice()).stored };
+  }
+  private async readyServerAccounts(): Promise<void> {
+    for (const [host, acc] of Object.entries(loadServerAccounts())) {
+      const ready = await this.withDevice(acc);
+      if (ready !== acc) storeServerAccount(host, ready);
+    }
+  }
+  /**
+   * The main identity gets its device (an entry from before devices, or one whose key pair is gone): the next signed
+   * request carries its proof, and an account that is not enforced enrols it at the directory without a word.
+   */
+  private async giveDevice(): Promise<Identity | null> {
+    const id = this.state.identity;
+    if (!id) return null;
+    const ready = await this.withDevice(id);
+    if (ready === id) return id;
+    // Another tab may have been faster: what is stored counts, so that both tabs sign as one device.
+    const stored = storedIdentity();
+    if (stored && stored.publicKey === id.publicKey && stored.device && stored.device.publicKey !== ready.device?.publicKey && await loadDeviceOf(stored)) {
+      await dropDevice(ready.device);
+      this.set({ identity: stored });
+      return stored;
+    }
+    storeIdentity(ready);
+    this.set({ identity: ready });
+    return ready;
+  }
+  /** What the directory says about this device: the answer to a signed request. */
+  private async askDirectory(): Promise<DirectoryWord> {
+    const id = this.state.identity; const url = this.state.directoryUrl;
+    if (!id || !url) return { kind: "unknown" };
+    try { await api.directoryAccountStatus(url, id); return { kind: "ok" }; }
+    catch (err) { return directoryWordOf(err); }
+  }
+  /**
+   * A chat server does not let this device in. Its own account (`~name`): its word counts, that account's key leaves this
+   * installation. A directory account: the directory is asked; only its refusal takes the key away. If it lets the device
+   * in, the server was behind (or this was the first sign-out of the account, which ends every session from before
+   * devices): the client signs in there again, once.
+   */
+  private async deviceRefused(host: string): Promise<void> {
+    if (this.leaving) return;
+    const conn = this.conns.get(host);
+    const acc = this.serverAccount(host);
+    if (refusalStep({ from: "server", local: !!acc }) === "wipe-local") {
+      await dropDevice(acc?.device);
+      this.dropServerAccount(host);
+      conn?.signedOut(t("err.deviceSignedOut"));
+      return;
+    }
+    const tried = Date.now() - (this.refusedAgainAt.get(host) ?? 0) < REFUSED_RETRY_MS;
+    const step = afterAsking(await this.askDirectory(), tried);
+    if (step === "wipe") return this.wipeAccount(t("err.deviceSignedOut"));
+    if (!conn || this.conns.get(host) !== conn) return;
+    if (step === "say-unchecked") return conn.say(t("err.deviceUnchecked"));
+    if (step === "say-refused") return conn.say(t("err.deviceRefused"));
+    this.refusedAgainAt.set(host, Date.now());
+    try { await conn.login(host === this.homeHost ? this.signDomain : await this.signDomainOf(conn)); } catch { /* the message is kept in the server's state */ }
+  }
+  /** The keys in storage changed in another tab: a sign-out there, or a new sign-in. */
+  private async followStorage(): Promise<void> {
+    const id = this.state.identity;
+    if (!id || this.wiping || this.leaving) return;
+    const stored = storedIdentity();
+    if (stored && stored.publicKey === id.publicKey && stillThatDevice(stored.device?.publicKey, id.device?.publicKey)) return;
+    await this.wipeAccount(null);
+  }
+  /**
+   * The account's key leaves this installation (the user's decision of 29 September 2026: a device that was signed out
+   * loses the whole account): the servers that sign in with the main identity end, with friends and direct messages; the
+   * key, its device and the stored sessions go. Servers with a server account of their own stay, they have keys of their
+   * own. The login then shows `message`. Only the entry of this device is removed: another tab may have signed in anew.
+   */
+  private async wipeAccount(message: string | null): Promise<void> {
+    const id = this.state.identity;
+    // While the user signs out, only that sign-out wipes (it says nothing on the login).
+    if (!id || this.wiping || (this.leaving && message !== null)) return;
+    this.wiping = true;
+    try {
+      const stored = storedIdentity();
+      const mine = !stored || (stored.publicKey === id.publicKey && stillThatDevice(stored.device?.publicKey, id.device?.publicKey));
+      this.linkRun++;
+      this.link?.close(); this.link = null;
+      if (this.settingsPushTimer) { clearTimeout(this.settingsPushTimer); this.settingsPushTimer = null; }
+      this.pushWanted = false; this.settingsLoaded = false; this.settingsKey = null; this.accountSettings = null;
+      this.dmKeys.clear();
+      const accounts = loadServerAccounts();
+      const home = this.home;
+      for (const host of this.conns.keys()) if (host !== this.homeHost && !accounts[host]) this.onRemoved?.(host);
+      if (home && !accounts[home.state.host]) home.signedOut(message);
+      this.closeAllForeign(true);
+      this.forgetAllTokens();
+      if (mine) { await dropDevice(id.device); forgetStoredIdentity(); }
+      this.forgetBlockedOf(id.publicKey);
+      if (this.lastHost !== null && !accounts[this.lastHost]) this.lastHost = null;
+      this.entered = false;
+      this.accountRefused = new Set();
+      const next = await loadOrCreateIdentity();
+      await loadDeviceOf(next);
+      this.set({
+        identity: next, directoryAccount: undefined, accountServers: null, devices: [], devicesEnforced: false, notices: [], suspendedUntil: null, suspendedReason: null,
+        friends: null, conversations: {}, dms: {}, currentPeer: null, homeOpen: false, directoryLink: "idle", directoryLinkError: null,
+        localHosts: this.state.localHosts.filter((h) => !!accounts[h]), joinInvites: {}, signedIn: false, clientLogin: { busy: false, error: message },
+      });
+      this.saveClient();
+      await this.refreshDirectory();
+    } finally { this.wiping = false; }
+  }
+  /** Whose devices the settings list: the server shown signs in with a server account of its own, or the directory account. null = no list. */
+  deviceScope(): "local" | "directory" | null {
+    const conn = this.active;
+    if (conn && this.serverAccount(conn.state.host)) return conn.state.deviceList && conn.state.me ? "local" : null;
+    return this.state.directoryAccount && this.state.devicesKnown ? "directory" : null;
+  }
+  /** Signing out takes the account with it for good: a directory account without a password exists on its devices only. */
+  logoutLosesAccount(): boolean {
+    return !!this.state.directoryAccount && !this.state.directoryAccount.hasBackup;
+  }
+  /** The devices of the server account on the server shown. Throws with a translated message. */
+  async localDevices(): Promise<DeviceInfo[]> {
+    const conn = this.active;
+    if (!conn) return [];
+    try { return await conn.api.getDevices(); }
+    catch (err) { throw new Error(api.explainLocalError(err)); }
+  }
+  /**
+   * Sign a device out (`target` = its id) or all others ("others"), with the account's password and, for a directory
+   * account with the authenticator on, a code. Answers the list afterwards. Throws with a translated message and the
+   * code (`totp_required`: the dialog asks for the code; `auth_invalid`: the password was wrong).
+   */
+  async revokeDevices(target: string, password: string, code?: string): Promise<DeviceInfo[]> {
+    const scope = this.deviceScope();
+    const conn = this.active;
+    if (scope === "local" && conn) {
+      const handle = conn.state.me?.localHandle;
+      if (!handle) return [];
+      try { return await conn.api.revokeDevice(handle, password, target); }
+      catch (err) { throw Object.assign(new Error(api.explainLocalError(err)), { code: err instanceof api.ApiError ? err.code : null }); }
+    }
+    const id = this.state.identity; const url = this.state.directoryUrl; const account = this.state.directoryAccount;
+    if (scope !== "directory" || !id || !url || !account) return [];
+    try {
+      const res = await api.directoryRevokeDevice(url, id, target, { handle: account.handle, password, code });
+      this.set({ devices: res.devices, devicesEnforced: true });
+      return res.devices;
+    } catch (err) {
+      // The directory refuses this very device: it was signed out meanwhile.
+      if (directoryWordOf(err).kind === "refused") void this.wipeAccount(t("err.deviceSignedOut"));
+      throw Object.assign(new Error(api.explainDirectoryError(err)), { code: err instanceof api.ApiError ? err.code : null });
+    }
   }
   /** Delete the server account of the server shown (the password proves it); the server then closes the socket with 4012. */
   async deleteLocalAccount(password: string): Promise<void> {
@@ -701,14 +911,15 @@ export class Store {
    * Sign in with the directory account (handle + password, code with an active authenticator): fetches the key, replaces the
    * device key, then connects the account's servers and opens the one viewed last. Throws like `loginWithHandle`.
    */
-  async loginDirectoryAccount(handle: string, password: string, code?: string): Promise<void> {
+  async loginDirectoryAccount(handle: string, password: string, code?: string, choice?: api.DeviceChoice): Promise<void> {
     const url = this.state.directoryUrl;
     if (!url || this.homeHost !== null) return;
     this.set({ clientLogin: { busy: true, error: null } });
     let id: Identity;
-    try { id = await api.directoryRestore(url, handle, password, code); }
+    try { id = await this.restoreWithDevice(url, handle, password, code, choice); }
     catch (err) {
-      this.set({ clientLogin: { busy: false, error: api.explainDirectoryError(err) } });
+      // The limit of devices is no error but the next step (the login asks which device makes way).
+      this.set({ clientLogin: { busy: false, error: err instanceof api.ApiError && err.code === "too_many_devices" ? null : api.explainDirectoryError(err) } });
       throw restoreError(err);
     }
     // Another key than this device had: its sessions and added servers belonged to that key. Servers with a server account
@@ -720,7 +931,7 @@ export class Store {
       if (this.lastHost !== null && !accounts[this.lastHost]) this.lastHost = null;
       this.set({ localHosts: this.state.localHosts.filter((h) => !!accounts[h]), joinInvites: {} });
     }
-    storeIdentity(id);
+    await this.replaceIdentity(id);
     this.set({ identity: id, directoryAccount: undefined, signedIn: true });
     this.saveClient();
     await this.refreshDirectory();
@@ -777,6 +988,8 @@ export class Store {
       const account = await api.directoryLookup(directoryUrl, id.publicKey);
       // A key without a handle may register one: the login has to know whether the directory wants an e-mail address for that.
       const emailRequired = account ? false : (await api.directoryHealth(directoryUrl)).features.emailRequired;
+      // A key with an account signs with its device from here on (docs/features/devices.md): an entry from before devices gets one.
+      if (account && this.state.identity === id) await this.giveDevice();
       this.set({ directoryAccount: account, directoryEmailRequired: emailRequired });
     }
     catch (err) { this.set({ directoryAccount: undefined, directoryError: api.explainDirectoryError(err) }); }
@@ -894,6 +1107,8 @@ export class Store {
       }
       case "error":
         if (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account") break; // connection error, recorded in directoryLinkError
+        // The directory does not let this device in (it was signed out): the account's key leaves this installation.
+        if (isDeviceRefusal(e.code)) { void this.wipeAccount(t("err.deviceSignedOut")); break; }
         if (e.code === "account_suspended") {
           // The directory's operator suspended the account: no socket until then. The status has the reason and the notice.
           this.link?.close(); this.link = null;
@@ -1137,7 +1352,8 @@ export class Store {
       this.accountRefused = new Set(refusedNow.map((s) => this.hostFor(s.host)));
       const allowed = status.servers.filter((s) => !this.accountRefused.has(this.hostFor(s.host))).map((s) => ({ ...s, refused: false }));
       // The avatar's version comes along: an image changed on the account page shows in the settings without a reload of the lookup.
-      this.set({ directoryAvatars: health.features.avatars, directoryGameLibrary: health.features.gameLibrary, ...(acc ? { directoryAccount: { ...acc, displayName: status.displayName, avatarUpdatedAt: status.avatarUpdatedAt } } : {}) });
+      this.set({ directoryAvatars: health.features.avatars, directoryGameLibrary: health.features.gameLibrary, ...(acc ? { directoryAccount: { ...acc, displayName: status.displayName, avatarUpdatedAt: status.avatarUpdatedAt, hasBackup: status.hasBackup } } : {}) });
+      this.set({ devices: status.devices, devicesKnown: health.features.devices, deviceRevoke: health.features.deviceRevoke, devicesEnforced: status.devicesEnforced });
       // Measures of the directory's operator (docs/features/reports.md): the notices, and whether the account is suspended.
       const wasSuspended = this.isSuspended();
       this.set({ reportKinds: reportKindsOf(health.features).filter((k) => k !== "dm"), notices: health.features.notices ? status.notices : [], suspendedUntil: status.suspendedUntil, suspendedReason: status.suspendedReason });
@@ -1165,7 +1381,11 @@ export class Store {
       const behind = (await Promise.all(allowed.map((s) => hostRefused(this.refused, url, this.hostFor(s.host))))).some(Boolean);
       this.recheckRefused();
       if (behind) void this.refreshRefused(true);
-    } catch (err) { console.warn("Serverliste vom Verzeichnis nicht verfuegbar", err); }
+    } catch (err) {
+      // The directory does not let this device in: it was signed out, or the account lets only enrolled devices in.
+      if (directoryWordOf(err).kind === "refused" && this.state.identity === id) { await this.wipeAccount(t("err.deviceSignedOut")); return; }
+      console.warn("Serverliste vom Verzeichnis nicht verfuegbar", err);
+    }
   }
 
   // ---------- Settings in the account (everything except the device selection, accountSettings.ts): the per-device copy in
@@ -1328,7 +1548,8 @@ export class Store {
    * code (result `{ sentTo }`, the masked address), with `email` and `emailCode` it creates the account.
    */
   async registerHandle(handle: string, email?: string, emailCode?: string): Promise<"done" | "failed" | { sentTo: string }> {
-    const id = this.state.identity; const url = this.state.directoryUrl;
+    // The new account's first device is this installation's (docs/features/devices.md).
+    const id = await this.giveDevice(); const url = this.state.directoryUrl;
     if (!id || !url) return "failed";
     this.set({ directoryError: null });
     try {
@@ -1346,17 +1567,18 @@ export class Store {
    * M6b: sign-in with handle + password. Fetches the key from the directory, replaces the device key, then signs in normally.
    * M6c: with an active authenticator the first attempt throws `totp_required`; the login screen then asks for the code.
    */
-  async loginWithHandle(handle: string, password: string, invite?: string, code?: string): Promise<void> {
+  async loginWithHandle(handle: string, password: string, invite?: string, code?: string, choice?: api.DeviceChoice): Promise<void> {
     const url = this.state.directoryUrl; const home = this.home;
     if (!url || !home) return;
     home.state = { ...home.state, connection: "logging-in", error: null, removed: null };
     this.set({ servers: { ...this.state.servers, [home.state.host]: home.state } });
     let id: Identity;
-    try { id = await api.directoryRestore(url, handle, password, code); }
+    try { id = await this.restoreWithDevice(url, handle, password, code, choice); }
     catch (err) {
       const errCode = err instanceof api.ApiError ? err.code : null;
-      // totp_required is not an error but the next step: keep the message neutral.
-      home.state = { ...home.state, connection: errCode === "totp_required" ? "idle" : "error", error: api.explainDirectoryError(err) };
+      // totp_required is not an error but the next step: keep the message neutral. The limit of devices the same way.
+      const next = errCode === "totp_required" || errCode === "too_many_devices";
+      home.state = { ...home.state, connection: next ? "idle" : "error", error: errCode === "too_many_devices" ? null : api.explainDirectoryError(err) };
       this.set({ servers: { ...this.state.servers, [home.state.host]: home.state } });
       throw restoreError(err);
     }
@@ -1365,8 +1587,8 @@ export class Store {
     home.api.setToken(null);
     this.forgetAllTokens();
     // The own server now signs in with the directory account, not with a server account it may have had here.
-    if (this.serverAccount(home.state.host)) this.dropServerAccount(home.state.host);
-    storeIdentity(id);
+    if (this.serverAccount(home.state.host)) { await dropDevice(this.serverAccount(home.state.host)?.device); this.dropServerAccount(home.state.host); }
+    await this.replaceIdentity(id);
     this.set({ identity: id, directoryAccount: undefined });
     void this.refreshDirectory();
     await this.login(invite);
@@ -1440,13 +1662,48 @@ export class Store {
     return r;
   }
 
-  /** M6b: store a password backup of the device key at the directory. */
-  async createBackup(password: string): Promise<boolean> {
+  /**
+   * Fetch the account's key with the password and enrol this installation's new device with the fetch
+   * (docs/features/devices.md). A fetch that fails takes its device with it, but for the one that met the limit of devices:
+   * the directory's ticket is bound to that device's key, so the second try (with `choice`) enrols the same device.
+   */
+  private async restoreWithDevice(url: string, handle: string, password: string, code?: string, choice?: api.DeviceChoice): Promise<Identity> {
+    const kept = this.limitDevice;
+    this.limitDevice = null;
+    const again = kept && choice?.ticket === kept.ticket ? kept.device : null;
+    if (kept && !again) await dropDevice(kept.device.stored);
+    const device = again ?? await newDevice();
+    try { return await api.directoryRestore(url, handle, password, code, device, choice); }
+    catch (err) {
+      const ticket = err instanceof api.ApiError && err.code === "too_many_devices" ? deviceLimitOf(err).ticket : null;
+      if (ticket) this.limitDevice = { ticket, device };
+      else await dropDevice(device.stored);
+      throw err;
+    }
+  }
+  /**
+   * The main identity is replaced by a fresh sign-in. The device this installation had for the account before makes way:
+   * it signs itself out at the directory (best effort) and its key pair goes.
+   */
+  private async replaceIdentity(id: Identity): Promise<void> {
+    const old = this.state.identity; const url = this.state.directoryUrl;
+    storeIdentity(id);
+    if (!old?.device || old.device.publicKey === id.device?.publicKey) return;
+    if (url && old.publicKey === id.publicKey && deviceSignerOf(old) && this.state.deviceRevoke) await Promise.race([api.directoryRevokeDevice(url, old, "self").catch(() => {}), new Promise((r) => setTimeout(r, SIGN_OUT_WAIT_MS))]);
+    await dropDevice(old.device);
+  }
+
+  /**
+   * M6b: store a password backup of the device key at the directory. `oldPassword`: the password so far, for an account
+   * that has a backup already (a directory with devices asks for it).
+   */
+  async createBackup(password: string, oldPassword?: string): Promise<boolean> {
     const id = this.state.identity; const url = this.state.directoryUrl;
     if (!id || !url) return false;
     this.set({ directoryError: null });
     try {
-      await api.directoryBackupUpload(url, id, password);
+      const account = this.state.directoryAccount;
+      await api.directoryBackupUpload(url, id, password, oldPassword !== undefined && account ? { handle: account.handle, password: oldPassword } : undefined);
       const acc = this.state.directoryAccount;
       if (acc) this.set({ directoryAccount: { ...acc, hasBackup: true } });
       return true;
@@ -1461,40 +1718,54 @@ export class Store {
     await this.home?.login(this.signDomain, invite);
   }
 
-  /** Sign out: all servers (the client hangs off your own server's session). */
-  logout() {
-    const home = this.home;
-    if (home) {
-      this.closeAllForeign();
-      home.logout();
-      // A server account of the own server: its key goes with the session (name and password bring it back).
-      if (this.serverAccount(home.state.host)) this.dropServerAccount(home.state.host);
-      return;
+  /**
+   * Sign out: everything on this installation (the user's decision of 29 September 2026: signing out takes the keys with
+   * it, so that nobody gets back in with one click). Every session ends, the devices sign themselves out where they are
+   * enrolled (best effort, and not for long), and the keys go: the main identity's and the server accounts'. Name and
+   * password bring an account back; an account without a password is lost (`logoutLosesAccount`, the caller asks first).
+   */
+  async logout(): Promise<void> {
+    if (this.leaving) return;
+    this.leaving = true;
+    try { await this.leave(); } finally { this.leaving = false; }
+  }
+  private async leave(): Promise<void> {
+    const id = this.state.identity; const url = this.state.directoryUrl;
+    // The sockets first: the servers close them when the device signs itself out, and that is no news.
+    this.linkRun++;
+    this.link?.close(); this.link = null;
+    for (const [host, conn] of this.conns) { this.onRemoved?.(host); conn.close(); }
+    const farewell: Promise<unknown>[] = [];
+    if (id && url && this.state.directoryAccount && this.state.deviceRevoke && deviceSignerOf(id)) farewell.push(api.directoryRevokeDevice(url, id, "self"));
+    for (const [host, conn] of this.conns) {
+      if (!conn.api.getToken()) continue;
+      farewell.push(this.serverAccount(host) && conn.state.deviceList ? conn.api.signOutDevice() : conn.api.logoutSession());
     }
-    // No home server: the client's own login ends, with every session on the servers and the keys of the server accounts
-    // (name and password bring them back; a shared computer keeps nothing).
-    for (const conn of this.conns.values()) conn.logout();
-    this.conns.clear();
-    this.forgetAllTokens();
-    for (const [host, acc] of Object.entries(loadServerAccounts())) { forgetServerAccount(host); this.forgetBlockedOf(acc.publicKey); }
+    await Promise.race([Promise.allSettled(farewell), new Promise((r) => setTimeout(r, SIGN_OUT_WAIT_MS))]);
+    // The server accounts go first, so that the wipe below ends their connections too.
+    for (const [host, acc] of Object.entries(loadServerAccounts())) {
+      await dropDevice(acc.device);
+      forgetServerAccount(host);
+      this.forgetBlockedOf(acc.publicKey);
+      if (host !== this.homeHost) this.onRemoved?.(host);
+    }
     this.set({ serverAccounts: {} });
-    this.lastHost = null; this.entered = false; this.startTarget = null;
-    this.set({ servers: {}, activeHost: null, signedIn: false, localHosts: [], joinInvites: {}, clientLogin: { busy: false, error: null } });
-    this.saveClient();
-    void this.connectDirectory();
+    this.startTarget = null;
+    await this.wipeAccount(null);
+    // Without a home server nothing of the rail is left; with one only the own server, at its login.
+    if (this.homeHost === null) { this.conns.clear(); this.set({ servers: {}, activeHost: null, localHosts: [] }); this.saveClient(); }
   }
 
-  async forgetIdentity() {
-    this.logout();
-    this.link?.close(); this.link = null;
-    this.forgetAllTokens();
-    const { forgetIdentity } = await import("./identity");
-    const old = this.state.identity;
-    forgetIdentity();
-    if (old) this.forgetBlockedOf(old.publicKey);
-    this.set({ identity: await loadOrCreateIdentity(), directoryAccount: undefined });
-    void this.refreshDirectory();
+  /** "Identität verwerfen": the same as signing out since devices (the key leaves this installation either way). */
+  forgetIdentity(): Promise<void> {
+    return this.logout();
   }
+}
+
+/** The account's devices and the ticket out of a sign-in that met the limit of devices. */
+function deviceLimitOf(err: api.ApiError): DeviceLimit {
+  const body = err.body as { devices?: unknown; ticket?: unknown };
+  return { devices: Array.isArray(body.devices) ? (body.devices as DeviceInfo[]) : [], ticket: typeof body.ticket === "string" ? body.ticket : null };
 }
 
 /** Turns error codes from the directory socket (M7) into sentences. */

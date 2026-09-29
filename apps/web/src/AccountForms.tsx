@@ -1,5 +1,6 @@
-import { BACKUP_MIN_PASSWORD, DIRECTORY_HANDLE_PREFIX, LOCAL_HANDLE_PREFIX, LocalHandle } from "@squorli/protocol";
+import { BACKUP_MIN_PASSWORD, DIRECTORY_HANDLE_PREFIX, LOCAL_HANDLE_PREFIX, LocalHandle, type DeviceInfo } from "@squorli/protocol";
 import { useState, type ReactNode } from "react";
+import { DevicePicker } from "./DevicePicker";
 import { t } from "./i18n";
 import { createTabs, loginPrefix, type CreateTab, type LoginKind } from "./loginView";
 import { PasswordInput } from "./PasswordInput";
@@ -12,13 +13,26 @@ import { safeHref } from "./safeHref";
  * account, `~name` = the server account. Only creating an account has tabs.
  */
 
-/** A sign-in failure the form handles itself: the directory's second factor. */
-type SignInError = { code?: string | null; body?: { email?: unknown } };
+/**
+ * A sign-in failure the form handles itself: the directory's second factor, and the limit of devices (docs/features/devices.md:
+ * the account's devices come with it, from the directory in `body` with a ticket, from a chat server in `limit`).
+ */
+type SignInError = { code?: string | null; body?: { email?: unknown; devices?: unknown; ticket?: unknown }; limit?: { devices: DeviceInfo[]; ticket: string | null } };
+/** At the limit of devices: the one the user picked to make way, and the directory's ticket for the second try. */
+export type DeviceChoice = { replaceDevice: string; ticket: string | null };
+/** The devices and the ticket out of such a failure; null for any other. */
+export function deviceLimitOf(err: unknown): { devices: DeviceInfo[]; ticket: string | null } | null {
+  const e = err as SignInError;
+  if (e?.code !== "too_many_devices") return null;
+  if (e.limit) return e.limit;
+  return { devices: Array.isArray(e.body?.devices) ? (e.body.devices as DeviceInfo[]) : [], ticket: typeof e.body?.ticket === "string" ? e.body.ticket : null };
+}
 
 export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onLocal, onEmailCode, idPrefix }: {
   hasDirectory: boolean; localAccounts: boolean; busy: boolean;
-  onDirectory: (handle: string, password: string, code?: string) => Promise<void>;
-  onLocal: (handle: string, password: string) => Promise<void>;
+  /** `choice`: the second try of a sign-in that met the limit of devices. */
+  onDirectory: (handle: string, password: string, code?: string, choice?: DeviceChoice) => Promise<void>;
+  onLocal: (handle: string, password: string, replaceDevice?: string) => Promise<void>;
   /** Mail a code for the directory's second factor; returns what to show. */
   onEmailCode: ((handle: string, password: string) => Promise<string>) | null;
   idPrefix: string;
@@ -33,6 +47,8 @@ export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onL
   const [emailOffered, setEmailOffered] = useState(false);
   const [emailNote, setEmailNote] = useState<string | null>(null);
   const [emailBusy, setEmailBusy] = useState(false);
+  // The account has as many devices as it may: the user picks the one that makes way (DevicePicker.tsx).
+  const [limit, setLimit] = useState<{ devices: DeviceInfo[]; ticket: string | null } | null>(null);
   const both = hasDirectory && localAccounts;
   // What the typed prefix asks for, and whether this server offers it.
   const unavailable = kind === "directory" ? (!hasDirectory ? t("login.noDirectoryForAt") : null) : (!localAccounts && hasDirectory ? t("login.localOff") : null);
@@ -45,15 +61,16 @@ export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onL
     setName(value.replace(/^[@~]+/, "").trimStart());
     if (needCode && p) setNeedCode(false);
   }
-  async function submit() {
+  async function submit(replaceDevice?: string) {
     if (unavailable) return;
     try {
-      if (kind === "directory") await onDirectory(name.trim(), password, code.trim() || undefined);
-      else await onLocal(name.trim(), password);
-      setPassword(""); setCode(""); setNeedCode(false); setEmailOffered(false); setEmailNote(null);
+      if (kind === "directory") await onDirectory(name.trim(), password, code.trim() || undefined, replaceDevice && limit ? { replaceDevice, ticket: limit.ticket } : undefined);
+      else await onLocal(name.trim(), password, replaceDevice);
+      setPassword(""); setCode(""); setNeedCode(false); setEmailOffered(false); setEmailNote(null); setLimit(null);
     } catch (err) {
       const e = err as SignInError;
       if (kind === "directory" && e.code === "totp_required") { setNeedCode(true); setEmailOffered(e.body?.email === true && !!onEmailCode); }
+      setLimit(deviceLimitOf(err));
     }
   }
   async function sendEmailCode() {
@@ -62,6 +79,7 @@ export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onL
     try { setEmailNote(await onEmailCode(name.trim(), password)); } finally { setEmailBusy(false); }
   }
 
+  if (limit) return <DevicePicker devices={limit.devices} busy={busy} onPick={(id) => void submit(id)} onCancel={() => setLimit(null)} />;
   return (
     <div className="stack handle-box">
       <h2>{t("login.signInTitle")}</h2>

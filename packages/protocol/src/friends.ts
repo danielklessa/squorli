@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DisplayName, Handle, LibraryGameId } from "./directory";
+import { DeviceProofFields, DisplayName, Handle, LibraryGameId } from "./directory";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
 
 // COPY NOTE: also exists byte-identically in the squorli-directory repo (packages/protocol/src); the source is squorli-server, copy it over after any change.
@@ -85,7 +85,8 @@ export const DmConversation = z.object({ peer: PublicKey, lastSeq: z.number().in
 export type DmConversation = z.infer<typeof DmConversation>;
 
 // ---- Client -> directory
-export const DirectoryClientAuth = z.object({ type: z.literal("auth"), publicKey: PublicKey, signature: Signature, version: z.number().int() });
+/** `deviceKey`/`deviceSignature`: the device's proof over `directoryWsAuthMessage` (directory.ts "Devices"); a service from before them drops the fields. */
+export const DirectoryClientAuth = z.object({ type: z.literal("auth"), publicKey: PublicKey, signature: Signature, version: z.number().int(), ...DeviceProofFields });
 export const DirectoryClientPing = z.object({ type: z.literal("ping"), t: z.number() });
 /** Request to a key (the client has resolved handle -> key beforehand). If a request from the other side is already open, this accepts it. */
 export const FriendRequest = z.object({ type: z.literal("friends.request"), publicKey: PublicKey });
@@ -131,8 +132,12 @@ export const FriendPresenceEvent = z.object({ type: z.literal("friends.presence"
  * `account_suspended` (27 September 2026): the directory's operator suspended the account, it gets no socket until `until`.
  * The directory sends it right before an `unauthorized`: a client from before it drops the code it does not know and stops
  * on the second one, a client that knows it stops on the first and shows the suspension.
+ * `device_revoked`, `device_unknown`, `device_required` (29 September 2026, directory.ts "Devices"): the device is not let
+ * in; sent the same way before an `unauthorized`, and the socket closes with DIRECTORY_WS_CLOSE_DEVICE. The same codes
+ * reach a socket that is open while its device is signed out.
  */
-export const DirectoryErrorCode = z.enum(["version", "unauthorized", "bad_message", "unknown_account", "self", "not_friends", "blocked", "declined_recently", "rate_limited", "too_large", "duplicate", "not_found", "account_suspended"]);
+export const DIRECTORY_WS_CLOSE_DEVICE = 4015;
+export const DirectoryErrorCode = z.enum(["version", "unauthorized", "bad_message", "unknown_account", "self", "not_friends", "blocked", "declined_recently", "rate_limited", "too_large", "duplicate", "not_found", "account_suspended", "device_revoked", "device_unknown", "device_required"]);
 export type DirectoryErrorCode = z.infer<typeof DirectoryErrorCode>;
 /** `ref` = id of the message (dm.send) or key (friends.*) the error refers to; `until` = the end of a suspension (`account_suspended`). */
 export const DirectoryErrorEvent = z.object({ type: z.literal("error"), code: DirectoryErrorCode, message: z.string(), ref: z.string().nullable().default(null), until: Iso.nullable().optional() });
@@ -153,5 +158,5 @@ export type FriendOp = z.infer<typeof FriendOp>;
 export function directoryFriendsPayload(op: FriendOp, publicKey: string | null): string {
   return `${op}\n${publicKey ?? ""}`;
 }
-export const FriendsActionRequest = z.object({ publicKey: PublicKey, challengeId: Uuid, signature: Signature, op: FriendOp, target: PublicKey.nullable() });
+export const FriendsActionRequest = z.object({ publicKey: PublicKey, challengeId: Uuid, signature: Signature, ...DeviceProofFields, op: FriendOp, target: PublicKey.nullable() });
 export const FriendsListResponse = z.array(Friend);

@@ -7,7 +7,7 @@ import { LOCALES, locale, t } from "./i18n";
 import { DOWNLOAD_URL } from "./appUpdates";
 import { platform } from "./platform";
 import { formatDeepLink, parseDeepLink } from "./platform/deepLink";
-import { ClaimAccount, CreateAccount, LocalRegisterForm, SignInForm } from "./AccountForms";
+import { ClaimAccount, CreateAccount, LocalRegisterForm, SignInForm, type DeviceChoice } from "./AccountForms";
 import { PasswordInput } from "./PasswordInput";
 import { safeHref } from "./safeHref";
 
@@ -62,9 +62,9 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
     try { await store.login(inviteCode()); afterLogin(); }
     catch (err) { try { onLoginError(err); } catch { /* shown by the server's state */ } }
   }
-  async function signInDirectory(handle: string, password: string, code?: string) {
+  async function signInDirectory(handle: string, password: string, code?: string, choice?: DeviceChoice) {
     // Another directory account replaces this browser's key; the same handle only fetches the key it already has.
-    if (saved && saved.handle.toLowerCase() !== handle.toLowerCase()) {
+    if (saved && !choice && saved.handle.toLowerCase() !== handle.toLowerCase()) {
       const ok = await askConfirm({
         title: t("login.replaceKeyTitle"),
         text: t(saved.hasBackup ? "login.replaceKeyText" : "login.replaceKeyTextNoBackup", { handle: saved.handle }),
@@ -72,11 +72,11 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
       });
       if (!ok) return;
     }
-    try { await store.loginWithHandle(handle, password, inviteCode(), code); afterLogin(); }
+    try { await store.loginWithHandle(handle, password, inviteCode(), code, choice); afterLogin(); }
     catch (err) { onLoginError(err); }
   }
-  async function signInLocal(handle: string, password: string) {
-    try { await store.loginLocal(home.host, handle, password, inviteCode()); afterLogin(); }
+  async function signInLocal(handle: string, password: string, replaceDevice?: string) {
+    try { await store.loginLocal(home.host, handle, password, inviteCode(), replaceDevice); afterLogin(); }
     catch (err) { onLoginError(err); }
   }
   async function registerLocal(handle: string, password: string, ownerCode?: string) {

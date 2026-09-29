@@ -1,4 +1,4 @@
-import { ChallengeRequest, VerifyRequest, challengeMessage, labelFromUserAgent, type VerifyResponse } from "@squorli/protocol";
+import { ChallengeRequest, DEVICE_REFUSED, VerifyRequest, challengeMessage, deviceProofMessage, labelFromUserAgent, signInOrigin, type VerifyResponse } from "@squorli/protocol";
 import * as ed from "@noble/ed25519";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -10,6 +10,7 @@ import type { Hub } from "../hub";
 import { SETTINGS_ID, broadcastStructure, loadSettings, refusesSuspended } from "../state";
 import { refusedUntil, suspendedBody } from "../users/suspension";
 import type { DirectoryClient, LoginProof } from "../directory";
+import { deviceAllowed, deviceSignatureValid, type Devices } from "../users/devices";
 import type { VoicePresence } from "../voice/presence";
 import { ChallengeStore } from "./challenges";
 import { tokenHash } from "./session";
@@ -30,6 +31,21 @@ export async function checkChallenge(challenges: ChallengeStore, config: Config,
 /** Whether `signature` is `publicKey`'s over `message` (both hex); never throws. */
 export async function signatureValid(publicKey: string, signature: string, message: string): Promise<boolean> {
   return ed.verifyAsync(hexToBytes(signature), new TextEncoder().encode(message), hexToBytes(publicKey)).catch(() => false);
+}
+
+/** Where a request came from (the protocol's `signInOrigin`): the host of a web site, the desktop app as such, null if unknown. */
+export const originOf = (req: FastifyRequest): string | null => signInOrigin(req.headers.origin);
+
+/**
+ * The device of a sign-in (docs/features/devices.md): its proof is the device key's signature over `deviceProofMessage`
+ * of the message the account's key signed. Answers the device's key, null when the request named none, or false when
+ * the refusal was sent (a device key without a valid proof).
+ */
+export async function checkDeviceProof(reply: FastifyReply, publicKey: string, body: { deviceKey?: string | undefined; deviceSignature?: string | undefined }, message: string): Promise<string | null | false> {
+  if (body.deviceKey === undefined) return null;
+  if (body.deviceSignature !== undefined && await deviceSignatureValid(body.deviceKey, body.deviceSignature, deviceProofMessage(publicKey, message))) return body.deviceKey;
+  await reply.code(401).send({ error: "device_signature_invalid" });
+  return false;
 }
 
 /** Whether `code` is the server's owner setup code (OWNER_SETUP_CODE); compared in constant time. */
@@ -57,7 +73,7 @@ export async function isFirstEver(db: Db, config: Config, publicKey: string, own
 export async function admit(
   db: Db, config: Config, hub: Hub, directory: DirectoryClient, req: FastifyRequest, reply: FastifyReply,
   user: { id: string; publicKey: string; displayName: string | null }, invite: string | undefined, registrationRequired = false,
-  proof: LoginProof | null = null, ownerCode?: string,
+  proof: LoginProof | null = null, ownerCode?: string, deviceKey: string | null = null,
 ): Promise<VerifyResponse | null> {
   const [ban] = await db.select().from(bans).where(eq(bans.userId, user.id)).limit(1);
   if (ban) { await reply.code(403).send({ error: "banned", reason: ban.reason }); return null; }
@@ -96,13 +112,14 @@ export async function admit(
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + config.SESSION_TTL_DAYS * 86_400_000);
   // Device label for the session list (M6c); the client cannot set it, only the browser reveals it.
-  await db.insert(sessions).values({ token: tokenHash(token), userId: user.id, expiresAt, label: labelFromUserAgent(req.headers["user-agent"]), lastUsedAt: new Date() });
+  // The device that signed in (docs/features/devices.md): the session counts only while that device is let in.
+  await db.insert(sessions).values({ token: tokenHash(token), userId: user.id, expiresAt, label: labelFromUserAgent(req.headers["user-agent"]), lastUsedAt: new Date(), deviceKey });
 
   if (!member) await broadcastStructure(db, hub, ["members", "settings"]);
   return { sessionToken: token, userId: user.id, expiresAt: expiresAt.toISOString(), registrationRequired };
 }
 
-export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence) {
+export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, devices: Devices) {
   const challenges = new ChallengeStore();
   const sweeper = setInterval(() => challenges.sweep(), 30_000);
   app.addHook("onClose", async () => clearInterval(sweeper));
@@ -119,8 +136,11 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
     const { challengeId, publicKey, signature, invite } = body.data;
     const nonce = await checkChallenge(challenges, config, reply, challengeId, publicKey, signature, challengeMessage);
     if (!nonce) return;
-    // The directory records this server for the account only with this proof (the user's own signature for our domain).
-    const proof: LoginProof = { nonce, signature };
+    const deviceKey = await checkDeviceProof(reply, publicKey, body.data, challengeMessage(config.PUBLIC_DOMAIN, nonce));
+    if (deviceKey === false) return;
+    // The directory records this server for the account only with this proof (the user's own signature for our domain),
+    // and for an account that lets only enrolled devices in with the device's proof next to it.
+    const proof: LoginProof = { nonce, signature, deviceKey: body.data.deviceKey, deviceSignature: body.data.deviceSignature };
 
     // No temporary users (docs/features/local-accounts.md): a key needs a directory handle or a server account here. A key
     // this server has never seen gets a row only while the directory is asked, and loses it again when it has no account.
@@ -136,7 +156,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
     if (!handle && !local) {
       // A member from before server accounts keeps their key, messages and roles: they sign in, but must register first.
       if (member) {
-        const res = await admit(db, config, hub, directory, req, reply, user, invite, true, proof);
+        const res = await admit(db, config, hub, directory, req, reply, user, invite, true, proof, undefined, deviceKey);
         if (res) req.log.info({ userId: user.id }, "Mitglied ohne Konto: Registrierung verlangt");
         return res ?? undefined;
       }
@@ -152,11 +172,26 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
       req.log.info({ publicKey: publicKey.slice(0, 8), until: until.toISOString() }, "Anmeldung abgewiesen: Verzeichniskonto gesperrt");
       return reply.code(403).send(suspendedBody(until));
     }
-    const res = await admit(db, config, hub, directory, req, reply, { id: user.id, publicKey, displayName: profile?.displayName ?? user.displayName }, invite, false, proof);
+    // The device (docs/features/devices.md). A directory account: what the directory just told, or what is cached while it
+    // cannot be reached. A server account: this server's own list; an account that is not enforced enrols a device that
+    // proved itself without a word.
+    const localRow = local && deviceKey ? await devices.findLocal(user.id, deviceKey) : null;
+    const allowed = deviceAllowed({
+      handle, localHandle: local?.handle ?? null,
+      devicesEnforced: profile ? profile.devicesEnforced : user.devicesEnforced, deviceKeys: profile ? profile.deviceKeys : user.deviceKeys,
+      localEnforced: local ? await devices.localEnforced(user.id) : false, localDevice: !localRow ? null : localRow.revokedAt === null ? "active" : "revoked",
+    }, deviceKey);
+    if (!allowed) {
+      if (!known) await db.delete(users).where(eq(users.id, user.id));
+      req.log.info({ publicKey: publicKey.slice(0, 8), device: deviceKey !== null }, "Anmeldung abgewiesen: Geraet nicht zugelassen");
+      return reply.code(403).send({ error: DEVICE_REFUSED });
+    }
+    if (local && deviceKey) await devices.enrolLocal(user.id, { deviceKey, label: labelFromUserAgent(req.headers["user-agent"]), origin: originOf(req), by: "legacy" }, { strict: false });
+    const res = await admit(db, config, hub, directory, req, reply, { id: user.id, publicKey, displayName: profile?.displayName ?? user.displayName }, invite, false, proof, undefined, deviceKey);
     return res ?? undefined;
   });
 
-  await registerLocalAccountRoutes(app, db, config, hub, directory, presence, challenges);
+  await registerLocalAccountRoutes(app, db, config, hub, directory, presence, challenges, devices);
 }
 
 /** Check and consume an invite (atomically). true = valid and counted. */

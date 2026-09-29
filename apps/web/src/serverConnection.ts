@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
+import { DEVICE_REFUSED, PROTOCOL_VERSION, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, sessionEndReasonOf, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
 import { ServerApi, explainLoginError, suspendedText, suspendedUntilOfError, type Health } from "./api";
 import type { VoteKickState } from "./voteKick";
 import type { Identity } from "./identity";
@@ -26,6 +26,8 @@ export type ServerConnState = {
   base: string;
   me: Me | null;
   userId: string | null;
+  /** The server knows devices (its health says `devices`, docs/features/devices.md): a server account has a device list there. */
+  deviceList: boolean;
   connection: Connection;
   error: string | null;
   /** The server removed us; sign in again only after a user action. */
@@ -105,6 +107,12 @@ export type ConnectionHooks = {
   onToken: (token: string | null) => void;
   /** Session gone (remote sign-out, expired, membership lost): the store decides what that means for the client. */
   onSessionLost: (message: string) => void;
+  /**
+   * The server does not let this device in (docs/features/devices.md): at the sign-in, with a request, or by closing the
+   * socket. The session here is dropped already; the store decides whose word counts (deviceRefusal.ts) and whether the
+   * account's key leaves this installation.
+   */
+  onDeviceRefused: () => void;
   /** Kick/ban: end the voice connection if it belongs to this server. */
   onRemoved: () => void;
   /** First welcome of a session (not after a reconnect): e.g. refresh the server list at the directory. */
@@ -186,7 +194,7 @@ export class ServerConnection {
   constructor(host: string, base: string, private readonly identity: () => Identity | null, private readonly hooks: ConnectionHooks) {
     this.api = new ServerApi(base);
     this.state = {
-      host, base, me: null, userId: null, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
+      host, base, me: null, userId: null, deviceList: false, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
       voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
       serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, ownerSetup: false, serverVersion: null, directoryUrl: null,
       refused: false, suspendedUntil: null,
@@ -199,7 +207,10 @@ export class ServerConnection {
       if (document.visibilityState === "visible") this.retryNow();
     });
     window.addEventListener("online", () => this.retryNow());
-    this.api.onUnauthorized = () => { if (this.state.me) this.sessionLost("Die Sitzung ist abgelaufen oder wurde abgemeldet. Bitte erneut anmelden."); };
+    this.api.onUnauthorized = (code) => {
+      if (!this.state.me) return;
+      if (code === DEVICE_REFUSED) this.deviceRefused(); else this.sessionLost(t("err.sessionEnded"));
+    };
   }
 
   private set(p: Partial<ServerConnState>) { this.state = { ...this.state, ...p }; this.hooks.onState(this.state); }
@@ -230,6 +241,7 @@ export class ServerConnection {
     this.set({
       serverName: health?.serverName ?? null, iconUrl: health?.iconUrl ? this.api.abs(health.iconUrl) : null, serverDomain: health?.domain?.toLowerCase() ?? null,
       directoryUrl: health?.directoryUrl ?? null, requireAccount: !!health?.directoryUrl && health?.requireAccount === true, localAccounts: health?.localAccounts === true, inviteRequired: health?.inviteRequired === true, ownerSetup: health?.ownerSetup === true, serverVersion: health?.version ?? null,
+      deviceList: health?.devices === true,
     });
     return health;
   }
@@ -342,6 +354,8 @@ export class ServerConnection {
       // No account for this key: not an error the user did, but the next step (the account forms).
       if (code === "registration_required") this.set({ connection: "idle", error: null, accountNeeded: true, waiting: null });
       else this.set({ connection: "error", error: await explainLoginError(err, this.api, domain), waiting: null, suspendedUntil: suspendedUntilOfError(err) });
+      // The device is not let in: the store finds out whose word that is (deviceRefusal.ts).
+      if (code === DEVICE_REFUSED) this.hooks.onDeviceRefused();
       throw Object.assign(new Error("login failed"), { code });
     }
   }
@@ -369,6 +383,24 @@ export class ServerConnection {
     this.clearSession(message);
     this.hooks.onSessionLost(message);
   }
+  /** The server ended the session because it does not let the device in (docs/features/devices.md). */
+  private deviceRefused() {
+    this.hooks.onRemoved();
+    this.clearSession(t("err.deviceChecking"));
+    this.hooks.onSessionLost(t("err.deviceChecking"));
+    this.hooks.onDeviceRefused();
+  }
+  /**
+   * The account's key left this installation (the device was signed out, or the user signed out): whatever ran ends, the
+   * stored session goes, and the login shows `message` (null = nothing to say). No word to the server: the session there
+   * is gone already, or the caller ended it.
+   */
+  signedOut(message: string | null) {
+    if (this.state.server || this.ws) this.hooks.onRemoved();
+    this.clearSession(message);
+  }
+  /** What the login says (the store, after it asked the directory about a refused device). */
+  say(error: string) { this.set({ error, connection: this.state.me ? this.state.connection : "error" }); }
 
   /** The account on this server was deleted at the user's request (via the directory): drop the session, show the login with a note. */
   accountDeleted() {
@@ -420,8 +452,13 @@ export class ServerConnection {
     ws.onclose = (ev) => {
       if (this.ws === ws) this.ws = null;
       if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
-      // 4011 = session signed out from another device (M6c), 4012 = account deleted via the directory: do not reconnect, go back to the login.
-      if (ev.code === 4011 && this.wantConnection) return this.sessionLost(t("err.sessionRevoked"));
+      // 4011 = the session ended, the reason says why (signed out from another device (M6c), expired, or its device is not let
+      // in any more); 4012 = account deleted via the directory: do not reconnect, go back to the login.
+      if (ev.code === WS_CLOSE_SESSION_ENDED && this.wantConnection) {
+        const reason = sessionEndReasonOf(ev.reason);
+        if (reason === "device_revoked") return this.deviceRefused();
+        return this.sessionLost(t(reason === "session_expired" ? "err.sessionExpired" : "err.sessionRevoked"));
+      }
       if (ev.code === 4012 && this.wantConnection) return this.sessionLost(t("err.accountDeleted"));
       // 4013 = the member has no account yet (docs/features/local-accounts.md): no reconnect, the account forms instead.
       if (ev.code === 4013 && this.wantConnection) { this.close(); void this.refreshMe().catch(() => {}); return; }
@@ -684,6 +721,8 @@ export class ServerConnection {
         } else if (e.code === "unauthorized" && suspendedUntilOf(e.message) !== null) {
           // The directory's operator suspended the account and this server refuses such accounts: not a lost session.
           this.suspended(suspendedUntilOf(e.message) ?? "");
+        } else if (e.code === "unauthorized" && e.message === "device refused") {
+          // The close 4011 with the reason `device_revoked` that follows is handled in `onclose`.
         } else if (e.code === "unauthorized") {
           // Token invalid or membership lost: do not stay in the chat with a dead socket.
           this.sessionLost(e.message === "not a member" ? t("err.notMember") : t("err.sessionInvalid"));

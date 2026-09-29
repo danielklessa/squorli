@@ -15,7 +15,8 @@
     "test": "vitest run --passWithNoTests",
     "db:generate": "drizzle-kit generate",
     "smoke": "node scripts/smoke.mjs",
-    "smoke:suspended": "node scripts/smoke-suspended.mjs"
+    "smoke:suspended": "node scripts/smoke-suspended.mjs",
+    "smoke:devices": "node scripts/smoke-devices.mjs"
   },
   "dependencies": {
     "@squorli/link-preview": "workspace:*",

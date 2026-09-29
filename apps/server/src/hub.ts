@@ -181,6 +181,11 @@ export class Hub {
     for (const ws of [...(this.byUser.get(userId) ?? [])]) ws.close(code, reason);
   }
 
+  /** The open connections of a session (users/devices.ts looks at their voice seat before it ends them). */
+  socketsOfSession(sessionId: string): WebSocket[] {
+    return [...this.sessionOf].filter(([, sid]) => sid === sessionId).map(([ws]) => ws);
+  }
+
   /** Remote sign-out (M6c): close only the connections of this session. The client recognizes the code and goes to the login. */
   disconnectSession(sessionId: string, code = 4011, reason = "session_revoked") {
     for (const [ws, sid] of [...this.sessionOf]) if (sid === sessionId) ws.close(code, reason);

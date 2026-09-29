@@ -2,6 +2,7 @@ import {
   AVATAR_MAX_BYTES, BackupParams, LocalAvatarRequest, LocalBackupFetchRequest, LocalClaimRequest, LocalDeleteRequest, LocalHandle,
   LocalPasswordChangeRequest, LocalRegisterRequest, Uuid, localRegisterMessage, sniffAvatarMime, type LocalBackup, type LocalBackupBlob,
   localClaimMessage,
+  LocalDeviceRevokeRequest, deviceEnrolMessage, labelFromUserAgent, type DevicesResponse, type TooManyDevicesResponse,
 } from "@squorli/protocol";
 import { eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -11,7 +12,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../config";
 import type { Db } from "../db";
-import { localAccounts, members, users } from "../db/schema";
+import { localAccounts, members, sessions, users } from "../db/schema";
 import type { DirectoryClient } from "../directory";
 import type { Hub } from "../hub";
 import { broadcastStructure, loadSettings } from "../state";
@@ -20,7 +21,8 @@ import type { VoicePresence } from "../voice/presence";
 import { ipKey } from "../rateLimits";
 import { replaceFile } from "../replaceFile";
 import { ChallengeStore, RateLimiter } from "./challenges";
-import { admit, checkChallenge, isFirstEver, ownerCodeMatches, signatureValid } from "./routes";
+import { deviceSignatureValid, type Devices } from "../users/devices";
+import { admit, checkChallenge, checkDeviceProof, isFirstEver, originOf, ownerCodeMatches, signatureValid } from "./routes";
 import { hasAccount, requireMember, requireSession } from "./session";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -36,7 +38,7 @@ const stored = (b: LocalBackup) => ({ backupParams: b.params, ciphertext: b.ciph
  * other devices, password change, deletion and the account's avatar. Modelled on the directory's backup routes.
  */
 export async function registerLocalAccountRoutes(
-  app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, challenges: ChallengeStore,
+  app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, challenges: ChallengeStore, devices: Devices,
 ) {
   const registerByIp = new RateLimiter(20);
   const paramsByIp = new RateLimiter(30);
@@ -89,7 +91,11 @@ export async function registerLocalAccountRoutes(
     // opens the registration even where server accounts are off, until the owner exists.
     if (ownerCode !== undefined && (!ownerCodeMatches(config, ownerCode) || !(await isFirstEver(db, config, publicKey, ownerCode)))) return reply.code(403).send({ error: "owner_code_invalid" });
     if (ownerCode === undefined && !(await allowed())) return reply.code(403).send({ error: "local_accounts_off" });
-    if (!(await checkChallenge(challenges, config, reply, challengeId, publicKey, signature, (domain, nonce) => localRegisterMessage(domain, nonce, handle, backup.ciphertext)))) return;
+    const nonce = await checkChallenge(challenges, config, reply, challengeId, publicKey, signature, (domain, n) => localRegisterMessage(domain, n, handle, backup.ciphertext));
+    if (!nonce) return;
+    // The account's first device (docs/features/devices.md) proves itself over the same message.
+    const deviceKey = await checkDeviceProof(reply, publicKey, body.data, localRegisterMessage(config.PUBLIC_DOMAIN, nonce, handle, backup.ciphertext));
+    if (deviceKey === false) return;
 
     const [existing] = await db.select({ id: users.id, handle: users.handle, localHandle: localAccounts.handle }).from(users)
       .leftJoin(localAccounts, eq(localAccounts.userId, users.id)).where(eq(users.publicKey, publicKey)).limit(1);
@@ -104,14 +110,15 @@ export async function registerLocalAccountRoutes(
       if (isUniqueViolation(err)) return reply.code(409).send({ error: "handle_taken" });
       throw err;
     }
-    const res = await admit(db, config, hub, directory, req, reply, user, invite, false, null, ownerCode);
+    const res = await admit(db, config, hub, directory, req, reply, user, invite, false, null, ownerCode, deviceKey);
     if (!res) {
       // Refused (invite, ban): no account stays behind that would hold the handle.
       await db.delete(localAccounts).where(eq(localAccounts.userId, user.id));
       if (!existing) await db.delete(users).where(eq(users.id, user.id));
       return;
     }
-    req.log.info({ userId: user.id, handle }, "Serverkonto registriert");
+    if (deviceKey) await devices.enrolLocal(user.id, { deviceKey, label: labelFromUserAgent(req.headers["user-agent"]), origin: originOf(req), by: "register" }, { strict: false, reactivate: true });
+    req.log.info({ userId: user.id, handle, device: deviceKey !== null }, "Serverkonto registriert");
     await broadcastStructure(db, hub, ["members"]);
     return res;
   });
@@ -134,6 +141,9 @@ export async function registerLocalAccountRoutes(
     const nonce = await checkChallenge(challenges, config, reply, challengeId, s.publicKey, signature, message);
     if (!nonce) return;
     if (!(await signatureValid(newPublicKey, newSignature, message(config.PUBLIC_DOMAIN, nonce)))) return reply.code(401).send({ error: "signature_invalid" });
+    // The new account's first device (docs/features/devices.md): its proof is bound to the NEW key.
+    const deviceKey = await checkDeviceProof(reply, newPublicKey, body.data, message(config.PUBLIC_DOMAIN, nonce));
+    if (deviceKey === false) return;
     if (!(await handleFree(handle))) return reply.code(409).send({ error: "handle_taken" });
     try {
       await db.transaction(async (tx) => {
@@ -144,6 +154,11 @@ export async function registerLocalAccountRoutes(
       // The handle, or the new key already belongs to somebody here.
       if (isUniqueViolation(err)) return reply.code(409).send({ error: "handle_taken" });
       throw err;
+    }
+    // The session that stays is that device's from now on.
+    if (deviceKey) {
+      await devices.enrolLocal(s.userId, { deviceKey, label: labelFromUserAgent(req.headers["user-agent"]), origin: originOf(req), by: "claim" }, { strict: false, reactivate: true });
+      await db.update(sessions).set({ deviceKey }).where(eq(sessions.id, s.sessionId));
     }
     presence.rename(s.userId, { displayName: s.displayName, publicKey: newPublicKey, handle: null, localHandle: handle });
     await broadcastStructure(db, hub, ["members"]);
@@ -159,7 +174,10 @@ export async function registerLocalAccountRoutes(
     const [row] = await db.select({ params: localAccounts.backupParams }).from(localAccounts).where(eq(localAccounts.handle, h.data)).limit(1);
     if (!row) return reply.code(404).send({ error: "unknown_account" });
     const p = BackupParams.parse(row.params);
-    return { kdf: p.kdf, iterations: p.iterations, salt: p.salt };
+    // `bound` goes along (29 September 2026): without it a client derives the keys of a backup that is bound to this server's
+    // host as if it were not, and the right password reads as a wrong one on every other device (found with two browsers,
+    // docs/features/devices.md; every server account made since 25 September 2026 has a bound backup).
+    return { kdf: p.kdf, iterations: p.iterations, salt: p.salt, ...(p.bound ? { bound: true as const } : {}) };
   });
 
   // Step 2: the ciphertext for the auth key. A wrong key = a wrong password; failures count per IP and per handle.
@@ -176,6 +194,18 @@ export async function registerLocalAccountRoutes(
       return reply.code(401).send({ error: "auth_invalid" });
     }
     refundPassword(req.ip, account);
+    // The password is proven: the asking device is enrolled (docs/features/devices.md). It proves that it holds the key
+    // it names; at the limit the answer is the list of devices and no key, and the request comes again with the one that
+    // makes way.
+    const { deviceKey, deviceSignature } = body.data;
+    if (deviceKey !== undefined) {
+      if (deviceSignature === undefined || !(await deviceSignatureValid(deviceKey, deviceSignature, deviceEnrolMessage(config.PUBLIC_DOMAIN, row.la.handle, deviceKey)))) return reply.code(401).send({ error: "device_signature_invalid" });
+      const r = await devices.enrolLocal(row.la.userId, { deviceKey, label: labelFromUserAgent(req.headers["user-agent"]), origin: originOf(req), by: "password" }, { strict: true, replace: body.data.replaceDevice, reactivate: true });
+      if (r && !r.ok) {
+        const full: TooManyDevicesResponse = { error: "too_many_devices", devices: r.devices, ticket: null };
+        return reply.code(409).send(full);
+      }
+    }
     const blob: LocalBackupBlob = { handle: row.la.handle, publicKey: row.publicKey, ciphertext: row.la.ciphertext, params: BackupParams.parse(row.la.backupParams), updatedAt: row.la.updatedAt.toISOString() };
     return blob;
   });
@@ -195,6 +225,55 @@ export async function registerLocalAccountRoutes(
     await db.update(localAccounts).set(stored(body.data.backup)).where(eq(localAccounts.userId, s.userId));
     req.log.info({ userId: s.userId }, "Serverkonto: Passwort geaendert");
     return { ok: true };
+  });
+
+  // ---- Devices of a server account (docs/features/devices.md): the list, and signing devices out. Another device or all
+  // others only with the password (the first such sign-out makes the account enforced) and only from a session that has
+  // an enrolled device itself; the asking device signs itself out without one (the client's own "Abmelden").
+  app.get("/api/me/devices", async (req, reply) => {
+    const s = await requireSession(db, req, reply);
+    if (!s) return;
+    if (!s.localHandle) return reply.code(409).send({ error: "use_directory" });
+    const list: DevicesResponse = await devices.listLocal(s.userId, s.deviceKey);
+    return list;
+  });
+  app.delete("/api/me/devices/current", async (req, reply) => {
+    const s = await requireSession(db, req, reply);
+    if (!s) return;
+    if (!s.localHandle) return reply.code(409).send({ error: "use_directory" });
+    // A session without a device (a client from before devices) ends like a sign-out of before.
+    const revoked = s.deviceKey ? await devices.revokeSelf(s.userId, s.deviceKey) : 0;
+    await db.delete(sessions).where(eq(sessions.id, s.sessionId));
+    hub.disconnectSession(s.sessionId);
+    req.log.info({ userId: s.userId, device: revoked > 0 }, "Serverkonto: Geraet hat sich abgemeldet");
+    return { ok: true, revoked };
+  });
+  const revokeOther = async (req: Parameters<typeof requireSession>[1], reply: Parameters<typeof requireSession>[2], target: string) => {
+    const s = await requireSession(db, req, reply);
+    if (!s) return;
+    if (!s.localHandle) return reply.code(409).send({ error: "use_directory" });
+    const body = LocalDeviceRevokeRequest.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    if (!s.deviceKey || !(await devices.findLocal(s.userId, s.deviceKey))) return reply.code(400).send({ error: "no_device" });
+    const account = { userId: s.userId };
+    if (!attemptPassword(req.ip, account)) return reply.code(429).send({ error: "rate_limited" });
+    const [row] = await db.select({ authHash: localAccounts.authHash }).from(localAccounts).where(eq(localAccounts.userId, s.userId)).limit(1);
+    if (!row) return reply.code(404).send({ error: "unknown_account" });
+    if (!sameHash(sha256(body.data.authKey), row.authHash)) {
+      req.log.warn({ userId: s.userId, ip: req.ip }, "Serverkonto: Geraete abmelden mit falschem Passwort");
+      return reply.code(401).send({ error: "auth_invalid" });
+    }
+    refundPassword(req.ip, account);
+    const gone = await devices.revokeLocal(s.userId, target, s.deviceKey);
+    if (gone.length === 0 && target !== "others") return reply.code(404).send({ error: "not_found" });
+    req.log.info({ userId: s.userId, revoked: gone.length }, "Serverkonto: Geraete abgemeldet");
+    return { ok: true, revoked: gone.length, devices: await devices.listLocal(s.userId, s.deviceKey) };
+  };
+  app.delete("/api/me/devices/others", async (req, reply) => revokeOther(req, reply, "others"));
+  app.delete<{ Params: { id: string } }>("/api/me/devices/:id", async (req, reply) => {
+    const id = Uuid.safeParse(req.params.id);
+    if (!id.success) return reply.code(400).send({ error: "bad_request" });
+    return revokeOther(req, reply, id.data);
   });
 
   // Delete a server account (a directory account is deleted through the directory, as before). The first owner cannot go.

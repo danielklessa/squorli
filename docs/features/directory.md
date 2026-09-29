@@ -4,6 +4,8 @@ Part of the project description (entry point: root `AGENTS.md`, section 0). Date
 
 Code: server `apps/server/src/directory.ts`; client `apps/web/src/api.ts` (directory functions), `LoginScreen.tsx`, `store.ts`; protocol `directory.ts`, `backup.ts`; the service itself in `../squorli-directory`. Standing rules: `apps/server/AGENTS.md` (directory service, device management, account deletion), `packages/protocol/AGENTS.md` (key backup), root `AGENTS.md` section 2a (synchronized copies). Friends and direct messages (M7): `../squorli-directory/docs/features/friends-dm.md`.
 
+**Devices (29 September 2026):** since then the directory knows an account's devices and a device that was signed out does not get back in with the account's key; "Weiter als @name" is left for a session that expired. Everything about it, the chat server's and the client's side included: `docs/features/devices.md`. Entries below that speak of sessions and of "whoever has the key" describe the state before it.
+
 ## 19 September 2026: separate server login tasks
 
 **A small profile on a left click in the member list (24 September 2026, user's wish):** "Wenn ich einen Linksklick auf einen Benutzer in der Benutzerliste mache, mit dem ich bereits befreundet bin soll ein kleines Miniprofil mit einer Eingabezeile zum Chatten erscheinen (auch Emojis) schicke ich den Text ab wechsle ich in die Freunde-Ansicht mit diesem Freund geöffnet. Bin ich noch nicht befreundet soll stattdessen ein Button sein um eine Freundschaftsanfrage zu senden."

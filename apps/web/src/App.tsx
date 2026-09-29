@@ -579,12 +579,26 @@ export function App() {
   const homeName = home?.server?.settings.name ?? home?.serverName ?? null;
   useEffect(() => { applyHomeScreenName(homeName); rememberHomeName(homeName); }, [homeName]);
 
+  // Einstellungen > Geräte (docs/features/devices.md): the devices of the account in use, the server account's of the server
+  // shown or the directory account's. The functions keep their identity while nothing about the account changes: the tab
+  // loads its list whenever `load` is another one.
+  const deviceScope = store.deviceScope();
+  const deviceAccount = deviceScope === "local" ? `~${activeState(state)?.me?.localHandle ?? ""}` : `@${state.directoryAccount?.handle ?? ""}`;
+  const deviceHost = state.activeHost;
+  const canRevokeDevices = deviceScope === "local" || state.deviceRevoke;
+  const devicesHavePassword = deviceScope === "local" || state.directoryAccount?.hasBackup === true;
+  const deviceList = useMemo(() => (deviceScope === null ? null : {
+    scope: deviceScope, account: deviceAccount, canRevoke: canRevokeDevices, hasPassword: devicesHavePassword,
+    load: deviceScope === "local" ? () => store.localDevices() : async () => { await store.refreshAccountServers(); return store.state.devices; },
+    revoke: (target: string, password: string, code?: string) => store.revokeDevices(target, password, code),
+  }), [store, deviceScope, deviceAccount, deviceHost, canRevokeDevices, devicesHavePassword]);
+
   // With a home server the client hangs off the session there; without one (desktop app) it has a login of its own.
   const homeless = state.homeHost === null;
   // Still finding out what the first screen is (store.ts `starting`): the desktop app's start window covers that time.
   if (state.starting) return <><TitleBar title="Squorli" /><div className="app-starting" role="status"><div className="app-starting-card"><img src="/brand/squorli-icon.svg" alt="" /><span>{t("app.starting")}</span></div></div></>;
   // Signed in on the own server, but it does not answer (docs/features/offline.md): a notice with retries, never the login.
-  if (!homeless && home && !home.server && home.waiting) return <><TitleBar title={homeName ?? "Squorli"} /><ServerOffline s={home} onRetry={() => store.home?.retryByUser()} onLogout={() => store.logout()} /></>;
+  if (!homeless && home && !home.server && home.waiting) return <><TitleBar title={homeName ?? "Squorli"} /><ServerOffline s={home} onRetry={() => store.home?.retryByUser()} onLogout={() => { void signOut(store); }} /></>;
   if (homeless ? !state.signedIn : !home?.server || !home.me || !home.userId) return <><TitleBar title="Squorli" />{homeless ? <DesktopLogin store={store} state={state} /> : <LoginScreen store={store} state={state} />}</>;
 
   const server = active?.server ?? null;
@@ -797,7 +811,7 @@ export function App() {
         {homeOpen ? (
           <HomeMain state={state} store={store} />
         ) : !active ? (
-          <NoServers directoryUrl={state.directoryUrl} account={state.directoryAccount ?? null} onDiscover={() => setShowBrowser(true)} onAdd={() => { void addServer(); }} onLogout={() => { void client.leave(); store.logout(); }} />
+          <NoServers directoryUrl={state.directoryUrl} account={state.directoryAccount ?? null} onDiscover={() => setShowBrowser(true)} onAdd={() => { void addServer(); }} onLogout={() => { void signOut(store, () => { void client.leave(); }); }} />
         ) : !view ? (
           <ServerStatus s={active} store={store} state={state} rail={railServers} onRetry={(invite) => store.retryServer(active.host, invite)} onClose={() => { if (active.refused) store.removeRefused(active.host); else store.closeServer(active.host); }}
             onOpen={(key) => { setMobileContent(false); setVoicePreview(null); store.openServer(key === state.homeHost ? homeDirHost : key); }}
@@ -878,8 +892,8 @@ export function App() {
           blocked={{ list: blockedList, inAccount: blockedInAccount, onUnblock: (pk) => store.setBlocked(activeHost, pk, false, { directory: true }) }}
           onSaveServerName={(n) => store.setServerDisplayName(n)} onSaveGlobalName={(n) => store.setDirectoryName(null, n)} onSetAvatar={(active?.me?.localHandle && !active.me.handle) || (state.directoryAccount && state.directoryAvatars) ? (image) => store.setAvatar(image) : null} onSetLocale={(pref) => store.setLocale(pref)} localePending={state.localeReloadPending}
           onCapturingKey={setCapturingPttKey} onClose={() => setSettingsTab(null)}
-          onLogout={() => { setSettingsTab(null); void client.leave(); store.logout(); }}
-          onForget={() => { setSettingsTab(null); void client.leave(); void store.forgetIdentity(); }}
+          onLogout={() => { void signOut(store, () => { setSettingsTab(null); void client.leave(); }); }}
+          accountDevices={deviceList}
           onDirectorySignIn={homeless && !state.directoryAccount && state.directoryUrl ? () => { setSettingsTab(null); store.openAccountLogin(); } : null}
           serverAccount={active?.me?.localHandle && !active.me.handle ? {
             serverName: server?.settings.name ?? active.serverName ?? active.host,
@@ -893,6 +907,20 @@ export function App() {
 }
 
 /** The directory's host for a sentence ("refused by the operator of ..."). */
+/**
+ * Sign out (store.ts `logout`): the keys leave this installation, so nobody gets back in with one click. An account without
+ * a password exists on its devices only and would be lost: the user is asked first. `before` = what ends with the sign-out
+ * (the voice connection, an open dialog), run once the user said yes.
+ */
+async function signOut(store: Store, before?: () => void): Promise<void> {
+  if (store.logoutLosesAccount()) {
+    const ok = await askConfirm({ title: t("profile.signOutLosesTitle"), text: t("profile.signOutLosesText", { handle: store.state.directoryAccount?.handle ?? "" }), confirmLabel: t("profile.signOut"), danger: true });
+    if (!ok) return;
+  }
+  before?.();
+  await store.logout();
+}
+
 const directoryName = (url: string | null): string => { try { return url ? new URL(url).host : "?"; } catch { return url ?? "?"; } };
 
 /** Main area for a foreign server that has no state (yet): connecting, error, removed. */
@@ -962,7 +990,7 @@ function ServerStatus({ s, store, state, rail, onRetry, onClose, onOpen, join }:
         {accountForms && handle && <button className="login-primary" onClick={() => onRetry(code())}>{t("join.asHandle", { handle })}</button>}
         {accountForms && <>
           {localAccounts && <SignInForm idPrefix={`join-${s.host}`} hasDirectory={false} localAccounts={localAccounts} busy={busy}
-            onDirectory={async () => {}} onLocal={(h, pw) => store.loginLocal(s.host, h, pw, code())} onEmailCode={null} />}
+            onDirectory={async () => {}} onLocal={(h, pw, replaceDevice) => store.loginLocal(s.host, h, pw, code(), replaceDevice)} onEmailCode={null} />}
           <CreateAccount directoryUrl={s.directoryUrl} localAccounts={localAccounts} busy={busy}
             openExternal={platform.home ? null : (url) => platform.links.openExternal(url)}
             local={<LocalRegisterForm idPrefix={`join-${s.host}`} busy={busy} ownerSetup={s.ownerSetup} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} onRegister={(h, pw, ownerCode) => store.registerLocal(s.host, h, pw, code(), ownerCode)} />} />

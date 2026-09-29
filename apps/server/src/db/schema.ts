@@ -26,6 +26,13 @@ export const users = pgTable("users", {
    * directory cannot be reached. What follows from it: users/suspension.ts.
    */
   suspendedUntil: ts("suspended_until"),
+  /**
+   * Devices of the directory account (docs/features/devices.md, 29 September 2026), as the directory told this server with
+   * its token: whether the account lets only enrolled devices in, and the keys of those devices (null = never told). Cached
+   * like the handle. A session of an enforced account counts only with one of these keys (users/devices.ts).
+   */
+  devicesEnforced: boolean("devices_enforced").notNull().default(false),
+  deviceKeys: jsonb("device_keys").$type<string[]>(),
 });
 
 /**
@@ -43,7 +50,31 @@ export const localAccounts = pgTable("local_accounts", {
   avatarUpdatedAt: ts("avatar_updated_at"),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
+  /** Since then the account lets only enrolled devices in (docs/features/devices.md): set by its first sign-out of another device, null before. */
+  devicesEnforcedAt: ts("devices_enforced_at"),
 });
+
+/**
+ * Devices of a server account (docs/features/devices.md, 29 September 2026): for a server account this server decides
+ * which devices are let in (for a directory account the directory does, `users.device_keys`). One row per device key;
+ * a device that was signed out keeps its row, so that it stays out until the password enrols it again.
+ */
+export const localDevices = pgTable("local_devices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** The device's Ed25519 public key (hex). */
+  deviceKey: text("device_key").notNull(),
+  /** From the user agent and the Origin header at enrolment. */
+  label: text("label"),
+  origin: text("origin"),
+  /** "register", "password" (a key fetch), "claim" or "legacy" (silently, an account that is not enforced). */
+  enrolledBy: text("enrolled_by").notNull(),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  lastSeenAt: ts("last_seen_at"),
+  revokedAt: ts("revoked_at"),
+  /** "user" (signed out from another device), "self", "replaced" (made way for another one), "idle" */
+  revokedWhy: text("revoked_why"),
+}, (t) => [uniqueIndex("local_devices_user_key_idx").on(t.userId, t.deviceKey)]);
 
 export const sessions = pgTable("sessions", {
   /** SHA-256 (hex) of the session token (auth/session.ts `tokenHash`, since migration 0034); the token itself is never stored. */
@@ -57,6 +88,8 @@ export const sessions = pgTable("sessions", {
   label: text("label"),
   /** Updated on every request, throttled to once every 5 minutes. */
   lastUsedAt: ts("last_used_at"),
+  /** The key of the device that signed in (docs/features/devices.md); null = a session from before devices, or of a client from before them. */
+  deviceKey: text("device_key"),
 });
 
 /** Exactly one row (id = "server"). One deployment = one server. */

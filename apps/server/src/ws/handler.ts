@@ -1,8 +1,8 @@
-import { ClientEvent, PROTOCOL_VERSION, Permission, WS_CLOSE_ACCOUNT_SUSPENDED, displayNameOf, suspendedCloseReason, type GamePresence, type ServerEvent } from "@squorli/protocol";
+import { ClientEvent, PROTOCOL_VERSION, Permission, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, displayNameOf, suspendedCloseReason, type GamePresence, type ServerEvent } from "@squorli/protocol";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import { CLOSE_REGISTRATION_REQUIRED, hasAccount, resolveSession, suspensionOf } from "../auth/session";
+import { CLOSE_REGISTRATION_REQUIRED, hasAccount, lookUpSession, resolveSession, suspensionOf } from "../auth/session";
 import { can } from "../authz";
 import type { Db } from "../db";
 import { channels, users } from "../db/schema";
@@ -98,7 +98,13 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
           send({ type: "error", code: "protocol_version", message: `server speaks v${PROTOCOL_VERSION}` });
           return socket.close(4002, "protocol version");
         }
-        const session = await resolveSession(db, ev.data.sessionToken);
+        const { session, refused } = await lookUpSession(db, ev.data.sessionToken);
+        // The session's device is not let in any more (docs/features/devices.md): the same close as for a socket that is open
+        // when its device is signed out. `unauthorized` first, which is what a client from before devices stops on.
+        if (refused) {
+          send({ type: "error", code: "unauthorized", message: "device refused" });
+          return socket.close(WS_CLOSE_SESSION_ENDED, "device_revoked");
+        }
         const actor = session ? await actorOf(db, session.userId) : null;
         if (!session || !actor) {
           send({ type: "error", code: "unauthorized", message: session ? "not a member" : "session invalid" });
@@ -134,7 +140,7 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
           expiryTimer = setTimeout(() => {
             void resolveSession(db, token).then((s) => {
               if (socket.readyState !== socket.OPEN) return;
-              if (!s) socket.close(4011, "session_expired"); else watchExpiry(s.expiresAt);
+              if (!s) socket.close(WS_CLOSE_SESSION_ENDED, "session_expired"); else watchExpiry(s.expiresAt);
             }).catch(() => watchExpiry(new Date(Date.now() + 60_000)));
           }, Math.min(Math.max(expiresAt.getTime() - Date.now() + 1000, 0), 2 ** 31 - 1));
         };

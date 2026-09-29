@@ -6,7 +6,7 @@
  * then sign the usual challenge. Every server account has a key of its own: it never replaces the client's directory key.
  */
 import { z } from "zod";
-import { AvatarMime, AVATAR_MAX_BYTES, BackupAuthKey, BackupParams, Handle } from "./directory";
+import { AvatarMime, AVATAR_MAX_BYTES, BackupAuthKey, BackupParams, DeviceInfo, DeviceProofFields, Handle } from "./directory";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
 
 /** Prefix of a server account's handle; directory handles keep `@`. */
@@ -58,6 +58,8 @@ export const LocalRegisterRequest = z.object({
   invite: z.string().regex(/^[A-Za-z0-9_-]{6,32}$/).optional(),
   /** The server's owner setup code (OWNER_SETUP_CODE): this registration becomes the owner while none exists. */
   ownerCode: z.string().trim().min(1).max(128).optional(),
+  /** The account's first device (directory.ts "Devices"): proof over `localRegisterMessage`; with it the account is enforced from birth. */
+  ...DeviceProofFields,
 });
 export type LocalRegisterRequest = z.infer<typeof LocalRegisterRequest>;
 
@@ -81,6 +83,8 @@ export const LocalClaimRequest = z.object({
   newPublicKey: PublicKey,
   signature: Signature,
   newSignature: Signature,
+  /** The new account's first device: proof over `deviceProofMessage(newPublicKey, localClaimMessage(...))`; the session kept is that device's from then on. */
+  ...DeviceProofFields,
 });
 export type LocalClaimRequest = z.infer<typeof LocalClaimRequest>;
 
@@ -88,14 +92,26 @@ export type LocalClaimRequest = z.infer<typeof LocalClaimRequest>;
 export const LocalHandleResponse = z.object({ available: z.boolean() });
 /** GET /api/local/backup/:handle/params: salt and iterations, so the client can derive the auth key. */
 export const LocalBackupParamsResponse = BackupParams.omit({ iv: true });
-/** POST /api/local/backup/fetch */
-export const LocalBackupFetchRequest = z.object({ handle: LocalHandle, authKey: BackupAuthKey });
+/**
+ * POST /api/local/backup/fetch. `deviceKey` enrols the asking device (`deviceSignature` over `deviceEnrolMessage` with the
+ * server's domain). At DEVICE_MAX devices the answer is 409 `too_many_devices` with the list (`TooManyDevicesResponse`,
+ * no ticket: there is no second factor here), and the request is repeated with `replaceDevice`.
+ */
+export const LocalBackupFetchRequest = z.object({ handle: LocalHandle, authKey: BackupAuthKey, ...DeviceProofFields, replaceDevice: Uuid.optional() });
 export const LocalBackupBlob = z.object({ handle: LocalHandle, publicKey: PublicKey, ciphertext: z.string(), params: BackupParams, updatedAt: Iso });
 export type LocalBackupBlob = z.infer<typeof LocalBackupBlob>;
 /** PUT /api/local/backup (session): a new password = a new backup of the same seed; the old auth key proves the old password. */
 export const LocalPasswordChangeRequest = z.object({ oldAuthKey: BackupAuthKey, backup: LocalBackup });
 /** DELETE /api/me (session) for a server account: the auth key proves the password. */
 export const LocalDeleteRequest = z.object({ authKey: BackupAuthKey });
+/**
+ * Devices of a server account (directory.ts "Devices"; `devices: true` in GET /api/health is the feature flag): GET /api/me/devices
+ * answers `DevicesResponse`; DELETE /api/me/devices/:id and /others sign other devices out and need the password's auth
+ * key (the first one makes the account enforced), DELETE /api/me/devices/current signs the asking device out without one.
+ */
+export const LocalDeviceRevokeRequest = z.object({ authKey: BackupAuthKey });
+export const DevicesResponse = z.array(DeviceInfo);
+export type DevicesResponse = z.infer<typeof DevicesResponse>;
 
 /** PUT /api/me/avatar (session, server accounts only): the picture as the client cropped and scaled it (like the directory's). */
 export const LocalAvatarRequest = z.object({
@@ -107,4 +123,5 @@ export type LocalAvatarRequest = z.infer<typeof LocalAvatarRequest>;
 /** Error codes of the server accounts and the account rule (REST only). */
 export const LocalAccountErrorCode = z.enum([
   "registration_required", "handle_taken", "local_accounts_off", "has_account", "auth_invalid", "unknown_account", "use_directory", "rate_limited",
+  "device_refused", "too_many_devices",
 ]);

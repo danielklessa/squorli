@@ -2,7 +2,7 @@ import { Avatar } from "./Avatar";
 import { AvatarEditor } from "./AvatarEditor";
 import type { CropRect } from "./avatarCrop";
 import { AvatarImageError, loadAvatarSource, renderAvatar, type AvatarImage } from "./avatarImage";
-import type { DirectoryAccount, Me, SessionInfo } from "@squorli/protocol";
+import type { DeviceInfo, DirectoryAccount, Me, SessionInfo } from "@squorli/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerApi } from "./api";
 import { BLUR_OPTIONS } from "./CameraPicker";
@@ -27,6 +27,7 @@ import { VOICE_CUES, type SoundCue, type SoundSettings } from "./voice/sounds";
 import { useVoiceSettings } from "./voice/useVoiceSettings";
 import { VoiceClient, type VoiceState } from "./voice/voiceClient";
 import { LocalAccountSettings } from "./AccountForms";
+import { DevicesTab } from "./DevicesTab";
 import { safeHref } from "./safeHref";
 
 export type SettingsTab = "profile" | "view" | "voice" | "camera" | "sounds" | "hotkeys" | "games" | "blocked" | "sessions" | "account" | "app" | "licenses";
@@ -65,7 +66,7 @@ const fmt = fmtDateTime;
  * the directory's account page, sign out, discard identity) and licenses (our own and the third-party notices, LicensesTab.tsx). With a directory account everything except the device selection
  * is stored there (store.ts pushes every change); sessions and the name on this server belong to the server shown.
  */
-export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, directoryUrl, directoryAccount, serverDomain, clientVersion, syncError, sealed, client, voice, initialTab, games, blocked, hotkeyStatus, onSaveServerName, onSaveGlobalName, onSetAvatar, onSetLocale, localePending, onCapturingKey, onClose, onLogout, onForget, serverAccount, onDirectorySignIn }: {
+export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, directoryUrl, directoryAccount, serverDomain, clientVersion, syncError, sealed, client, voice, initialTab, games, blocked, hotkeyStatus, onSaveServerName, onSaveGlobalName, onSetAvatar, onSetLocale, localePending, onCapturingKey, onClose, onLogout, accountDevices, serverAccount, onDirectorySignIn }: {
   /** The server on screen and who you are there; null = none is shown (client without a home server): the dialog then has
    *  no profile and no sessions, which belong to a server, and the account page names the directory account and `publicKey`. */
   api: ServerApi | null; me: Me | null; publicKey: string | null;
@@ -95,7 +96,14 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
   localePending: boolean;
   /** While the push-to-talk key is being captured the dock's push-to-talk listener has to stay quiet. */
   onCapturingKey: (capturing: boolean) => void;
-  onClose: () => void; onLogout: () => void; onForget: () => void;
+  /** Signing out takes the keys off this installation (store.ts `logout`); the caller asks first where that loses the account. */
+  onClose: () => void; onLogout: () => void;
+  /**
+   * The devices of the account in use (docs/features/devices.md; DevicesTab.tsx): the directory account's, or the server
+   * account's of the server shown. null = neither the directory nor the server knows devices: the server's sessions then,
+   * as before.
+   */
+  accountDevices: { scope: "directory" | "local"; account: string; canRevoke: boolean; hasPassword: boolean; load: () => Promise<DeviceInfo[]>; revoke: (target: string, password: string, code?: string) => Promise<DeviceInfo[]> } | null;
   /** The server shown signs in with a server account (`~name`): its password and its deletion (docs/features/local-accounts.md); null = none. */
   /** Desktop app with server accounts only: sign in with a directory account too (the servers stay); null = not offered. */
   onDirectorySignIn: (() => void) | null;
@@ -107,7 +115,8 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
   settingsRef.current = settings;
   const onServer = !!api && !!me;
   // "App" (version, updates) exists in the desktop app only; profile and sessions belong to a server.
-  const tabs = TABS.filter((entry) => (entry.id !== "app" || platform.app !== null) && (entry.id !== "games" || games !== null) && (entry.id !== "hotkeys" || platform.hotkeys !== null) && (onServer || (entry.id !== "profile" && entry.id !== "sessions")));
+  // The devices of a directory account belong to no server: the category shows without one too.
+  const tabs = TABS.filter((entry) => (entry.id !== "app" || platform.app !== null) && (entry.id !== "games" || games !== null) && (entry.id !== "hotkeys" || platform.hotkeys !== null) && (onServer || (entry.id !== "profile" && (entry.id !== "sessions" || accountDevices !== null))));
   const appUpdate = useUpdateState();
   const keyLayout = useKeyboardLayout();
   const [tab, setTab] = useState<SettingsTab>(() => { const wanted = initialTab ?? "profile"; return tabs.some((entry) => entry.id === wanted) ? wanted : "view"; });
@@ -212,7 +221,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
     if (!api) return;
     try { setSessions(await api.getSessions()); setErr(null); } catch (e) { setErr(String(e)); }
   }, [api]);
-  useEffect(() => { if (tab === "sessions") void loadSessions(); }, [tab, loadSessions]);
+  useEffect(() => { if (tab === "sessions" && !accountDevices) void loadSessions(); }, [tab, loadSessions, accountDevices]);
   useEffect(() => { setErr(null); setSaved(false); }, [tab]);
 
   async function saveNames() {
@@ -264,10 +273,6 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
     if (!ok) return;
     setBusy(true);
     try { await api?.revokeOtherSessions(); await loadSessions(); } catch (e) { setErr(String(e)); } finally { setBusy(false); }
-  }
-  async function forget() {
-    const ok = await askConfirm({ title: t("profile.forgetTitle"), text: t("profile.forgetText"), confirmLabel: t("profile.forget"), danger: true });
-    if (ok) onForget();
   }
 
   const others = sessions?.filter((s) => !s.current).length ?? 0;
@@ -543,9 +548,10 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
               </>
             )}
 
-            {tab === "sessions" && (
+            {tab === "sessions" && accountDevices && <DevicesTab {...accountDevices} />}
+            {tab === "sessions" && !accountDevices && (
               <>
-                <h3>{t("profile.devices")}</h3>
+                <h3>{t("profile.sessions")}</h3>
                 <span className="muted small">{t("profile.devicesHint")}</span>
                 {sessions === null ? <span className="muted">{t("common.loading")}</span> : (
                   <ul className="session-list">
@@ -581,9 +587,9 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                   </p>
                 )}
                 {onDirectorySignIn && <p className="muted small">{t("profile.directorySignInHint")} <button className="secondary small" onClick={onDirectorySignIn}>{t("profile.directorySignIn")}</button></p>}
+                <span className="muted small">{t("profile.signOutHint")}</span>
                 <div className="row">
                   <button className="secondary" onClick={onLogout}>{t("profile.signOut")}</button>
-                  <button className="danger" onClick={() => void forget()}>{t("profile.forgetIdentity")}</button>
                 </div>
               </>
             )}

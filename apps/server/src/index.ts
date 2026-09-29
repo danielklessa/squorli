@@ -46,6 +46,7 @@ import { deleteUserAccount, type DeleteUserResult } from "./users/deleteUser";
 import { Suspensions } from "./users/suspension";
 import { registerUserRoutes } from "./users/routes";
 import { DirectoryClient, SYNC_INTERVAL_MS } from "./directory";
+import { Devices } from "./users/devices";
 import { broadcastStructure, loadChannels, loadSettings, refusesSuspended, setLocalAccountsConfig, setOpenReportCount } from "./state";
 import { setPublicOrigin } from "./names";
 import { visibility } from "./visibility";
@@ -152,6 +153,8 @@ async function main() {
     domain: config.PUBLIC_DOMAIN,
     /** The claim of a member from before moves to a fresh key (25 September 2026); a client offers the claim only where this is true. */
     localClaimRekey: true,
+    /** This server knows devices (docs/features/devices.md): a sign-in may name its device, server accounts have the routes under /api/me/devices. */
+    devices: true,
     protocolVersion: PROTOCOL_VERSION,
     time: new Date().toISOString(),
   }));
@@ -179,6 +182,15 @@ async function main() {
   // disconnected; the sign-in, the requests and the WebSocket refuse by themselves.
   const suspensions = new Suspensions(db, hub, presence, lk, () => refusesSuspended(db), app.log);
   directory.onSuspended = (userId, until) => { void suspensions.enforce(userId, until).catch((err) => app.log.warn({ err }, "Sperre durchsetzen")); };
+  // Devices (users/devices.ts, docs/features/devices.md): a session counts only while its device is let in. For directory
+  // accounts the directory says which devices those are; when it told, the sessions of the others end. Server accounts'
+  // devices that were not used for 90 days are signed out once an hour.
+  const devices = new Devices(db, hub, presence, lk, app.log);
+  directory.onDevices = (userId) => { void devices.endRefused(userId).catch((err) => app.log.warn({ err }, "Geraete: Sitzungen beenden")); };
+  const deviceSweep = setInterval(() => { if (!closing) void devices.sweep().catch((err) => app.log.warn({ err }, "Geraete: Fristen")); }, 3_600_000);
+  deviceSweep.unref();
+  app.addHook("onClose", async () => clearInterval(deviceSweep));
+  void devices.sweep().catch((err) => app.log.warn({ err }, "Geraete: Fristen"));
 
   // AFK channel: absent members of a voice channel are moved there (voice/afk.ts), right when they turn absent (below) and
   // every few seconds, because a video that kept its channel's members from being moved ends without any event here.
@@ -230,7 +242,7 @@ async function main() {
 
   // Uploads (attachments, server icon): one file per request, size per MAX_UPLOAD_MB.
   await app.register(multipart, { limits: { fileSize: Math.round(config.MAX_UPLOAD_MB * 1024 * 1024), files: 1 } });
-  await registerAuthRoutes(app, db, config, hub, directory, presence);
+  await registerAuthRoutes(app, db, config, hub, directory, presence, devices);
   await registerUserRoutes(app, db, directory, hub, presence);
   await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta }, suspensions);
   await registerStatusRoutes(app, db, hub, presence, config);

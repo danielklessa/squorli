@@ -1,6 +1,8 @@
-import { BACKUP_MIN_PASSWORD } from "@squorli/protocol";
+import { BACKUP_MIN_PASSWORD, type DeviceInfo } from "@squorli/protocol";
 import { useState } from "react";
 import * as api from "./api";
+import { deviceLimitOf } from "./AccountForms";
+import { DevicePicker } from "./DevicePicker";
 import { askConfirm } from "./dialogs";
 import type { State, Store } from "./store";
 import { LOCALES, locale, t } from "./i18n";
@@ -32,19 +34,22 @@ export function DesktopLogin({ store, state }: { store: Store; state: State }) {
   const [emailNote, setEmailNote] = useState<string | null>(null);
   const [emailBusy, setEmailBusy] = useState(false);
   const cleanHandle = handle.trim().replace(/^@/, "");
+  // The account has as many devices as it may (docs/features/devices.md): the user picks the one that makes way.
+  const [limit, setLimit] = useState<{ devices: DeviceInfo[]; ticket: string | null } | null>(null);
 
-  async function signIn() {
+  async function signIn(replaceDevice?: string) {
     // Another account replaces this device's key; the same handle only fetches the key it already has.
-    if (account && account.handle.toLowerCase() !== cleanHandle.toLowerCase()) {
+    if (account && !replaceDevice && account.handle.toLowerCase() !== cleanHandle.toLowerCase()) {
       const ok = await askConfirm({ title: t("login.replaceKeyTitle"), text: t(account.hasBackup ? "login.replaceKeyText" : "login.replaceKeyTextNoBackup", { handle: account.handle }), confirmLabel: t("login.replace"), danger: true });
       if (!ok) return;
     }
     try {
-      await store.loginDirectoryAccount(cleanHandle, password, code.trim() || undefined);
-      setPassword(""); setCode(""); setNeedCode(false); setEmailOffered(false); setEmailNote(null);
+      await store.loginDirectoryAccount(cleanHandle, password, code.trim() || undefined, replaceDevice && limit ? { replaceDevice, ticket: limit.ticket } : undefined);
+      setPassword(""); setCode(""); setNeedCode(false); setEmailOffered(false); setEmailNote(null); setLimit(null);
     } catch (err) {
       const e = err as { code?: string | null; body?: { email?: unknown } };
       if (e.code === "totp_required") { setNeedCode(true); setEmailOffered(e.body?.email === true); }
+      setLimit(deviceLimitOf(err));
     }
   }
   async function sendEmailCode() {
@@ -76,7 +81,8 @@ export function DesktopLogin({ store, state }: { store: Store; state: State }) {
           </div>
         </>}
 
-        {showAccount && (
+        {showAccount && limit && <DevicePicker devices={limit.devices} busy={busy} onPick={(id) => void signIn(id)} onCancel={() => setLimit(null)} />}
+        {showAccount && !limit && (
           <div className="stack handle-box">
             <h2>{t("login.withAccount")}</h2>
             <span className="muted small">{t("desktopLogin.accountHint", { host: dirHost ?? "" })}</span>
@@ -110,6 +116,7 @@ export function DesktopLogin({ store, state }: { store: Store; state: State }) {
         {showDevice && <div className="stack handle-box">
           <h2>{t(account ? "login.savedAccount" : "desktopLogin.serverAccountsOnly")}</h2>
           <p className="muted small">{t(account ? "login.savedHint" : "desktopLogin.serverAccountsHint")}</p>
+          {account && <p className="muted small">{t("login.savedSignOutHint")}</p>}
           {account
             ? <p>{t("login.handle")}: <strong>@{account.handle}</strong> <span className="muted small">{t("login.verifiedAt", { host: dirHost ?? "" })}</span></p>
             : null}

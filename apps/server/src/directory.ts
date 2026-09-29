@@ -10,15 +10,20 @@ import { SETTINGS_ID } from "./state";
 /** For this long the cached directory state counts as fresh; after that GET /api/me refreshes it (name changed on the account page). */
 const REFRESH_AFTER_MS = 5 * 60_000;
 /** Periodic reconciliation of all users (names changed on the account page arrive without a reload this way). */
-/** A user's signature from a sign-in here, passed on to the directory as the proof of a membership (`chatLoginMessage`). */
-export type LoginProof = { nonce: string; signature: string };
+/**
+ * A user's signature from a sign-in here, passed on to the directory as the proof of a membership (`chatLoginMessage`).
+ * `deviceKey`/`deviceSignature`: the proof of the device that signed in, over the same message (docs/features/devices.md);
+ * an account that lets only enrolled devices in is listed on this server, and its device keys told, only with it.
+ */
+export type LoginProof = { nonce: string; signature: string; deviceKey?: string | undefined; deviceSignature?: string | undefined };
 
 export const SYNC_INTERVAL_MS = 5 * 60_000;
 const SYNC_CHUNK = 200;
 const TIMEOUT_MS = 2500;
 
-/** `suspendedUntil`: as the directory told this server, or as it was cached when the answer came without the server's token. */
-export type DirectoryProfile = { handle: string | null; displayName: string | null; avatarUrl: string | null; suspendedUntil: Date | null };
+/** `suspendedUntil`, `devicesEnforced`, `deviceKeys`: as the directory told this server, or as they were cached when the answer came without the server's token. */
+export type DirectoryProfile = { handle: string | null; displayName: string | null; avatarUrl: string | null; suspendedUntil: Date | null; devicesEnforced: boolean; deviceKeys: string[] | null };
+const sameKeys = (a: string[] | null, b: string[] | null): boolean => a === b || (!!a && !!b && a.length === b.length && a.every((k) => b.includes(k)));
 /** After the directory refused this server (`server_blocked`), a lookup starts no new registration for this long. */
 const BLOCKED_RETRY_MS = 3_600_000;
 const suspensionOf = (acc: { suspendedUntil: string | null }): Date | null => (acc.suspendedUntil ? new Date(acc.suspendedUntil) : null);
@@ -53,6 +58,12 @@ export class DirectoryClient {
   private noteSuspension(userId: string, before: Date | null, now: Date | null): void {
     if (now && now.getTime() > Date.now() && !sameDate(before, now)) this.onSuspended?.(userId, now);
   }
+  /**
+   * The directory told which devices an account lets in (docs/features/devices.md): index.ts ends the sessions of the
+   * devices that are not among them (users/devices.ts). Called for every enforced account whose answer came with the
+   * server's token, changed or not: a session made between the lookup of a sign-in and a sign-out must end too.
+   */
+  onDevices: ((userId: string) => void) | null = null;
 
   constructor(private readonly db: Db, private readonly config: Config, private readonly log: FastifyBaseLogger) {}
 
@@ -172,11 +183,13 @@ export class DirectoryClient {
         withToken = false;
         res = await fetch(`${url}/api/keys/${user.publicKey}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
       }
-      const [cached] = await this.db.select({ suspendedUntil: users.suspendedUntil }).from(users).where(eq(users.id, user.id)).limit(1);
+      const [cached] = await this.db.select({ suspendedUntil: users.suspendedUntil, devicesEnforced: users.devicesEnforced, deviceKeys: users.deviceKeys }).from(users).where(eq(users.id, user.id)).limit(1);
       let handle: string | null = null;
       let displayName = user.displayName;
       let avatarUrl: string | null = null;
       let suspendedUntil: Date | null = cached?.suspendedUntil ?? null;
+      let devicesEnforced = cached?.devicesEnforced ?? false;
+      let deviceKeys: string[] | null = cached?.deviceKeys ?? null;
       if (res.status === 200) {
         const acc = DirectoryAccount.parse(await res.json());
         // The answer must be about the key asked for (security review, 25 September 2026): never take another account's name.
@@ -184,12 +197,14 @@ export class DirectoryClient {
         handle = acc.handle;
         displayName = acc.serverDisplayName ?? acc.displayName ?? user.displayName;
         avatarUrl = directoryAvatarUrl(url, acc.publicKey, acc.avatarUpdatedAt);
-        if (withToken) suspendedUntil = suspensionOf(acc);
+        // The same goes for the devices: a public answer says "not enforced, no keys" about every account.
+        if (withToken) { suspendedUntil = suspensionOf(acc); devicesEnforced = acc.devicesEnforced; deviceKeys = acc.deviceKeys; }
       } else if (res.status !== 404) { this.log.warn({ status: res.status }, "Verzeichnisdienst antwortet unerwartet"); return null; }
-      else suspendedUntil = null; // no account at the directory: nothing to be suspended
-      await this.db.update(users).set({ handle, displayName, avatarUrl, suspendedUntil, handleCheckedAt: new Date() }).where(eq(users.id, user.id));
+      else { suspendedUntil = null; devicesEnforced = false; deviceKeys = null; } // no account at the directory: nothing to be suspended, no devices
+      await this.db.update(users).set({ handle, displayName, avatarUrl, suspendedUntil, devicesEnforced, deviceKeys, handleCheckedAt: new Date() }).where(eq(users.id, user.id));
       this.noteSuspension(user.id, cached?.suspendedUntil ?? null, suspendedUntil);
-      return { handle, displayName, avatarUrl, suspendedUntil };
+      if (withToken && devicesEnforced) this.onDevices?.(user.id);
+      return { handle, displayName, avatarUrl, suspendedUntil, devicesEnforced, deviceKeys };
     } catch (err) {
       this.log.warn({ err: err instanceof Error ? err.message : String(err) }, "Verzeichnisdienst nicht erreichbar; Handle und Name bleiben wie zuletzt bekannt");
       return null;
@@ -203,7 +218,7 @@ export class DirectoryClient {
     const url = this.config.DIRECTORY_URL;
     if (!url) return 0;
     if (!(await this.ensureToken())) return 0;
-    const all = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil }).from(users);
+    const all = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil, devicesEnforced: users.devicesEnforced, deviceKeys: users.deviceKeys }).from(users);
     let changed = 0;
     try {
       for (let i = 0; i < all.length; i += SYNC_CHUNK) {
@@ -224,6 +239,9 @@ export class DirectoryClient {
             await this.db.update(users).set({ suspendedUntil }).where(eq(users.id, u.id));
             this.noteSuspension(u.id, u.suspendedUntil, suspendedUntil);
           }
+          // The devices are nothing the member list shows either.
+          if (acc.devicesEnforced !== u.devicesEnforced || !sameKeys(acc.deviceKeys, u.deviceKeys)) await this.db.update(users).set({ devicesEnforced: acc.devicesEnforced, deviceKeys: acc.deviceKeys }).where(eq(users.id, u.id));
+          if (acc.devicesEnforced) this.onDevices?.(u.id);
           if (acc.handle === u.handle && displayName === u.displayName && avatarUrl === u.avatarUrl) continue;
           await this.db.update(users).set({ handle: acc.handle, displayName, avatarUrl, handleCheckedAt: now }).where(eq(users.id, u.id));
           onChanged({ userId: u.id, publicKey: u.publicKey, handle: acc.handle, displayName });
@@ -255,8 +273,9 @@ export class DirectoryClient {
       const displayName = acc.serverDisplayName ?? acc.displayName ?? u.displayName;
       const avatarUrl = directoryAvatarUrl(url, acc.publicKey, acc.avatarUpdatedAt);
       const suspendedUntil = suspensionOf(acc);
-      await this.db.update(users).set({ handle: acc.handle, displayName, avatarUrl, suspendedUntil, handleCheckedAt: new Date() }).where(eq(users.id, u.id));
+      await this.db.update(users).set({ handle: acc.handle, displayName, avatarUrl, suspendedUntil, devicesEnforced: acc.devicesEnforced, deviceKeys: acc.deviceKeys, handleCheckedAt: new Date() }).where(eq(users.id, u.id));
       this.noteSuspension(u.id, u.suspendedUntil, suspendedUntil);
+      if (acc.devicesEnforced) this.onDevices?.(u.id);
       if (acc.handle === u.handle && displayName === u.displayName && avatarUrl === u.avatarUrl) return false;
       onChanged({ userId: u.id, publicKey, handle: acc.handle, displayName });
       return true;
@@ -331,10 +350,15 @@ export class DirectoryClient {
       body: JSON.stringify({ publicKeys }), signal: AbortSignal.timeout(8000),
     });
   }
-  /** `proof`: the user's signature from this sign-in; without it the directory refreshes an existing entry but adds none. */
+  /**
+   * `proof`: the user's signature from this sign-in; without it the directory refreshes an existing entry but adds none.
+   * It goes along for a key without a membership too (the directory records nothing then): the device keys of an account
+   * that is not listed here yet come only with a proven sign-in, and a sign-in with an invite needs them.
+   */
   private lookup(url: string, publicKey: string, member: boolean, proof: LoginProof | null = null): Promise<Response> {
     const headers: Record<string, string> = this.token ? { authorization: `Bearer ${this.token}` } : {};
-    const withProof = member && proof ? `&nonce=${proof.nonce}&sig=${proof.signature}` : "";
+    const device = proof?.deviceKey && proof.deviceSignature ? `&dkey=${proof.deviceKey}&dsig=${proof.deviceSignature}` : "";
+    const withProof = proof ? `&nonce=${proof.nonce}&sig=${proof.signature}${device}` : "";
     const q = this.token ? `?server=${encodeURIComponent(this.host)}${member ? "" : "&member=0"}${withProof}` : "";
     return fetch(`${url}/api/keys/${publicKey}${q}`, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
   }

@@ -9,10 +9,11 @@ import {
   DmBlobPutResponse, LinkLookupResponse, directoryDmBlobUrl, directoryLinkLookupPayload, OverwritesResponse, type PermissionOverwrite, type ChannelNotification, type ChannelBlock, type ChannelBlockMinutes,
   localClaimMessage,
   NoticeReadResponse, RefusedServersResponse, directoryRefusedServersUrl, directoryReportPayload, reportKindsOf, suspendedUntilOf, type AccountNotice, type DirectoryReportContent,
+  DeviceRevokeResponse, DevicesResponse, type DeviceRevokeTarget, type DirectoryAction,
 } from "@squorli/protocol";
 import { z } from "zod";
 import { toBase64, type AvatarImage } from "./avatarImage";
-import { type Identity, identityFromPrivateKey, sign } from "./identity";
+import { type Identity, type NewDevice, enrolFields, identityFromPrivateKey, sign, signBoth } from "./identity";
 import { fmtDateTime, t } from "./i18n";
 import { connectedHost } from "./serverHost";
 
@@ -39,8 +40,8 @@ export type ChannelPatch = {
 
 export class ServerApi {
   private token: string | null = null;
-  /** Called when the server rejects a set token with a 401 (expired, or signed out from another device, M6c). */
-  onUnauthorized: (() => void) | null = null;
+  /** Called when the server rejects a set token with a 401 (expired, or signed out from another device, M6c), with the answer's code (`device_refused`: docs/features/devices.md). */
+  onUnauthorized: ((code: string | null) => void) | null = null;
   constructor(readonly base: string) {}
   /**
    * The host a server account's backup is bound to (backup.ts `context`): the hostname this client reaches the server at,
@@ -70,7 +71,7 @@ export class ServerApi {
     const res = await fetch(`${this.base}${path}`, init);
     if (!res.ok) {
       const b = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (res.status === 401 && withAuth) this.onUnauthorized?.();
+      if (res.status === 401 && withAuth) this.onUnauthorized?.(typeof b.error === "string" ? b.error : null);
       throw new ApiError(method, path, res.status, typeof b.error === "string" ? b.error : null, b);
     }
     return (await res.json()) as T;
@@ -80,9 +81,10 @@ export class ServerApi {
   /** Sign in: the signature is bound to `domain` (the server's PUBLIC_DOMAIN; own server = the hostname in the address bar). */
   async login(id: Identity, domain: string, invite?: string): Promise<VerifyResponse> {
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
-    const signature = await sign(id, challengeMessage(domain, challenge.nonce));
+    // The device signs along (docs/features/devices.md); a server from before devices drops its two fields.
+    const signed = await signBoth(id, challengeMessage(domain, challenge.nonce));
     return VerifyResponse.parse(await this.request("POST", "/api/auth/verify",
-      { challengeId: challenge.challengeId, publicKey: id.publicKey, signature, ...(invite ? { invite } : {}) }, { auth: false }));
+      { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, ...(invite ? { invite } : {}) }, { auth: false }));
   }
   getHealth() { return this.request<Health>("GET", "/api/health", undefined, { auth: false, timeoutMs: HEALTH_TIMEOUT_MS }); }
 
@@ -97,9 +99,9 @@ export class ServerApi {
     const handle = LocalHandle.parse(rawHandle);
     const backup = await createBackup(password, id.privateKey, undefined, this.bindHost);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
-    const signature = await sign(id, localRegisterMessage(domain, challenge.nonce, handle, backup.ciphertext));
+    const signed = await signBoth(id, localRegisterMessage(domain, challenge.nonce, handle, backup.ciphertext));
     return VerifyResponse.parse(await this.request("POST", "/api/local/register",
-      { challengeId: challenge.challengeId, publicKey: id.publicKey, signature, handle, backup, ...(invite ? { invite } : {}), ...(ownerCode ? { ownerCode } : {}) }, { auth: false }));
+      { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, handle, backup, ...(invite ? { invite } : {}), ...(ownerCode ? { ownerCode } : {}) }, { auth: false }));
   }
   /**
    * The keys of a password (derived with the account's stored salt and iterations), bound to this server's host where the
@@ -110,17 +112,23 @@ export class ServerApi {
     const keys = await deriveBackupKeys(password, p.salt, p.iterations, p.bound ? this.bindHost : undefined);
     return { ...keys, legacy: !p.bound };
   }
-  /** Signing in on another device: fetch the account's key with handle + password and open it (`legacy`: see localKeys). */
-  async localRestore(rawHandle: string, password: string): Promise<{ id: Identity; legacy: boolean }> {
+  /**
+   * Signing in on another device: fetch the account's key with handle + password and open it (`legacy`: see localKeys).
+   * `enrol`: this installation's new device, enrolled with the fetch (docs/features/devices.md; its proof is bound to
+   * `domain`, the host this client signs for). At the limit of devices the server answers 409 `too_many_devices` with the
+   * list; the call comes again with `replaceDevice`, the device the user picked to make way.
+   */
+  async localRestore(rawHandle: string, password: string, enrol?: { device: NewDevice; domain: string; replaceDevice?: string | undefined }): Promise<{ id: Identity; legacy: boolean }> {
     const handle = LocalHandle.parse(rawHandle);
     const keys = await this.localKeys(handle, password);
-    const blob = LocalBackupBlob.parse(await this.request("POST", "/api/local/backup/fetch", { handle, authKey: keys.authKey }, { auth: false }));
+    const device = enrol ? { ...(await enrolFields(enrol.device, enrol.domain, handle)), ...(enrol.replaceDevice ? { replaceDevice: enrol.replaceDevice } : {}) } : {};
+    const blob = LocalBackupBlob.parse(await this.request("POST", "/api/local/backup/fetch", { handle, authKey: keys.authKey, ...device }, { auth: false }));
     let seed: string;
     try { seed = await openBackup(keys, blob.params.iv, blob.ciphertext); }
     catch { throw new Error(t("err.backupUndecryptable")); }
     const restored = await identityFromPrivateKey(seed);
     if (restored.publicKey !== blob.publicKey) throw new Error(t("err.backupMismatch"));
-    return { id: restored, legacy: keys.legacy };
+    return { id: { ...restored, device: enrol?.device.stored ?? null }, legacy: keys.legacy };
   }
   /**
    * A member from before server accounts (`registrationRequired`) registers a server account on `fresh`, a new key for this
@@ -131,9 +139,11 @@ export class ServerApi {
     const backup = await createBackup(password, fresh.privateKey, undefined, this.bindHost);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: old.publicKey }, { auth: false }));
     const message = localClaimMessage(domain, challenge.nonce, handle, fresh.publicKey, backup.ciphertext);
+    // The new account's first device signs along with the new key (docs/features/devices.md).
+    const { signature: newSignature, ...device } = await signBoth(fresh, message);
     await this.request("POST", "/api/local/claim", {
       handle, backup, challengeId: challenge.challengeId, newPublicKey: fresh.publicKey,
-      signature: await sign(old, message), newSignature: await sign(fresh, message),
+      signature: await sign(old, message), newSignature, ...device,
     });
   }
   /** A new password: the same key, encrypted anew; the old password proves the change. */
@@ -153,6 +163,18 @@ export class ServerApi {
 
   getMe() { return this.request<Me>("GET", "/api/me", undefined, { timeoutMs: ME_TIMEOUT_MS }).then((m) => Me.parse(m)); }
   updateMe(displayName: string | null) { return this.request<Me>("PATCH", "/api/me", { displayName }).then((m) => Me.parse(m)); }
+  // ---------- Devices of a server account (docs/features/devices.md; `Health.devices` says that the server has the routes).
+  // Signing other devices out needs the password; the asking device signs itself out without it.
+  getDevices() { return this.request("GET", "/api/me/devices").then((d) => DevicesResponse.parse(d)); }
+  async revokeDevice(handle: string, password: string, target: string): Promise<DevicesResponse> {
+    const keys = await this.localKeys(handle, password);
+    const path = target === "others" ? "/api/me/devices/others" : `/api/me/devices/${encodeURIComponent(target)}`;
+    const res = await this.request<{ devices: unknown }>("DELETE", path, { authKey: keys.authKey });
+    return DevicesResponse.parse(res.devices);
+  }
+  /** The client's own "Abmelden" on a server with a server account: the device is signed out with its session; best effort. */
+  signOutDevice() { return this.request("DELETE", "/api/me/devices/current"); }
+
   // ---------- Sessions / devices (M6c)
   getSessions() { return this.request<SessionInfo[]>("GET", "/api/me/sessions").then((s) => z.array(SessionInfo).parse(s)); }
   revokeSession(id: string) { return this.request("DELETE", `/api/me/sessions/${id}`); }
@@ -288,12 +310,16 @@ export async function explainLoginError(err: unknown, api: ServerApi, here: stri
     case "account_required": return t("err.accountRequired");
     case "registration_required": return t("err.registrationRequired");
     case "account_suspended": return suspendedText(suspendedUntilOfError(err) || null);
+    case "device_refused": return t("err.deviceRefused");
+    case "device_signature_invalid": return t("err.deviceProof");
     case "banned": return `${t("err.banned")}${typeof err.body.reason === "string" && err.body.reason ? `: ${err.body.reason}` : "."}`;
     default: return err.message;
   }
 }
 
 export type Health = {
+  /** The server knows devices (docs/features/devices.md): server accounts have a device list; missing = a server from before them. */
+  devices?: boolean;
   /** The claim moves to a fresh key (servers since 25 September 2026); missing = an older server, no claim offered. */
   localClaimRekey?: boolean;
   ok: boolean; domain: string; protocolVersion: number; directoryUrl: string | null; serverName: string | null; iconUrl: string | null;
@@ -330,6 +356,25 @@ async function signingHealth(dirUrl: string): Promise<DirectoryHealth> {
   if (health.host.toLowerCase() !== here) throw new Error(t("dir.hostMismatch", { base: dirUrl, host: health.host }));
   return health;
 }
+/**
+ * One request the account's key signs at the directory. Every one goes through here (docs/features/devices.md; until 29
+ * September 2026 each function built its own), so every one carries the device's proof next to the account's signature:
+ * the challenge, then both signatures over `message`, which is bound to the host this client connects to.
+ */
+async function directorySigned<T>(dirUrl: string, id: Identity, method: string, path: string, message: (host: string, nonce: string) => string, body: Record<string, unknown> = {}, health?: DirectoryHealth): Promise<T> {
+  const host = (health ?? await signingHealth(dirUrl)).host;
+  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
+  return directoryFetch<T>(dirUrl, method, path, { publicKey: id.publicKey, challengeId: ch.challengeId, ...(await signBoth(id, message(host, ch.nonce))), ...body });
+}
+/** A signed account action of the protocol (`directoryActionMessage`) with its payload. */
+const directoryAction = <T>(dirUrl: string, id: Identity, action: DirectoryAction, path: string, payload = "", body: Record<string, unknown> = {}, health?: DirectoryHealth): Promise<T> =>
+  directorySigned<T>(dirUrl, id, "POST", path, (host, nonce) => directoryActionMessage(host, action, nonce, payload), body, health);
+/** The auth key of a directory account's password: what proves the password to the directory. */
+async function directoryAuthKey(dirUrl: string, handle: string, password: string): Promise<string> {
+  const p = BackupParamsResponse.parse(await directoryFetch(dirUrl, "GET", `/api/backup/${handle}/params`));
+  return (await deriveBackupKeys(password, p.salt, p.iterations)).authKey;
+}
+
 /** Handle for a key; null = not registered. */
 export async function directoryLookup(dirUrl: string, publicKey: string): Promise<DirectoryAccount | null> {
   try { return DirectoryAccount.parse(await directoryFetch(dirUrl, "GET", `/api/keys/${publicKey}`)); }
@@ -344,32 +389,48 @@ export async function directoryRegister(dirUrl: string, id: Identity, rawHandle:
   const handle = Handle.parse(rawHandle);
   const email = rawEmail === undefined ? undefined : EmailAddress.parse(rawEmail);
   const emailCode = rawCode === undefined ? undefined : EmailCode.parse(rawCode);
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryRegisterMessage(health.host, handle, ch.nonce, email));
-  const res = await directoryFetch<Record<string, unknown>>(dirUrl, "POST", "/api/register", { handle, publicKey: id.publicKey, challengeId: ch.challengeId, signature, ...(email ? { email } : {}), ...(emailCode ? { emailCode } : {}) });
+  const res = await directorySigned<Record<string, unknown>>(dirUrl, id, "POST", "/api/register", (host, nonce) => directoryRegisterMessage(host, handle, nonce, email), { handle, ...(email ? { email } : {}), ...(emailCode ? { emailCode } : {}) });
   return res.emailPending === true ? DirectoryRegisterPending.parse(res) : DirectoryAccount.parse(res);
 }
-/** M6b: store a password backup of your own key (ciphertext signed, the password stays in the client). */
-export async function directoryBackupUpload(dirUrl: string, id: Identity, password: string): Promise<void> {
-  const health = await signingHealth(dirUrl);
+/**
+ * M6b: store a password backup of your own key (ciphertext signed, the password stays in the client). `old`: the account
+ * and its password so far, which a directory with devices asks for when a backup exists (a new password needs the old one).
+ */
+export async function directoryBackupUpload(dirUrl: string, id: Identity, password: string, old?: { handle: string; password: string }): Promise<void> {
   const b = await createBackup(password, id.privateKey);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryBackupMessage(health.host, ch.nonce, b.ciphertext));
-  await directoryFetch(dirUrl, "PUT", "/api/backup", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, ciphertext: b.ciphertext, params: b.params, authKey: b.authKey });
+  const oldAuthKey = old ? await directoryAuthKey(dirUrl, old.handle, old.password) : undefined;
+  await directorySigned(dirUrl, id, "PUT", "/api/backup", (host, nonce) => directoryBackupMessage(host, nonce, b.ciphertext), { ciphertext: b.ciphertext, params: b.params, authKey: b.authKey, ...(oldAuthKey ? { oldAuthKey } : {}) });
 }
-/** M6b: fetch the key from the directory via handle + password and decrypt it. M6c: `code` after a 401 totp_required (authenticator or recovery code). */
-export async function directoryRestore(dirUrl: string, rawHandle: string, password: string, code?: string): Promise<Identity> {
+/** At the limit of devices: the device the user picked to make way, and the ticket that stands for the second factor. */
+export type DeviceChoice = { replaceDevice: string; ticket: string | null };
+/**
+ * M6b: fetch the key from the directory via handle + password and decrypt it. M6c: `code` after a 401 totp_required
+ * (authenticator or recovery code). `device`: this installation's new device, enrolled with the fetch
+ * (docs/features/devices.md); the identity that comes back names it. A 409 `too_many_devices` carries the account's
+ * devices and a ticket; the call comes again with `choice`.
+ */
+export async function directoryRestore(dirUrl: string, rawHandle: string, password: string, code?: string, device?: NewDevice, choice?: DeviceChoice): Promise<Identity> {
   const handle = Handle.parse(rawHandle);
   const p = BackupParamsResponse.parse(await directoryFetch(dirUrl, "GET", `/api/backup/${handle}/params`));
   const keys = await deriveBackupKeys(password, p.salt, p.iterations);
-  const blob = BackupBlob.parse(await directoryFetch(dirUrl, "POST", "/api/backup/fetch", { handle, authKey: keys.authKey, ...(code ? { code } : {}) }));
+  // Bound to the host this client connects to, like every signature for the directory.
+  const enrol = device ? await enrolFields(device, connectedHost(dirUrl), handle) : {};
+  const picked = choice ? { replaceDevice: choice.replaceDevice, ...(choice.ticket ? { ticket: choice.ticket } : {}) } : {};
+  const blob = BackupBlob.parse(await directoryFetch(dirUrl, "POST", "/api/backup/fetch", { handle, authKey: keys.authKey, ...(code && !choice?.ticket ? { code } : {}), ...enrol, ...picked }));
   let seed: string;
   try { seed = await openBackup(keys, blob.params.iv, blob.ciphertext); }
   catch { throw new Error(t("err.backupUndecryptable")); }
   const id = await identityFromPrivateKey(seed);
   if (id.publicKey !== blob.publicKey) throw new Error(t("err.backupMismatch"));
-  return id;
+  return { ...id, device: device?.stored ?? null };
+}
+/**
+ * Sign devices of the directory account out (signed `device-revoke`, docs/features/devices.md): a device's id or "others"
+ * with the password (and a code while the authenticator is on), "self" without. The answer is the list afterwards.
+ */
+export async function directoryRevokeDevice(dirUrl: string, id: Identity, target: DeviceRevokeTarget, auth?: { handle: string; password: string; code?: string | undefined }): Promise<DeviceRevokeResponse> {
+  const proof = auth ? { authKey: await directoryAuthKey(dirUrl, auth.handle, auth.password), ...(auth.code ? { code: auth.code } : {}) } : {};
+  return DeviceRevokeResponse.parse(await directoryAction(dirUrl, id, "device-revoke", "/api/devices/revoke", target, { target, ...proof }));
 }
 /**
  * Code by e-mail as the second factor (after a 401 totp_required whose body says `email: true`): proves the password again
@@ -383,10 +444,7 @@ export async function directoryEmailCode(dirUrl: string, rawHandle: string, pass
 }
 /** Display name in the directory: server = null -> global (all servers), otherwise only for this chat server (host = its PUBLIC_DOMAIN). */
 export async function directorySetDisplayName(dirUrl: string, id: Identity, server: string | null, displayName: string | null): Promise<void> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "profile-update", ch.nonce, directoryProfilePayload(server, displayName)));
-  await directoryFetch(dirUrl, "POST", "/api/profile", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, server, displayName });
+  await directoryAction(dirUrl, id, "profile-update", "/api/profile", directoryProfilePayload(server, displayName), { server, displayName });
 }
 /**
  * Avatar of the directory account (signed over the type and the SHA-256 of the image bytes; null = remove). The image is already
@@ -395,22 +453,15 @@ export async function directorySetDisplayName(dirUrl: string, id: Identity, serv
 export async function directorySetAvatar(dirUrl: string, id: Identity, image: AvatarImage | null): Promise<AvatarUpdateResponse> {
   const health = await signingHealth(dirUrl);
   if (!health.features.avatars) throw new Error(t("dir.avatars_unsupported"));
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
   const payload = directoryAvatarPayload(image?.mime ?? null, image ? await avatarDigest(image.bytes) : null);
-  const signature = await sign(id, directoryActionMessage(health.host, "avatar-set", ch.nonce, payload));
-  return AvatarUpdateResponse.parse(await directoryFetch(dirUrl, "POST", "/api/avatar", {
-    publicKey: id.publicKey, challengeId: ch.challengeId, signature, avatar: image ? { mime: image.mime, data: toBase64(image.bytes) } : null,
-  }));
+  return AvatarUpdateResponse.parse(await directoryAction(dirUrl, id, "avatar-set", "/api/avatar", payload, { avatar: image ? { mime: image.mime, data: toBase64(image.bytes) } : null }, health));
 }
 /**
  * Link previews in direct messages, for a sender whose client cannot look a link up itself (a browser): the directory does it
  * (signed, so only accounts ask, and limited per account). The desktop app never calls this: it asks the linked host itself.
  */
 export async function directoryLinkLookup(dirUrl: string, id: Identity, request: { url: string } | { youtube: string }): Promise<LinkLookupResponse> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "link-lookup", ch.nonce, directoryLinkLookupPayload(request)));
-  return LinkLookupResponse.parse(await directoryFetch(dirUrl, "POST", "/api/link-lookup", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, ...request }));
+  return LinkLookupResponse.parse(await directoryAction(dirUrl, id, "link-lookup", "/api/link-lookup", directoryLinkLookupPayload(request), request));
 }
 /** Store a picture the client has encrypted (dm.ts `sealDmBlob`) in the directory's blob store; the signature covers the hash of the bytes. */
 /**
@@ -421,17 +472,12 @@ export async function directoryLinkLookup(dirUrl: string, id: Identity, request:
 export async function directoryReport(dirUrl: string, id: Identity, content: DirectoryReportContent): Promise<DmReportResponse> {
   const health = await signingHealth(dirUrl);
   if (!reportKindsOf(health.features).includes(content.kind)) throw new Error(t("dir.reports_unsupported"));
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "report", ch.nonce, directoryReportPayload(content)));
-  return DmReportResponse.parse(await directoryFetch(dirUrl, "POST", "/api/reports", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, ...content }));
+  return DmReportResponse.parse(await directoryAction(dirUrl, id, "report", "/api/reports", directoryReportPayload(content), content, health));
 }
 export const directoryReportDm = (dirUrl: string, id: Identity, content: DmReportContent): Promise<DmReportResponse> => directoryReport(dirUrl, id, content);
 /** A notice about a measure was read (signed `notice-read`, the notice's id is the payload); the answer is the list afterwards. */
 export async function directoryReadNotice(dirUrl: string, id: Identity, noticeId: string): Promise<AccountNotice[]> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "notice-read", ch.nonce, noticeId));
-  return NoticeReadResponse.parse(await directoryFetch(dirUrl, "POST", "/api/notices/read", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, id: noticeId })).notices;
+  return NoticeReadResponse.parse(await directoryAction(dirUrl, id, "notice-read", "/api/notices/read", noticeId, { id: noticeId })).notices;
 }
 /**
  * The chat servers the directory's operator refused, as hashes of their hosts (refusedServers.ts checks a host against them).
@@ -444,11 +490,8 @@ export async function directoryRefusedServers(dirUrl: string, fresh = false): Pr
   return RefusedServersResponse.parse(await res.json()).hashes;
 }
 export async function directoryPutDmBlob(dirUrl: string, id: Identity, ciphertext: Uint8Array): Promise<string> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", ciphertext as BufferSource)), (b) => b.toString(16).padStart(2, "0")).join("");
-  const signature = await sign(id, directoryActionMessage(health.host, "dm-blob-put", ch.nonce, digest));
-  return DmBlobPutResponse.parse(await directoryFetch(dirUrl, "POST", "/api/dm-blobs", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, data: toBase64(ciphertext) })).id;
+  return DmBlobPutResponse.parse(await directoryAction(dirUrl, id, "dm-blob-put", "/api/dm-blobs", digest, { data: toBase64(ciphertext) })).id;
 }
 /** The ciphertext of a blob; whoever has the id (it travels inside the encrypted message) may fetch it. */
 export async function directoryDmBlob(dirUrl: string, blobId: string): Promise<Uint8Array> {
@@ -458,33 +501,21 @@ export async function directoryDmBlob(dirUrl: string, blobId: string): Promise<U
 }
 /** Voice cue settings in the account (signed): follow the account across chat servers and devices; read back via directoryAccountStatus(). */
 export async function directorySetSoundSettings(dirUrl: string, id: Identity, soundSettings: SoundSettings): Promise<void> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "sound-settings", ch.nonce, directorySoundSettingsPayload(soundSettings)));
-  await directoryFetch(dirUrl, "POST", "/api/sound-settings", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, soundSettings });
+  await directoryAction(dirUrl, id, "sound-settings", "/api/sound-settings", directorySoundSettingsPayload(soundSettings), { soundSettings });
 }
 /** All client settings in the account (signed; the JSON string itself is the signed payload): follow the account like the cue settings, which they include. */
 export async function directorySetSettings(dirUrl: string, id: Identity, accountSettings: AccountSettings): Promise<void> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
   const settings = JSON.stringify(accountSettings);
-  const signature = await sign(id, directoryActionMessage(health.host, "settings", ch.nonce, settings));
-  await directoryFetch(dirUrl, "POST", "/api/settings", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, settings });
+  await directoryAction(dirUrl, id, "settings", "/api/settings", settings, { settings });
 }
 /** The settings as a blob only the user can read (directory `features.settingsSealed`; signed like `settings`: the JSON string itself is the payload). */
 export async function directorySetSealedSettings(dirUrl: string, id: Identity, blob: SealedSettings): Promise<void> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
   const sealed = JSON.stringify(blob);
-  const signature = await sign(id, directoryActionMessage(health.host, "settings-sealed", ch.nonce, sealed));
-  await directoryFetch(dirUrl, "POST", "/api/settings/sealed", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, sealed });
+  await directoryAction(dirUrl, id, "settings-sealed", "/api/settings/sealed", sealed, { sealed });
 }
 /** Delete your account on one chat server (host = its PUBLIC_DOMAIN): signed at the directory, which notifies the server; it confirms and deletes the user. */
 export async function directoryLeaveServer(dirUrl: string, id: Identity, server: string): Promise<ServerLeaveResponse> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "server-leave", ch.nonce, server));
-  return ServerLeaveResponse.parse(await directoryFetch(dirUrl, "POST", "/api/servers/leave", { publicKey: id.publicKey, challengeId: ch.challengeId, signature, server }));
+  return ServerLeaveResponse.parse(await directoryAction(dirUrl, id, "server-leave", "/api/servers/leave", server, { server }));
 }
 /** Handle search for the friends list (M7, public, prefix, at most 10 hits). */
 export const directorySearchHandles = (dirUrl: string, q: string) => directoryFetch(dirUrl, "GET", `/api/handles?q=${encodeURIComponent(q)}`).then((r) => FriendSearchResponse.parse(r));
@@ -493,17 +524,17 @@ export const directoryHealth = (dirUrl: string) => directoryFetch(dirUrl, "GET",
 export const directoryServers = (dirUrl: string) => directoryFetch(dirUrl, "GET", "/api/servers").then((r) => ServerListResponse.parse(r));
 /** Account status (signed): among other things, the servers the handle has signed in on (server rail, M6d). */
 export async function directoryAccountStatus(dirUrl: string, id: Identity): Promise<AccountStatus> {
-  const health = await signingHealth(dirUrl);
-  const ch = ChallengeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/challenge", { publicKey: id.publicKey }));
-  const signature = await sign(id, directoryActionMessage(health.host, "account-status", ch.nonce));
-  return AccountStatus.parse(await directoryFetch(dirUrl, "POST", "/api/account/status", { publicKey: id.publicKey, challengeId: ch.challengeId, signature }));
+  return AccountStatus.parse(await directoryAction(dirUrl, id, "account-status", "/api/account/status"));
 }
 /** Errors of the server accounts' routes as a sentence (`local.*` keys); anything else like a sign-in error. */
 export function explainLocalError(err: unknown): string {
   if (err instanceof ApiError) {
     switch (err.code) {
       case "handle_taken": case "local_accounts_off": case "has_account": case "auth_invalid": case "unknown_account": case "rate_limited": case "founder": case "bad_handle": case "use_directory": case "too_large": case "bad_type": case "owner_code_invalid":
+      case "too_many_devices": case "no_device":
         return t(`local.${err.code}`);
+      case "device_refused": return t("err.deviceRefused");
+      case "device_signature_invalid": return t("err.deviceProof");
       case "invite_required": return t("err.inviteRequired");
       case "invite_invalid": return t("err.inviteInvalid");
       case "banned": return `${t("err.banned")}${typeof err.body.reason === "string" && err.body.reason ? `: ${err.body.reason}` : "."}`;
@@ -523,7 +554,9 @@ export function explainDirectoryError(err: unknown): string {
       case "founder": case "server_refused": case "email_unavailable": case "no_email": case "mail_failed": case "totp_disabled":
       case "email_required": case "email_code_invalid": case "email_taken": case "avatar_too_large": case "avatar_invalid":
       case "own_account": case "own_message": case "already_reported": case "notice_unknown":
+      case "device_revoked": case "device_unknown": case "device_required": case "no_device": case "device_unknown_id": case "device_revoke_unavailable": case "too_many_devices": case "ticket_invalid":
         return t(`dir.${err.code}`);
+      case "device_signature_invalid": return t("err.deviceProof");
       // The directory's operator suspended the account: the action works again when the suspension ends.
       case "account_suspended": return typeof err.body.until === "string" && suspendedUntilOf(err.body.until) ? t("dir.account_suspended", { until: fmtDateTime(err.body.until) }) : t("dir.account_suspendedNoDate");
       case "key_registered": return t("dir.key_registered", { handle: String(err.body.handle ?? "?") });

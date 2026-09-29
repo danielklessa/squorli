@@ -1,6 +1,6 @@
-import { DIRECTORY_WS_VERSION, DirectoryServerEvent, directoryWsAuthMessage, type DirectoryClientEvent, type GamePresence } from "@squorli/protocol";
+import { DIRECTORY_WS_VERSION, DirectoryServerEvent, directoryWsAuthMessage, isDeviceRefusal, type DirectoryClientEvent, type GamePresence } from "@squorli/protocol";
 import { t } from "./i18n";
-import { sign, type Identity } from "./identity";
+import { signBoth, type Identity } from "./identity";
 import { connectedHost } from "./serverHost";
 
 /**
@@ -13,6 +13,9 @@ import { connectedHost } from "./serverHost";
  * directory's operator suspended the account, docs/features/reports.md) stops the reconnecting, and its message stays in
  * the status: the close that follows must not wipe it (until 27 September 2026 it did, and the friends view only ever said
  * "no connection").
+ * Devices (29 September 2026, docs/features/devices.md): the device signs the sign-in along with the account's key, and a
+ * device that is not let in (`device_revoked`, `device_unknown`, `device_required`) is such a refusal too; the store then
+ * takes the account's key off this installation.
  */
 export type LinkStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -68,8 +71,8 @@ export class DirectoryLink {
           this.onStatus("error", t("dir.hostMismatch", { base: this.url, host: e.host }));
           return;
         }
-        void sign(this.identity, directoryWsAuthMessage(e.host, e.nonce)).then((signature) => {
-          if (this.ws === ws) this.send({ type: "auth", publicKey: this.identity.publicKey, signature, version: DIRECTORY_WS_VERSION });
+        void signBoth(this.identity, directoryWsAuthMessage(e.host, e.nonce)).then((signed) => {
+          if (this.ws === ws) this.send({ type: "auth", publicKey: this.identity.publicKey, ...signed, version: DIRECTORY_WS_VERSION });
         });
         return;
       }
@@ -81,7 +84,7 @@ export class DirectoryLink {
         this.ping = window.setInterval(() => this.heartbeat(), 25_000);
         if ((this.idle || this.game) && this.reportsActivity) this.send({ type: "activity", idle: this.idle, game: this.game });
       }
-      if (e.type === "error" && (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account" || e.code === "account_suspended")) {
+      if (e.type === "error" && (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account" || e.code === "account_suspended" || isDeviceRefusal(e.code))) {
         // No reconnect: the client does not match the service, the key has no account there, or the account is suspended.
         // A suspended account gets two events (the second one for clients from before the first): the first one counts.
         if (this.refused) return;

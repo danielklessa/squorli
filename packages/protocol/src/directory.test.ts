@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DM_REPORT_CONTEXT_MAX, DirectoryGame, DmReportRequest, LibraryGameId, directoryDmReportPayload, directoryGameIconUrl, directoryGameUrl, splitGameId } from "./directory";
 import { AccountStatus, DirectoryAction, DirectoryReportRequest, NoticeReadRequest, RefusedServersResponse, SERVER_REPORT_EVIDENCE_TEXT_MAX, directoryReportPayload, refusedHostHash, reportKindsOf } from "./directory";
-import { DirectoryServerEvent } from "./friends";
+import { DIRECTORY_WS_CLOSE_DEVICE, DirectoryClientEvent, DirectoryServerEvent, FriendsActionRequest } from "./friends";
+import { BackupFetchRequest, BackupUploadRequest, DESKTOP_APP_ORIGIN, DEVICE_IDLE_MS, DEVICE_MAX, DEVICE_PAGE_MAX, DEVICE_REFUSALS, DeviceRevokeRequest, SignedActionRequest, TooManyDevicesResponse, chatLoginMessage, deviceEnrolMessage, deviceProofMessage, directoryActionMessage, isDeviceRefusal, signInOrigin } from "./directory";
 import {
   ACCOUNT_SETTINGS_MAX_LENGTH, AVATAR_MAX_BYTES, AccountSettings, AccountSettingsUpdateRequest, AvatarUpdateRequest, DirectoryAccount, DirectoryHealth, avatarDigest, directoryAvatarPayload, directoryAvatarUrl, sniffAvatarMime, DirectoryRegisterRequest, Handle, directoryRegisterMessage, parseAccountSettings,
   BLOCKED_USERS_MAX, HIDDEN_GAMES_MAX, HIDDEN_GAME_ID_MAX, SERVER_HOST_MAX, SERVER_ORDER_MAX, SEALED_SETTINGS_MAX_LENGTH, SealedSettings, SoundSettings, deriveSettingsKey, openSettings, parseSealedSettings, sealSettings,
@@ -325,5 +326,78 @@ describe("suspension and notices", () => {
     expect(e.type === "error" && e.until).toBe(notice.until);
     expect(DirectoryServerEvent.parse({ type: "error", code: "unauthorized", message: "x" }).type).toBe("error");
     expect(DirectoryServerEvent.parse({ type: "notices.changed" }).type).toBe("notices.changed");
+  });
+});
+
+describe("devices", () => {
+  it("keeps where a sign-in came from: a site's host, the desktop app as itself, nothing else", () => {
+    expect(signInOrigin("https://chat.example.org")).toBe("chat.example.org");
+    expect(signInOrigin("http://localhost:3000")).toBe("localhost:3000");
+    expect(signInOrigin("app://squorli")).toBe(DESKTOP_APP_ORIGIN);
+    // A web site named like the app is a host, never the app.
+    expect(signInOrigin("http://squorli")).toBe("squorli");
+    expect(signInOrigin("https://squorli")).not.toBe(DESKTOP_APP_ORIGIN);
+    for (const other of ["app://other", "file://", "null", "", "chrome-extension://abc", undefined, null, 7, ["https://a.example"]]) expect(signInOrigin(other)).toBeNull();
+  });
+  const key = "a".repeat(64);
+  const device = "c".repeat(64);
+  const id = "6f1c2a4e-1b2c-4d3e-8f90-123456789abc";
+  const signed = { publicKey: key, challengeId: id, signature: "b".repeat(128) };
+  const proof = { deviceKey: device, deviceSignature: "d".repeat(128) };
+  const account = { handle: "daniel", publicKey: key, createdAt: "2026-09-01T10:00:00.000Z" };
+  const status = { ...account, totpEnabled: false, totpPending: false, recoveryCodesLeft: 0, fetches: [], servers: [] };
+  const info = { id, label: "Chrome auf Windows", createdAt: "2026-09-29T10:00:00.000Z", lastSeenAt: null };
+
+  it("binds the device's proof to the account and to the very message the account's key signs", () => {
+    const message = directoryActionMessage("id.example.org", "account-status", "n1");
+    expect(deviceProofMessage(key, message)).toBe(`squorli-device\n${key}\ncommunity-directory-account-status\nid.example.org\nn1\n`);
+    expect(deviceProofMessage(key, chatLoginMessage("chat.example.org", "n1"))).toBe(`squorli-device\n${key}\ncommunity-chat-login\nchat.example.org\nn1`);
+    expect(deviceEnrolMessage("id.example.org", "daniel", device)).toBe(`squorli-device-enrol\nid.example.org\ndaniel\n${device}`);
+  });
+  it("carries the proof on every signed request and stays valid without it", () => {
+    expect(SignedActionRequest.parse(signed).deviceKey).toBeUndefined();
+    expect(SignedActionRequest.parse({ ...signed, ...proof }).deviceKey).toBe(device);
+    expect(NoticeReadRequest.parse({ ...signed, ...proof, id }).deviceSignature).toBe(proof.deviceSignature);
+    expect(FriendsActionRequest.parse({ ...signed, ...proof, op: "list", target: null }).deviceKey).toBe(device);
+    expect(DirectoryRegisterRequest.parse({ ...signed, ...proof, handle: "daniel", deviceKind: "page" }).deviceKind).toBe("page");
+    expect(DirectoryClientEvent.parse({ type: "auth", publicKey: key, signature: signed.signature, version: 1, ...proof })).toMatchObject(proof);
+    expect(SignedActionRequest.safeParse({ ...signed, deviceKey: "short" }).success).toBe(false);
+  });
+  it("reads an account from a directory that predates devices as not enforced, without keys and without a list", () => {
+    const a = DirectoryAccount.parse(account);
+    expect([a.devicesEnforced, a.deviceKeys]).toEqual([false, []]);
+    expect(DirectoryAccount.parse({ ...account, devicesEnforced: true, deviceKeys: [device] }).deviceKeys).toEqual([device]);
+    expect(AccountStatus.parse(status).devices).toEqual([]);
+    const s = AccountStatus.parse({ ...status, devicesEnforced: true, devices: [{ ...info, current: true }, { ...info, kind: "page", origin: "id.example.org" }] });
+    expect(s.devices.map((d) => [d.kind, d.origin, d.current])).toEqual([["client", null, true], ["page", "id.example.org", false]]);
+    const h = DirectoryHealth.parse({ ok: true, service: "directory", host: "id.example.org", features: { backup: true, totp: true, email: true }, time: new Date().toISOString() });
+    expect([h.features.devices, h.features.deviceRevoke]).toEqual([false, false]);
+  });
+  it("signs out one device, all others or the asking one", () => {
+    expect(DirectoryAction.safeParse("device-revoke").success).toBe(true);
+    for (const target of [id, "others", "self"]) expect(DeviceRevokeRequest.safeParse({ ...signed, ...proof, target }).success).toBe(true);
+    expect(DeviceRevokeRequest.safeParse({ ...signed, target: "all" }).success).toBe(false);
+    expect(DeviceRevokeRequest.parse({ ...signed, target: "others", authKey: "e".repeat(64), code: "123456" }).authKey).toBe("e".repeat(64));
+  });
+  it("enrols with the key fetch and repeats it with a ticket and the device that makes way", () => {
+    const fetch = { handle: "daniel", authKey: "e".repeat(64) };
+    expect(BackupFetchRequest.parse(fetch).deviceKey).toBeUndefined();
+    expect(BackupFetchRequest.parse({ ...fetch, ...proof, deviceKind: "page", remember: true }).remember).toBe(true);
+    expect(BackupFetchRequest.parse({ ...fetch, ...proof, ticket: "f".repeat(64), replaceDevice: id }).replaceDevice).toBe(id);
+    expect(BackupFetchRequest.safeParse({ ...fetch, ticket: "short" }).success).toBe(false);
+    const full = TooManyDevicesResponse.parse({ error: "too_many_devices", devices: [info], ticket: "f".repeat(64) });
+    expect(full.devices[0]?.kind).toBe("client");
+    expect(TooManyDevicesResponse.parse({ error: "too_many_devices", devices: [] }).ticket).toBeNull();
+  });
+  it("takes the password so far with a new backup", () => {
+    const upload = { ...signed, ciphertext: "Y3Q=", params: { kdf: "pbkdf2-sha256", iterations: 600_000, salt: "00".repeat(16), iv: "00".repeat(12) }, authKey: "e".repeat(64) };
+    expect(BackupUploadRequest.parse(upload).oldAuthKey).toBeUndefined();
+    expect(BackupUploadRequest.parse({ ...upload, ...proof, oldAuthKey: "1".repeat(64) }).oldAuthKey).toBe("1".repeat(64));
+  });
+  it("names the refusals, on REST and on the socket", () => {
+    expect([isDeviceRefusal("device_revoked"), isDeviceRefusal("device_unknown"), isDeviceRefusal("device_required"), isDeviceRefusal("unauthorized"), isDeviceRefusal(null)]).toEqual([true, true, true, false, false]);
+    for (const code of DEVICE_REFUSALS) expect(DirectoryServerEvent.parse({ type: "error", code, message: "x" }).type).toBe("error");
+    expect(DIRECTORY_WS_CLOSE_DEVICE).toBe(4015);
+    expect([DEVICE_MAX, DEVICE_PAGE_MAX, DEVICE_IDLE_MS]).toEqual([10, 5, 90 * 86_400_000]);
   });
 });
