@@ -1,8 +1,15 @@
 import { SoundSettings as SoundSettingsSchema, directorySoundSettingsPayload } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
-import { CUE_TONES, DEFAULT_SOUND_SETTINGS, SOUND_CUES, normalizeSoundSettings, shouldPlayCue } from "./sounds";
+import { CUE_TONES, DEFAULT_SOUND_SETTINGS, SOUND_CUES, cueDurationMs, normalizeSoundSettings, shouldPlayCue } from "./sounds";
 
 describe("join/leave cues", () => {
+  it("knows how long a cue sounds, the leave cue well under a second", () => {
+    for (const cue of SOUND_CUES) expect(cueDurationMs(cue), cue).toBeGreaterThan(0);
+    // The shell waits at most 1.5 s before it closes the window (quitHandoff.ts): the cue has to fit with room to spare.
+    expect(cueDurationMs("selfLeave")).toBeLessThan(1000);
+    expect(cueDurationMs("selfLeave")).toBe(Math.ceil((0.09 + 0.28 + 0.03) * 1000));
+  });
+
   it("gives every cue its own tone sequence", () => {
     const shapes = SOUND_CUES.map((c) => JSON.stringify(CUE_TONES[c]));
     expect(new Set(shapes).size).toBe(SOUND_CUES.length);

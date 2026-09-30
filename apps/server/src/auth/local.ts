@@ -8,9 +8,10 @@ import { eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../config";
+import type { StorageMeter } from "../limits";
 import type { Db } from "../db";
 import { localAccounts, members, sessions, users } from "../db/schema";
 import type { DirectoryClient } from "../directory";
@@ -38,11 +39,14 @@ const stored = (b: LocalBackup) => ({ backupParams: b.params, ciphertext: b.ciph
  * other devices, password change, deletion and the account's avatar. Modelled on the directory's backup routes.
  */
 export async function registerLocalAccountRoutes(
-  app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, challenges: ChallengeStore, devices: Devices,
+  app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, challenges: ChallengeStore, devices: Devices, meter: StorageMeter,
 ) {
-  const registerByIp = new RateLimiter(20);
-  const paramsByIp = new RateLimiter(30);
-  const fetchByIp = new RateLimiter(10);
+  // The per-address limits follow RATE_LIMIT_FACTOR like the hook's (docs/features/rate-limits.md; 0 = off), so a load or
+  // smoke test that registers many accounts from one address can raise them; the per-account ones stay as they are.
+  const perIp = (limit: number) => new RateLimiter(config.RATE_LIMIT_FACTOR > 0 ? Math.max(1, Math.round(limit * config.RATE_LIMIT_FACTOR)) : Number.MAX_SAFE_INTEGER);
+  const registerByIp = perIp(20);
+  const paramsByIp = perIp(30);
+  const fetchByIp = perIp(10);
   const fetchByHandle = new RateLimiter(10);
   // Password checks behind a session (change, deletion): per account as well, over an hour, so a stolen session guesses
   // slowly from any number of addresses.
@@ -306,10 +310,14 @@ export async function registerLocalAccountRoutes(
     const bytes = Buffer.from(body.data.data, "base64");
     if (bytes.length > AVATAR_MAX_BYTES) return reply.code(413).send({ error: "too_large" });
     if (sniffAvatarMime(bytes) !== body.data.mime) return reply.code(400).send({ error: "bad_type" });
+    // The storage quota (docs/features/limits.md): the picture it replaces gives its bytes back.
+    const before = await stat(avatarPath(s.userId)).then((st) => st.size).catch(() => 0);
+    if (!(await meter.room(bytes.length - before))) return reply.code(413).send({ error: "storage_full" });
     await mkdir(avatarDir, { recursive: true });
     const tmp = `${avatarPath(s.userId)}.tmp`;
     await writeFile(tmp, bytes);
     await replaceFile(tmp, avatarPath(s.userId));
+    meter.invalidate();
     const now = new Date();
     await db.update(localAccounts).set({ avatarMime: body.data.mime, avatarUpdatedAt: now }).where(eq(localAccounts.userId, s.userId));
     await broadcastStructure(db, hub, ["members"]);

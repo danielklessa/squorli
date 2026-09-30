@@ -5,6 +5,8 @@ import { AccessToken, TrackSource } from "livekit-server-sdk";
 import { requireMember } from "../auth/session";
 import { canIn, resolveChannel } from "../channelGuard";
 import type { Config } from "../config";
+import { seatsFull, seatsTaken } from "../limits";
+import type { LivekitAdmin } from "./admin";
 import type { Db } from "../db";
 import { loadSettings } from "../state";
 import { visibility } from "../visibility";
@@ -22,7 +24,7 @@ import { channelBlockStore } from "../voice/channelBlocks";
  * The AFK channel (server setting) gets a token without publish and subscribe grants: nobody sends or hears anything
  * in it, whatever the client does; participants still see who is there.
  */
-export async function registerLivekitRoutes(app: FastifyInstance, db: Db, config: Config, presence: VoicePresence) {
+export async function registerLivekitRoutes(app: FastifyInstance, db: Db, config: Config, presence: VoicePresence, lk: LivekitAdmin) {
   app.post("/api/rtc-token", async (req, reply) => {
     const m = await requireMember(db, req, reply);
     if (!m) return;
@@ -42,6 +44,8 @@ export async function registerLivekitRoutes(app: FastifyInstance, db: Db, config
     const blocked = granted ? null : channelBlockStore.of(channel.id, m.userId);
     if (blocked) return reply.code(403).send({ error: blocked.source === "votekick" ? "votekicked" : "channel_blocked", until: blocked.until === null ? null : new Date(blocked.until).toISOString() });
     if (channel.userLimit !== null && !granted && presence.channelOfUser(m.userId) !== channel.id && presence.members(channel.id).length >= channel.userLimit) return reply.code(409).send({ error: "channel_full" });
+    // VOICE_SEATS_MAX (docs/features/limits.md): the seats of the whole server; a member already seated keeps theirs (a channel switch).
+    if (config.VOICE_SEATS_MAX !== undefined && seatsFull(seatsTaken(presence.seated(), await lk.roomsByIdentity(), m.userId), config.VOICE_SEATS_MAX)) return reply.code(409).send({ error: "voice_seats_full", max: config.VOICE_SEATS_MAX });
 
     const at = new AccessToken(config.LIVEKIT_API_KEY, config.LIVEKIT_API_SECRET, {
       identity: m.userId,

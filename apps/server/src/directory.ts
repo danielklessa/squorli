@@ -26,6 +26,30 @@ export type DirectoryProfile = { handle: string | null; displayName: string | nu
 const sameKeys = (a: string[] | null, b: string[] | null): boolean => a === b || (!!a && !!b && a.length === b.length && a.every((k) => b.includes(k)));
 /** After the directory refused this server (`server_blocked`), a lookup starts no new registration for this long. */
 const BLOCKED_RETRY_MS = 3_600_000;
+/**
+ * A failed registration tries again by itself (docs/features/limits.md, 30 September 2026): behind a proxy that routes only
+ * to a ready instance the first attempt gets `proof_unreachable`, and until now the server stayed unregistered until
+ * somebody signed in. Attempts 0, 1, 2, ... wait these long; the last value repeats. A 429 waits what Retry-After says.
+ */
+const REGISTER_RETRY_MS = [5_000, 15_000, 30_000, 60_000, 120_000, 300_000] as const;
+export function registerRetryDelayMs(attempt: number): number {
+  return REGISTER_RETRY_MS[Math.min(Math.max(0, Math.floor(attempt)), REGISTER_RETRY_MS.length - 1)]!;
+}
+/** Retry-After of a 429 as milliseconds (seconds, or a date), null when absent or unreadable; at most ten minutes. */
+export function retryAfterMs(header: string | null | undefined): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  return Math.min(ms, 600_000);
+}
+/**
+ * How long a server waits before its first registration after the start (index.ts): many servers starting at once behind
+ * one address would otherwise hit the directory's registration limit together. `random` in [0, 1); 0 = at once.
+ */
+export function registerStartDelayMs(random: number): number {
+  return Math.floor(Math.max(0, Math.min(1, random)) * 3000);
+}
 const suspensionOf = (acc: { suspendedUntil: string | null }): Date | null => (acc.suspendedUntil ? new Date(acc.suspendedUntil) : null);
 const sameDate = (a: Date | null, b: Date | null): boolean => (a?.getTime() ?? null) === (b?.getTime() ?? null);
 const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h, "hex"));
@@ -46,6 +70,11 @@ export class DirectoryClient {
   private registering: Promise<boolean> | null = null;
   /** After a failed registration, lookups do not try again before this time (see ensureToken). */
   private registerRetryAt = 0;
+  /** The registration's own retries (registerRetryDelayMs): how many failed in a row, the timer, and what a 429 asked for. */
+  private retryAttempt = 0;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAfter: number | null = null;
+  private closed = false;
   /** Why the last registration failed (the setup check shows it, docs/features/doctor.md); null after a success. */
   lastRegisterProblem: { kind: "unreachable" | "refused" | "challenge"; status: number | null; error: string | null; detail: string | null } | null = null;
   /** When the last registration succeeded (null = never since the start). */
@@ -85,8 +114,23 @@ export class DirectoryClient {
 
   /** Register with the directory and fetch a token. Call after app.listen: the directory reads /api/health back. */
   register(): Promise<boolean> {
-    if (!this.registering) this.registering = this.doRegister().finally(() => { this.registering = null; });
+    if (!this.registering) this.registering = this.doRegister().then((ok) => { this.afterRegister(ok); return ok; }).finally(() => { this.registering = null; });
     return this.registering;
+  }
+  /** A failure schedules the next attempt by itself (later and later, an operator's refusal after its hour); a success ends that. */
+  private afterRegister(ok: boolean): void {
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+    if (ok || !this.enabled || this.closed) { this.retryAttempt = 0; this.retryAfter = null; return; }
+    const delay = Math.max(this.registerRetryAt - Date.now(), this.retryAfter ?? registerRetryDelayMs(this.retryAttempt++));
+    this.retryAfter = null;
+    this.log.info({ inMs: delay, attempt: this.retryAttempt }, "Verzeichnis: naechster Versuch der Server-Registrierung");
+    this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.register(); }, delay);
+    this.retryTimer.unref();
+  }
+  /** No more attempts: the server is shutting down. */
+  close(): void {
+    this.closed = true;
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
   }
   /**
    * A token for a lookup: registers when there is none, but after a failure not again for a minute. Unauthenticated pushes
@@ -125,6 +169,8 @@ export class DirectoryClient {
       if (!res.ok) {
         const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
         this.lastRegisterProblem = { kind: "refused", status: res.status, error: err.error ?? null, detail: err.detail ?? null };
+        // Too many registrations from this address (many servers starting behind one proxy): wait what the directory says.
+        if (res.status === 429) this.retryAfter = retryAfterMs(res.headers.get("retry-after")) ?? 60_000;
         if (err.error === "server_blocked") {
           // The directory's operator refused this server (docs/features/reports.md): nothing about the address is wrong,
           // and asking again changes nothing. Lookups leave the directory alone for an hour.

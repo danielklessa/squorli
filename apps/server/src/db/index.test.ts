@@ -14,6 +14,11 @@ describe("createDb", () => {
     expect(seen).toEqual([{ severity: "NOTICE", code: "42P06", message: 'schema "drizzle" already exists, skipping' }]);
   });
 
+  it("sizes the pool by DB_POOL_MAX, 10 without one (docs/features/limits.md)", () => {
+    expect(createDb(URL).client.options.max).toBe(10);
+    expect(createDb(URL, () => {}, 4).client.options.max).toBe(4);
+  });
+
   it("prints nothing without a handler (postgres-js would use console.log)", () => {
     const printed = vi.spyOn(console, "log").mockImplementation(() => {});
     const { client } = createDb(URL);

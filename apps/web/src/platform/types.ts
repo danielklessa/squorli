@@ -166,6 +166,12 @@ export interface Platform {
     readonly focusPopout: ((name: string) => void) | null;
     /** The window has no system title bar and the client draws its own (desktop); null = the browser's or system's frame. */
     readonly frame: null | { state(): WindowFrameState; subscribe(cb: (state: WindowFrameState) => void): () => void; control(action: WindowControl): void };
+    /**
+     * The shell is about to close the window or quit and waits (at most a second and a half) until the callback's promise
+     * settles: the client leaves its voice channel so the leave cue sounds (App.tsx). Returns the unsubscribe. null = the
+     * page cannot be asked (browser, an app older than this).
+     */
+    readonly beforeQuit: null | ((cb: () => Promise<void> | void) => () => void);
   };
   /** App updates (desktop); null = the page is updated by its server. */
   readonly updates: null | { get(): UpdateState; subscribe(cb: (state: UpdateState) => void): () => void; check(): void; restartAndInstall(): void };

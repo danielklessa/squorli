@@ -28,7 +28,7 @@ import { micPermissionState, micRefusal } from "./micPermission";
 import { isCameraBusy, retryCameraBusy } from "./cameraRetry";
 import { cameraSwitch, type CameraRequest } from "./cameraSwitch";
 import type { VoiceSettings } from "./settings";
-import { DEFAULT_SOUND_SETTINGS, FEEDBACK_TONES, applyCueOutput, contextSinkSupported, normalizeSoundSettings, playCue, playTones, setContextSink, shouldPlayCue, type SoundCue, type SoundSettings } from "./sounds";
+import { DEFAULT_SOUND_SETTINGS, FEEDBACK_TONES, applyCueOutput, contextSinkSupported, cueDurationMs, normalizeSoundSettings, playCue, playTones, setContextSink, shouldPlayCue, type SoundCue, type SoundSettings } from "./sounds";
 import { USER_VOLUME_MAX, clampUserVolume, loadUserVolumes, saveUserVolumes, withUserVolume, type UserVolumes } from "./userVolumes";
 import { screenSharePublish } from "./screenShareOptions";
 import { subscriptionPermissions, type VideoAccess } from "./videoAccess";
@@ -599,6 +599,12 @@ export class VoiceClient {
       this.patch({ error: text, rtcUrl: url });
       throw err;
     }
+  }
+
+  /** How long leave() would let the leave cue sound from now, in milliseconds; 0 = it would stay silent (not joined, deafened, cue off). */
+  leaveCueMs(): number {
+    if (!this.cueJoined || this.switchingRoom) return 0;
+    return shouldPlayCue("selfLeave", this.sounds, { deafened: this.state.deafened }) ? cueDurationMs("selfLeave") : 0;
   }
 
   async leave(): Promise<void> {

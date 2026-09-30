@@ -3,7 +3,7 @@ import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import { DirectoryLeaveRequest, DirectoryNotifyRequest, PROTOCOL_VERSION, RADIO_IDLE_STOP_MS } from "@squorli/protocol";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, sum } from "drizzle-orm";
 import Fastify from "fastify";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,7 +14,10 @@ import { bootstrap } from "./bootstrap";
 import { loadConfig } from "./config";
 import { webAppManifest } from "./webManifest";
 import { createDb, runMigrations } from "./db";
-import { channels } from "./db/schema";
+import { attachments, channels } from "./db/schema";
+import { StorageMeter } from "./limits";
+import { registerLimitsRoutes } from "./routes/limits";
+import { registerReadyRoute } from "./routes/ready";
 import { Hub } from "./hub";
 import { LivekitAdmin } from "./livekit/admin";
 import { registerLivekitRoutes } from "./livekit/routes";
@@ -45,7 +48,7 @@ import { Doctor } from "./doctor";
 import { deleteUserAccount, type DeleteUserResult } from "./users/deleteUser";
 import { Suspensions } from "./users/suspension";
 import { registerUserRoutes } from "./users/routes";
-import { DirectoryClient, SYNC_INTERVAL_MS } from "./directory";
+import { DirectoryClient, SYNC_INTERVAL_MS, registerStartDelayMs } from "./directory";
 import { Devices } from "./users/devices";
 import { broadcastStructure, loadChannels, loadSettings, refusesSuspended, setLocalAccountsConfig, setOpenReportCount } from "./state";
 import { setPublicOrigin } from "./names";
@@ -90,9 +93,20 @@ async function main() {
   });
 
   // PostgreSQL's notices as lines of the log, at debug level: the migrator's "already exists, skipping" comes on every start.
-  const { db, client } = createDb(config.DATABASE_URL, (notice) => app.log.debug({ code: notice.code, severity: notice.severity }, `PostgreSQL: ${notice.message ?? ""}`));
+  const { db, client } = createDb(config.DATABASE_URL, (notice) => app.log.debug({ code: notice.code, severity: notice.severity }, `PostgreSQL: ${notice.message ?? ""}`), config.DB_POOL_MAX);
   // Migrations folder: in dev relative to src, in the build relative to dist -> both point at ../drizzle
   await runMigrations(db, join(here, "..", "drizzle"));
+  // GET /api/ready: 200 only while the database answers (docs/features/limits.md); /api/health stays up without it.
+  registerReadyRoute(app, () => client`select 1`);
+  // The operator limits (docs/features/limits.md): every file the server keeps for its members against STORAGE_QUOTA_MB.
+  const meter = new StorageMeter(config.STORAGE_QUOTA_MB, {
+    attachmentsBytes: async () => Number((await db.select({ bytes: sum(attachments.size) }).from(attachments))[0]?.bytes ?? 0),
+    dirs: [join(config.DATA_DIR, "previews"), join(config.DATA_DIR, "reports"), join(config.DATA_DIR, "avatars")],
+    files: [join(config.DATA_DIR, "server-icon")],
+  });
+  if (config.STORAGE_QUOTA_MB !== undefined || config.VOICE_SEATS_MAX !== undefined || config.MEMBER_MAX !== undefined) {
+    app.log.info({ storageQuotaMb: config.STORAGE_QUOTA_MB ?? null, voiceSeatsMax: config.VOICE_SEATS_MAX ?? null, memberMax: config.MEMBER_MAX ?? null, dbPoolMax: config.DB_POOL_MAX }, "Betreiber-Limits aktiv");
+  }
 
   // CORS for all origins: the web client of another Squorli server talks to this server directly (multi-server client,
   // server rail). Auth runs exclusively through the bearer token in the header (no cookies), and the login signature stays bound to
@@ -167,6 +181,7 @@ async function main() {
   await loadLinkSecret(db);
   directory = new DirectoryClient(db, config, app.log);
   await directory.init();
+  app.addHook("onClose", async () => directory?.close());
 
   const hub = new Hub();
   const presence = new VoicePresence<WebSocket>();
@@ -242,9 +257,10 @@ async function main() {
 
   // Uploads (attachments, server icon): one file per request, size per MAX_UPLOAD_MB.
   await app.register(multipart, { limits: { fileSize: Math.round(config.MAX_UPLOAD_MB * 1024 * 1024), files: 1 } });
-  await registerAuthRoutes(app, db, config, hub, directory, presence, devices);
+  await registerAuthRoutes(app, db, config, hub, directory, presence, devices, meter);
   await registerUserRoutes(app, db, directory, hub, presence);
-  await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta }, suspensions);
+  await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta }, suspensions, meter);
+  await registerLimitsRoutes(app, db, config, meter, presence, lk);
   await registerStatusRoutes(app, db, hub, presence, config);
   // Setup self-diagnosis (docs/features/doctor.md): GET /api/doctor with MANAGE_SERVER or from the machine itself (`squorli doctor`).
   await registerDoctorRoutes(app, db, config, new Doctor(config, directory, lk, VERSION, app.log));
@@ -262,15 +278,16 @@ async function main() {
     const [message] = await loadMessages(db, [row]);
     if (message) hub.broadcastToChannel(message.channelId, { type: "message.update", message });
   });
+  previews.meter = meter;
   await previews.init();
   app.addHook("onClose", async () => previews.close());
   await registerMessageRoutes(app, db, hub, previews);
   await registerPreviewRoutes(app, previews);
   await registerReadStateRoutes(app, db, hub);
   await registerRadioRoutes(app, db, hub, presence, syncRadioMeta);
-  await registerAttachmentRoutes(app, db, config);
+  await registerAttachmentRoutes(app, db, config, meter);
   // Reports and the moderation log (docs/features/reports.md): after the attachments (the snapshot copies their files).
-  const reportsService = new ReportsService(app, db, hub, config, app.log);
+  const reportsService = new ReportsService(app, db, hub, config, app.log, meter);
   await reportsService.init();
   setOpenReportCount(() => reportsService.openCount());
   app.addHook("onClose", async () => reportsService.dispose());
@@ -278,8 +295,8 @@ async function main() {
   const modLogTimer = setInterval(() => { void sweepModLog(db).catch((err) => app.log.warn({ err }, "mod log sweep")); }, 6 * 60 * 60_000);
   modLogTimer.unref();
   app.addHook("onClose", async () => clearInterval(modLogTimer));
-  await registerLivekitRoutes(app, db, config, presence);
-  await registerWs(app, db, hub, presence, radioMeta, lk, wsLimit);
+  await registerLivekitRoutes(app, db, config, presence, lk);
+  await registerWs(app, db, hub, presence, radioMeta, lk, wsLimit, { voiceSeatsMax: config.VOICE_SEATS_MAX });
 
   // The built web client is served by the same process (one container less).
   const staticDir = config.STATIC_DIR ?? join(here, "..", "public");
@@ -367,7 +384,11 @@ async function main() {
       const changed = await directory!.syncAll((u) => presence.rename(u.userId, { displayName: u.displayName, publicKey: u.publicKey, handle: u.handle }));
       if (changed) await broadcastStructure(db, hub, ["members"]);
     };
-    void directory.register().then(() => sync()).catch((err) => app.log.warn({ err }, "Verzeichnis-Abgleich"));
+    // A random moment first (registerStartDelayMs): many servers starting at once behind one address would otherwise
+    // register together and hit the directory's limit; in development at once. A failure tries again by itself (directory.ts).
+    const startTimer = setTimeout(() => { void directory!.register().then(() => sync()).catch((err) => app.log.warn({ err }, "Verzeichnis-Abgleich")); },
+      registerStartDelayMs(config.PUBLIC_DOMAIN === "localhost" ? 0 : Math.random()));
+    startTimer.unref();
     notifyHandler = async (publicKey) => {
       const changed = await directory!.syncOne(publicKey, (u) => presence.rename(u.userId, { displayName: u.displayName, publicKey: u.publicKey, handle: u.handle }));
       if (changed) await broadcastStructure(db, hub, ["members"]);

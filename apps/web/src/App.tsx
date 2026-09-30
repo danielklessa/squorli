@@ -347,6 +347,18 @@ export function App() {
   }, [client, store]);
 
   /**
+   * The app is about to go away (the desktop shell closes the window, quits or installs an update): leave the voice
+   * channel now and give the leave cue the moment it needs to sound; nothing to wait for when it would stay silent.
+   */
+  const leaveVoiceBeforeQuit = useCallback(async () => {
+    if (client.state.status === "disconnected") return;
+    const ms = client.leaveCueMs();
+    void leaveVoice();
+    if (ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }, [client, leaveVoice]);
+  useEffect(() => platform.window.beforeQuit?.(leaveVoiceBeforeQuit), [leaveVoiceBeforeQuit]);
+
+  /**
    * Join a voice channel on `host`; if voice is running on another server, it is ended there first. `auto` = not the user's
    * own step (moved to the AFK channel, the channel's AFK role changed): the view stays as it is and the way back is kept.
    * `force` joins again although already there (a fresh token with the grants that fit the channel now).
@@ -767,6 +779,7 @@ export function App() {
     <TitleBar title={title} onRestartForUpdate={() => { void (async () => {
       // Restarting ends a voice connection: ask first while in one.
       if (voice.status !== "disconnected" && !await askConfirm({ title: t("update.restartTitle"), text: t("update.restartInVoice"), confirmLabel: t("update.restart") })) return;
+      await leaveVoiceBeforeQuit(); // the install quits without asking again (the shell skips its hand-off there)
       platform.updates?.restartAndInstall();
     })(); }} />
     <div className={`app ${showRail ? "with-rail" : ""} ${homeOpen ? "home" : ""} ${mobileContent ? "mobile-content" : ""} ${showStage ? "mobile-stage" : ""} ${mobile && mobileMembers && !homeOpen && view ? "mobile-members" : ""} ${!homeOpen && !view ? "no-members" : ""}`} style={{ "--left-w": `${layout.left}px`, "--members-w": `${layout.members}px` } as CSSProperties}>

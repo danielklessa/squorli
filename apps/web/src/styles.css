@@ -1209,6 +1209,11 @@ button.emoji-open[aria-expanded="true"] { color: var(--brand); }
 .import-role-swatch { width: 0.75rem; height: 0.75rem; border-radius: 50%; flex: none; }
 .import-dropped { margin: 0; padding-left: 1.25rem; }
 .row > input.grow { flex: 1; min-width: 12rem; }
+/* Verwaltung > Server > Grenzen (docs/features/limits.md): two columns, the value right of its name. */
+.limits-table { border-collapse: collapse; }
+.limits-table td { padding: calc(var(--u) * 0.5) calc(var(--u) * 3) calc(var(--u) * 0.5) 0; vertical-align: top; }
+.limits-table td:last-child { padding-right: 0; }
+.limits-table .warn { color: var(--warn); }
 
 /* ---- Channel permissions and the channel dialog (docs/features/channel-permissions.md, 23 September 2026) ---- */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

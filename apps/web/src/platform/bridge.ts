@@ -210,6 +210,13 @@ export interface DesktopBridge {
   checkForUpdates(): void;
   restartAndInstall(): void;
   /**
+   * The shell is about to close the window or quit and holds that for a moment: the client finishes (it leaves its voice
+   * channel so the leave cue sounds) and answers with `quitReady`; the shell waits at most a second and a half. An app
+   * from before it has neither member and simply goes away.
+   */
+  onQuitRequest(cb: (requestId: number) => void): () => void;
+  quitReady(requestId: number): void;
+  /**
    * The client's secrets encrypted by the operating system (`safeStorage`, shell from 25 September 2026; missing = an older
    * shell). Synchronous. `available` false = no real encryption here (Linux without a keyring): keep localStorage.
    * Only the keys of SECRET_KEYS are accepted.
@@ -264,6 +271,8 @@ export const IPC = {
   updateState: "squorli:update-state",
   updateCheck: "squorli:update-check",
   updateInstall: "squorli:update-install",
+  quitRequest: "squorli:quit-request",
+  quitReady: "squorli:quit-ready",
   secretsAvailable: "squorli:secrets-available",
   secretsGet: "squorli:secrets-get",
   secretsSet: "squorli:secrets-set",

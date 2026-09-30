@@ -3,12 +3,13 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireMember } from "../auth/session";
 import { can } from "../authz";
 import type { Config } from "../config";
+import type { StorageMeter } from "../limits";
 import type { Db } from "../db";
 import { channels, roles, serverSettings } from "../db/schema";
 import type { Hub } from "../hub";
@@ -30,7 +31,7 @@ function newStatusApiKey(): string { return randomBytes(32).toString("base64url"
 const ICON_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const ICON_MAX_BYTES = 2 * 1024 * 1024;
 
-export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: Hub, config: Config, directory: DirectoryClient, voice: { presence: VoicePresence; lk: LivekitAdmin; onRadioChange: () => void }, suspensions: Suspensions) {
+export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: Hub, config: Config, directory: DirectoryClient, voice: { presence: VoicePresence; lk: LivekitAdmin; onRadioChange: () => void }, suspensions: Suspensions, meter: StorageMeter) {
   /** Directory (M6d): name, listing, description, open join and icon live at the directory; re-register after a change. */
   // Debounced (1.5 s): several changes in quick succession = one registration (the directory's registration limit is 10/min).
   let reregTimer: NodeJS.Timeout | null = null;
@@ -143,7 +144,11 @@ export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: 
       const tooLarge = err instanceof Error && (err.message === "too_large" || (err as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE");
       return reply.code(tooLarge ? 413 : 500).send({ error: tooLarge ? "too_large" : "upload_failed", maxMb: 2 });
     }
+    // The storage quota (docs/features/limits.md): the icon it replaces gives its bytes back.
+    const [size, before] = await Promise.all([stat(tmp).then((st) => st.size), stat(iconPath).then((st) => st.size).catch(() => 0)]);
+    if (!(await meter.room(size - before))) { await rm(tmp, { force: true }); return reply.code(413).send({ error: "storage_full" }); }
     await replaceFile(tmp, iconPath);
+    meter.invalidate();
     await db.update(serverSettings).set({ iconMime: part.mimetype, iconUpdatedAt: new Date() }).where(eq(serverSettings.id, SETTINGS_ID));
     await broadcastStructure(db, hub, ["settings"]);
     req.log.info({ by: m.userId, type: part.mimetype }, "Server-Icon gesetzt");

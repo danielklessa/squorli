@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../config";
+import type { StorageMeter } from "../limits";
 import type { Db } from "../db";
 import { messages } from "../db/schema";
 
@@ -44,6 +45,9 @@ export class LinkPreviews {
   private running = 0;
   private readonly waiting: (() => void)[] = [];
   private sweeper: ReturnType<typeof setInterval> | null = null;
+
+  /** The storage quota (docs/features/limits.md): a picture that does not fit is left out, the preview keeps its texts. */
+  meter: StorageMeter | null = null;
 
   constructor(private readonly db: Db, private readonly config: Config, private readonly log: Log, private readonly onChange: (row: typeof messages.$inferSelect) => Promise<void>) {
     this.dir = join(config.DATA_DIR, "previews");
@@ -141,7 +145,7 @@ export class LinkPreviews {
     const video = youtubeVideoOf(url);
     const found = video ? await lookUpYoutubeVideo(video.videoId, options) : await lookUpPage(url, options);
     if (!found) return null;
-    const image = found.image ? await this.saveImage(found.image) : null;
+    const image = found.image && (this.meter === null || await this.meter.room(found.image.bytes.length)) ? await this.saveImage(found.image) : null;
     return { url, kind: found.kind, siteName: found.siteName, title: found.title, description: found.description, image, ...(video ? { videoId: video.videoId, ...(video.start > 0 ? { start: video.start } : {}) } : {}) };
   }
 
@@ -149,6 +153,7 @@ export class LinkPreviews {
   private async saveImage(image: LinkImage): Promise<string> {
     const file = `${createHash("sha256").update(image.bytes).digest("hex").slice(0, 32)}.${image.ext}`;
     await writeFile(join(this.dir, file), image.bytes);
+    this.meter?.invalidate();
     return `/api/previews/${file}`;
   }
 

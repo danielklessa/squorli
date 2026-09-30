@@ -34,6 +34,23 @@ const Env = z.object({
   DATA_DIR: z.string().default("./data"),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
   /**
+   * Operator limits (docs/features/limits.md, 30 September 2026): every one of them is off when unset. STORAGE_QUOTA_MB
+   * bounds every file the server keeps for its members (attachments, link preview pictures, report copies, avatars, the
+   * server icon; 413 storage_full), VOICE_SEATS_MAX how many people sit in voice channels at the same time (409
+   * voice_seats_full), MEMBER_MAX how many members the server admits (403 server_full). DB_POOL_MAX is the size of the
+   * PostgreSQL connection pool (held open for good; 4 is plenty for a small server, 10 was the fixed value before).
+   */
+  STORAGE_QUOTA_MB: z.coerce.number().positive().optional(),
+  VOICE_SEATS_MAX: z.coerce.number().int().positive().optional(),
+  MEMBER_MAX: z.coerce.number().int().positive().optional(),
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+  /**
+   * The address LiveKit announces for media (its `rtc.node_ip`; in `deploy/compose.yml` the same variable configures
+   * LiveKit itself). The setup check probes the media ports there when it is set; otherwise it uses the host of
+   * LIVEKIT_PUBLIC_URL when that differs from PUBLIC_DOMAIN, else PUBLIC_DOMAIN (a media node on another machine).
+   */
+  LIVEKIT_NODE_IP: z.string().min(1).optional(),
+  /**
    * Public key that becomes the owner on first sign-in. Empty = the first user
    * who signs in while no owner exists yet.
    */

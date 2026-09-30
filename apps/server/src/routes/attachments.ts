@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { requireMember } from "../auth/session";
 import { can } from "../authz";
 import type { Config } from "../config";
+import type { StorageMeter } from "../limits";
 import type { Db } from "../db";
 import { attachments } from "../db/schema";
 import { visibility } from "../visibility";
@@ -23,7 +24,7 @@ import { verifyAttachment } from "../attachmentLinks";
 /** Types a browser may show in place: raster pictures, video, audio, plain text, PDF. */
 export const INLINE_TYPES = /^(image\/(png|jpeg|gif|webp|avif)|video\/[a-z0-9.+-]+|audio\/[a-z0-9.+-]+|text\/plain|application\/pdf)$/;
 
-export async function registerAttachmentRoutes(app: FastifyInstance, db: Db, config: Config) {
+export async function registerAttachmentRoutes(app: FastifyInstance, db: Db, config: Config, meter: StorageMeter) {
   const dir = join(config.DATA_DIR, "attachments");
   await mkdir(dir, { recursive: true });
   // @fastify/multipart is registered in index.ts (the server icon upload in settings.ts uses it too).
@@ -35,6 +36,9 @@ export async function registerAttachmentRoutes(app: FastifyInstance, db: Db, con
     // is the message that attaches the file (routes/messages.ts, in that channel).
     await visibility.refresh(db);
     if (!can(m.actor, Permission.ATTACH_FILES) && ![...visibility.masksOf(m.userId).values()].some((p) => can({ ...m.actor, permissions: p }, Permission.ATTACH_FILES))) return reply.code(403).send({ error: "forbidden" });
+    // The storage quota (docs/features/limits.md): nothing is written once it is reached, and a file that would cross it
+    // is thrown away after the upload (its size is only known then); 413 storage_full either way.
+    if (!(await meter.room())) return reply.code(413).send({ error: "storage_full", quotaMb: config.STORAGE_QUOTA_MB });
     const part = await req.file();
     if (!part) return reply.code(400).send({ error: "no_file" });
     const name = (part.filename || "datei").replace(/[\\/\0]/g, "_").slice(0, 200);
@@ -50,7 +54,13 @@ export async function registerAttachmentRoutes(app: FastifyInstance, db: Db, con
       return reply.code(tooLarge ? 413 : 500).send({ error: tooLarge ? "too_large" : "upload_failed", maxMb: config.MAX_UPLOAD_MB });
     }
     const size = (await stat(path)).size;
+    if (!(await meter.room(size))) {
+      await rm(path, { force: true });
+      await db.delete(attachments).where(eq(attachments.id, row!.id));
+      return reply.code(413).send({ error: "storage_full", quotaMb: config.STORAGE_QUOTA_MB });
+    }
     await db.update(attachments).set({ size }).where(eq(attachments.id, row!.id));
+    meter.invalidate();
     const out: Attachment = { id: row!.id, name, size, mimeType: row!.mimeType, url: attachmentUrl({ id: row!.id, name }) };
     return out;
   });
@@ -91,6 +101,7 @@ export async function registerAttachmentRoutes(app: FastifyInstance, db: Db, con
   /** Called by messages.ts after a deletion so files do not linger. */
   app.decorate("removeAttachmentFiles", async (ids: string[]) => {
     for (const id of ids) await rm(join(dir, id), { force: true });
+    if (ids.length) meter.invalidate();
   });
 }
 

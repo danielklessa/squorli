@@ -26,6 +26,7 @@ import { PlayerAudioOutput } from "./playerAudio";
 import { readPlayerOutputLabel } from "./playerAudioScript";
 import { applyPermissions, focusPopout, letPlayersEmbed, lockDownContents, openExternal } from "./security";
 import { createSplash, type Splash } from "./splash";
+import { createQuitHandoff } from "./quitHandoff";
 import { createTray, setTrayAttention, setTrayLanguage } from "./tray";
 import { startSystemWatch, systemWatchPath } from "./systemWatch";
 import { handleUpdates } from "./updates";
@@ -90,6 +91,23 @@ let hotkeys: Hotkeys | null = null;
 let tray: Tray | null = null;
 let closeToTray = loadConfig(app.getPath("userData")).closeToTray === true;
 let quitting = false;
+// The client said its first screen is there (IPC.clientReady): only then is it worth asking it before the app goes away.
+let clientLoaded = false;
+/**
+ * Before the window closes or the app quits, the client gets a moment to leave its voice channel so the leave cue sounds
+ * (quitHandoff.ts; IPC.quitRequest, the client answers with IPC.quitReady). At most QUIT_HANDOFF_MS; the update's install
+ * and a hidden window (close to tray) do not ask.
+ */
+const QUIT_HANDOFF_MS = 1500;
+const quitHandoff = createQuitHandoff({
+  ask: (requestId) => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed() || !clientLoaded || win.webContents.isCrashed()) return false;
+    win.webContents.send(IPC.quitRequest, requestId);
+    return true;
+  },
+  timeoutMs: QUIT_HANDOFF_MS,
+});
 // Started by the system (autostart.ts): the first window stays in the background, unless the user wants it opened.
 let autostartBackground = readAutostartBackground(loadConfig(app.getPath("userData")).autostartBackground);
 let backgroundStart = startsInBackground(process.argv, autostartBackground);
@@ -253,7 +271,11 @@ function createWindow(splash: Splash | null = null): BrowserWindow {
   };
   const rememberSoon = () => { if (rememberTimer) clearTimeout(rememberTimer); rememberTimer = setTimeout(remember, 800); };
   win.on("resize", rememberSoon); win.on("move", rememberSoon); win.on("close", remember);
-  win.on("close", (event) => { if (closeToTray && tray && !quitting) { event.preventDefault(); win.hide(); } });
+  win.on("close", (event) => {
+    if (closeToTray && tray && !quitting) { event.preventDefault(); win.hide(); return; }
+    // Held once until the client left its voice channel (or a moment passed); then the close is repeated from here.
+    if (!quitHandoff.attempt(() => { if (!win.isDestroyed()) win.close(); })) event.preventDefault();
+  });
   win.on("closed", () => { if (rememberTimer) clearTimeout(rememberTimer); if (devRetry) clearTimeout(devRetry); clearRevealTimer(); if (mainWindow === win) mainWindow = null; });
   void win.loadURL(devUrl ?? `${APP_ORIGIN}/`);
   return win;
@@ -301,7 +323,12 @@ else {
     handleDisplayMedia(session.defaultSession, isClientFrame, screenAudio, systemWatch, games);
     // Global shortcuts, the push-to-talk key across the system, commands from outside (hotkeys.ts).
     hotkeys = handleHotkeys(() => mainWindow, isClientFrame, systemWatch, app.isPackaged ? undefined : (text) => console.log(text));
-    app.on("before-quit", () => { quitting = true; screenAudio.stop(); playerAudio.stop(); systemWatch.stop(); hotkeys?.stop(); });
+    app.on("before-quit", (event) => {
+      // A quit from the tray, a relaunch or the system: the same hand-off as the window's close, then app.quit() again.
+      if (!quitHandoff.attempt(() => app.quit())) { event.preventDefault(); return; }
+      quitting = true; screenAudio.stop(); playerAudio.stop(); systemWatch.stop(); hotkeys?.stop();
+    });
+    ipcMain.on(IPC.quitReady, (event, requestId: unknown) => { if (isClientFrame(event) && typeof requestId === "number") quitHandoff.answer(requestId); });
     ipcMain.handle(IPC.setAppearance, (event, next: unknown) => {
       if (!isClientFrame(event)) return look;
       appearance = normalizeAppearance(next, materials);
@@ -337,9 +364,10 @@ else {
     ipcMain.on(IPC.language, (event, value: unknown) => { if (isClientFrame(event)) { language = readShellLanguage(value, language); setTrayLanguage(tray, language); } });
     ipcMain.on(IPC.openExternal, (event, url: unknown) => { if (isClientFrame(event) && typeof url === "string") openExternal(url); });
     tray = createTray(() => mainWindow, () => { quitting = true; app.quit(); }, language);
-    const updates = handleUpdates(() => mainWindow, isClientFrame, () => { quitting = true; screenAudio.stop(); systemWatch.stop(); });
+    // The install quits by itself and must not be held: the client left its voice channel before it asked for the install (App.tsx).
+    const updates = handleUpdates(() => mainWindow, isClientFrame, () => { quitting = true; quitHandoff.skip(); screenAudio.stop(); systemWatch.stop(); });
     updateState = updates.state;
-    ipcMain.on(IPC.clientReady, (event) => { if (isClientFrame(event)) reveal?.(); });
+    ipcMain.on(IPC.clientReady, (event) => { if (isClientFrame(event)) { clientLoaded = true; reveal?.(); } });
     // `--no-splash` (unpackaged only): the main window at once, to look at what the client itself shows while it starts.
     if (backgroundStart || (!app.isPackaged && process.argv.includes("--no-splash"))) { updates.checkSoon(); mainWindow = createWindow(); }
     else {

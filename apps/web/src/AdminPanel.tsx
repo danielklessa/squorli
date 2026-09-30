@@ -1,4 +1,4 @@
-import { PERMISSION_GROUPS, Permission, hasPermission, type Ban, type DoctorReport, type DoctorStatus, type Invite, type PermissionName, type Role, type ServerState, type StatusApiMode } from "@squorli/protocol";
+import { PERMISSION_GROUPS, Permission, hasPermission, type Ban, type DoctorReport, type DoctorStatus, type Invite, type LimitsReport, type PermissionName, type Role, type ServerState, type StatusApiMode } from "@squorli/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { ServerApi } from "./api";
 import { askConfirm } from "./dialogs";
@@ -122,6 +122,7 @@ function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; s
       <span className="muted small">{t("admin.iconHint")}</span>
       {server.settings.statusApi !== undefined && <StatusApiSection api={api} mode={server.settings.statusApi} roleId={server.settings.statusApiRoleId ?? null} roles={server.roles} run={run} />}
       {server.settings.doctor && <DoctorSection api={api} run={run} />}
+      {server.settings.limits && <LimitsSection api={api} run={run} />}
       <h3>{t("admin.ownersHeading")}</h3>
       <p className="muted small">{owners.map((o) => o.displayName).join(", ") || "–"}. {t("admin.ownersHint")}</p>
     </div>
@@ -191,6 +192,34 @@ function StatusApiSection({ api, mode, roleId, roles, run }: { api: ServerApi; m
  * Setup check (docs/features/doctor.md): the server's report (its own address, LiveKit, the directory, and the directory's view
  * from outside) with texts in the client's language, plus the browser's own media connection, which is the UDP check.
  */
+/**
+ * Operator limits (docs/features/limits.md): what the server's configuration bounds it to (STORAGE_QUOTA_MB, VOICE_SEATS_MAX,
+ * MEMBER_MAX, MAX_UPLOAD_MB) and how much of that is in use. Read only: the values come from the environment, so nothing
+ * here can change them; a limit that is not set shows as unlimited. Fetched only here (MANAGE_SERVER).
+ */
+function LimitsSection({ api, run }: { api: ServerApi; run: RunFn }) {
+  const [report, setReport] = useState<LimitsReport | null>(null);
+  useEffect(() => { let stale = false; void api.limits().then((r) => { if (!stale) setReport(r); }).catch(() => {}); return () => { stale = true; }; }, [api]);
+  const mb = (bytes: number) => { const v = bytes / 1024 / 1024; return v < 10 ? v.toFixed(1) : String(Math.round(v)); };
+  const cell = (used: string, max: number | null, unit: string) => {
+    const label = max === null ? `${used}${unit} · ${t("admin.limitsUnlimited")}` : t("admin.limitsOf", { used: `${used}${unit}`, max: `${max}${unit}` });
+    return <span className={max !== null && Number(used) >= max ? "warn" : "muted"}>{label}</span>;
+  };
+  return <>
+    <h3>{t("admin.limitsHeading")}</h3>
+    {report && <table className="limits-table">
+      <tbody>
+        <tr><td>{t("admin.limitsStorage")}</td><td>{cell(mb(report.storage.usedBytes), report.storage.quotaMb, " MB")}</td></tr>
+        <tr><td>{t("admin.limitsVoiceSeats")}</td><td>{cell(String(report.voiceSeats.used), report.voiceSeats.max, "")}</td></tr>
+        <tr><td>{t("admin.limitsMembers")}</td><td>{cell(String(report.members.count), report.members.max, "")}</td></tr>
+        <tr><td>{t("admin.limitsUpload")}</td><td><span className="muted">{report.maxUploadMb} MB</span></td></tr>
+      </tbody>
+    </table>}
+    <span className="muted small">{t("admin.limitsHint")}</span>
+    <div className="row"><button className="secondary" onClick={() => run(async () => setReport(await api.limits()))}>{t("admin.limitsRefresh")}</button></div>
+  </>;
+}
+
 function DoctorSection({ api, run }: { api: ServerApi; run: RunFn }) {
   const [report, setReport] = useState<DoctorReport | null>(null);
   const [media, setMedia] = useState<MediaCheckResult | "running" | null>(null);

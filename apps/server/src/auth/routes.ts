@@ -1,9 +1,10 @@
 import { ChallengeRequest, DEVICE_REFUSED, VerifyRequest, challengeMessage, deviceProofMessage, labelFromUserAgent, signInOrigin, type VerifyResponse } from "@squorli/protocol";
 import * as ed from "@noble/ed25519";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, count, eq, isNull, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config } from "../config";
+import { membersFull, type StorageMeter } from "../limits";
 import type { Db } from "../db";
 import { bans, invites, localAccounts, memberRoles, members, roles, serverSettings, sessions, users } from "../db/schema";
 import type { Hub } from "../hub";
@@ -90,6 +91,11 @@ export async function admit(
 
   // Membership: existing member, open server, or a valid invite.
   if (!member) {
+    // MEMBER_MAX (docs/features/limits.md): a full server admits nobody new, the owner excepted; no invite is used up by the refusal.
+    if (!firstEver && config.MEMBER_MAX !== undefined) {
+      const [mc] = await db.select({ n: count() }).from(members);
+      if (membersFull(mc?.n ?? 0, config.MEMBER_MAX)) { await reply.code(403).send({ error: "server_full", max: config.MEMBER_MAX }); return null; }
+    }
     if (!settings.openJoin && !firstEver) {
       if (!invite) { await reply.code(403).send({ error: "invite_required" }); return null; }
       const used = await consumeInvite(db, invite);
@@ -119,7 +125,7 @@ export async function admit(
   return { sessionToken: token, userId: user.id, expiresAt: expiresAt.toISOString(), registrationRequired };
 }
 
-export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, devices: Devices) {
+export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, devices: Devices, meter: StorageMeter) {
   const challenges = new ChallengeStore();
   const sweeper = setInterval(() => challenges.sweep(), 30_000);
   app.addHook("onClose", async () => clearInterval(sweeper));
@@ -191,7 +197,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
     return res ?? undefined;
   });
 
-  await registerLocalAccountRoutes(app, db, config, hub, directory, presence, challenges, devices);
+  await registerLocalAccountRoutes(app, db, config, hub, directory, presence, challenges, devices, meter);
 }
 
 /** Check and consume an invite (atomically). true = valid and counted. */

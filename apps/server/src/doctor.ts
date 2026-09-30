@@ -60,6 +60,20 @@ export function classifyFailure(code: string): FailureKind {
   return "other";
 }
 
+/**
+ * Where the media ports are probed (tested; docs/features/limits.md): LIVEKIT_NODE_IP when the operator set it (the address
+ * LiveKit announces), else the host of LIVEKIT_PUBLIC_URL when it names another machine than PUBLIC_DOMAIN, else
+ * PUBLIC_DOMAIN. A media node on another host than the app server would otherwise be probed at the wrong address.
+ */
+export function mediaHost(config: Pick<Config, "PUBLIC_DOMAIN" | "livekitPublicUrl" | "LIVEKIT_NODE_IP">): string {
+  if (config.LIVEKIT_NODE_IP) return config.LIVEKIT_NODE_IP;
+  try {
+    const host = new URL(config.livekitPublicUrl).hostname.replace(/^\[|\]$/g, "");
+    if (host && host !== "localhost" && host !== "127.0.0.1" && host.toLowerCase() !== config.PUBLIC_DOMAIN.toLowerCase()) return host;
+  } catch { /* an address that is no URL: the domain decides */ }
+  return config.PUBLIC_DOMAIN;
+}
+
 /** The request's own view: is PUBLIC_DOMAIN the host the users type, does the proxy pass the client's address and scheme (tested). */
 export function requestCheck(view: RequestView, config: Pick<Config, "PUBLIC_DOMAIN" | "trustedProxies">): DoctorCheck | null {
   if (!view) return null;
@@ -255,7 +269,8 @@ export class Doctor {
   /** The TCP media port from this process; the result from the machine's own address is only a hint (hairpin NAT). */
   private async checkTcp(): Promise<DoctorCheck> {
     const port = this.config.LIVEKIT_TCP_PORT;
-    const domain = this.config.PUBLIC_DOMAIN;
+    // The media node's address, not necessarily the app server's (mediaHost above).
+    const domain = mediaHost(this.config);
     let ip: string;
     try { ip = (await lookup(domain)).address; } catch (err) {
       return skip("mediaTcp", T(`${port}/tcp nicht geprüft: ${domain} löst nicht auf.`, `${port}/tcp not checked: ${domain} does not resolve.`), errorCode(err));

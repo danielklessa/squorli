@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { classifyFailure, errorCode, onPlatform, requestCheck } from "./doctor";
+import { classifyFailure, errorCode, mediaHost, onPlatform, requestCheck } from "./doctor";
+
+describe("mediaHost", () => {
+  it("probes PUBLIC_DOMAIN by default, LIVEKIT_PUBLIC_URL's host when it names another machine, LIVEKIT_NODE_IP first", () => {
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://chat.example.org" })).toBe("chat.example.org");
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://CHAT.example.org/rtc" })).toBe("chat.example.org");
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://media.example.org" })).toBe("media.example.org");
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "ws://localhost:7880" })).toBe("chat.example.org");
+    expect(mediaHost({ PUBLIC_DOMAIN: "localhost", livekitPublicUrl: "ws://127.0.0.1:7880" })).toBe("localhost");
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://media.example.org", LIVEKIT_NODE_IP: "203.0.113.7" })).toBe("203.0.113.7");
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "not a url" })).toBe("chat.example.org");
+  });
+});
 
 describe("onPlatform", () => {
   it("words a text for containers, and for services on Windows", () => {

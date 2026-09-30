@@ -10,6 +10,7 @@ type Key = Parameters<typeof t>[0];
 const shared: Record<string, Key> = {
   confined: "voice.stickyBlocked",
   channel_full: "voice.joinErr.full",
+  voice_seats_full: "voice.joinErr.seatsFull",
   unknown_channel: "voice.joinErr.gone",
 };
 

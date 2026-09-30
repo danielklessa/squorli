@@ -198,6 +198,8 @@ export const ServerSettings = z.object({
   statusApiRoleId: Uuid.nullable().optional(),
   /** The setup check exists (GET /api/doctor, POST /api/doctor/rtc-token; docs/features/doctor.md). Optional = feature flag. */
   doctor: z.boolean().optional(),
+  /** The operator limits' report exists (GET /api/settings/limits; docs/features/limits.md). Optional = feature flag. */
+  limits: z.boolean().optional(),
   /**
    * Suspended directory accounts (docs/features/reports.md, 27 September 2026): an account the directory's operator
    * suspended cannot sign in here until the suspension ends, and its sessions end when the server learns of it (default
@@ -209,6 +211,22 @@ export const ServerSettings = z.object({
 export const UpdateSettingsRequest = ServerSettings.pick({ name: true, openJoin: true, localAccounts: true, listed: true, description: true, radioAutoStop: true, afkChannelId: true, statusApi: true, statusApiRoleId: true, refuseSuspended: true }).partial();
 /** The key of the status API in mode "key" (MANAGE_SERVER only); null = none yet (made when the mode is switched to "key"). */
 export const StatusApiKeyResponse = z.object({ key: z.string().nullable() });
+/**
+ * Operator limits (docs/features/limits.md, 30 September 2026; GET /api/settings/limits, MANAGE_SERVER): what the server's
+ * configuration bounds it to and how much of that is in use. A limit null = unlimited (its variable is unset).
+ */
+export const LimitsReport = z.object({
+  /** Every file the server keeps for its members (attachments, preview pictures, report copies, avatars, the icon) against STORAGE_QUOTA_MB. */
+  storage: z.object({ usedBytes: z.number().int().min(0), quotaMb: z.number().nullable() }),
+  /** People sitting in voice channels right now against VOICE_SEATS_MAX. */
+  voiceSeats: z.object({ used: z.number().int().min(0), max: z.number().int().nullable() }),
+  /** Members against MEMBER_MAX. */
+  members: z.object({ count: z.number().int().min(0), max: z.number().int().nullable() }),
+  /** MAX_UPLOAD_MB, the size one file may have. */
+  maxUploadMb: z.number(),
+  /** DB_POOL_MAX, the database connections this server holds. */
+  dbPoolMax: z.number().int(),
+});
 // ---- Setup self-diagnosis (docs/features/doctor.md, 25 September 2026): GET /api/doctor (MANAGE_SERVER, or from the
 // machine itself for `squorli doctor`) runs the checks an operator gets wrong most often and names the likely fault.
 // The texts come in both languages from the server, so the wrapper on the host and the admin panel say the same thing;
@@ -803,6 +821,7 @@ export type Me = z.infer<typeof Me>;
 export type ServerSettings = z.infer<typeof ServerSettings>;
 export type StatusApiMode = z.infer<typeof StatusApiMode>;
 export type StatusApiKeyResponse = z.infer<typeof StatusApiKeyResponse>;
+export type LimitsReport = z.infer<typeof LimitsReport>;
 export type DoctorStatus = z.infer<typeof DoctorStatus>;
 export type DoctorCheck = z.infer<typeof DoctorCheck>;
 export type DoctorReport = z.infer<typeof DoctorReport>;

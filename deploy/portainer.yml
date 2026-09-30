@@ -4,7 +4,7 @@
 # Enter the ${...} variables under "Environment variables" of the stack (see README.md "Portainer"):
 #   required: PUBLIC_DOMAIN, POSTGRES_PASSWORD, LIVEKIT_API_KEY, LIVEKIT_API_SECRET (32+ characters)
 #   usually:  LIVEKIT_NODE_IP (public IP of this host), DIRECTORY_URL, TRUSTED_PROXIES (IP of the proxy), PROXY_BIND_IP
-#   optional: APP_IMAGE, SERVER_NAME, OWNER_PUBLIC_KEY, OWNER_SETUP_CODE, MAX_UPLOAD_MB, LINK_PREVIEWS (true/false), LIVEKIT_PUBLIC_URL, DIRECTORY_PROOF_URL, LOCAL_ACCOUNTS (true/false), RATE_LIMIT_FACTOR, LOG_LEVEL, LOG_REQUESTS (true/false)
+#   optional: APP_IMAGE, SERVER_NAME, OWNER_PUBLIC_KEY, OWNER_SETUP_CODE, MAX_UPLOAD_MB, LINK_PREVIEWS (true/false), LIVEKIT_PUBLIC_URL, DIRECTORY_PROOF_URL, LOCAL_ACCOUNTS (true/false), RATE_LIMIT_FACTOR, LOG_LEVEL, LOG_REQUESTS (true/false), STORAGE_QUOTA_MB, VOICE_SEATS_MAX, MEMBER_MAX, DB_POOL_MAX (docs/features/limits.md)
 # The image defaults to the public one in the GitHub Container Registry; APP_IMAGE pins a version (e.g. :v0.5.0) or another
 # registry. See the Portainer section in README.md.
 # Firewall: 7881/tcp + 7882/udp open to the world (media); 3000 + 7880 only for the proxy host (HTTP, no TLS).
@@ -39,6 +39,10 @@ services:
       DIRECTORY_PROOF_URL: ${DIRECTORY_PROOF_URL:-}
       LOCAL_ACCOUNTS: ${LOCAL_ACCOUNTS:-}
       RATE_LIMIT_FACTOR: ${RATE_LIMIT_FACTOR:-1}
+      STORAGE_QUOTA_MB: ${STORAGE_QUOTA_MB:-}
+      VOICE_SEATS_MAX: ${VOICE_SEATS_MAX:-}
+      MEMBER_MAX: ${MEMBER_MAX:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_REQUESTS: ${LOG_REQUESTS:-false}
     volumes: [appdata:/app/data]   # attachments, server icon

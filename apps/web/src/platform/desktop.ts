@@ -116,6 +116,10 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
         subscribe: (cb) => { frameListeners.add(cb); cb(frame); return () => { frameListeners.delete(cb); }; },
         control: (action) => bridge.windowControl(action),
       },
+      // An app older than this client has neither member: it goes away without asking.
+      beforeQuit: typeof bridge.onQuitRequest === "function" && typeof bridge.quitReady === "function"
+        ? (cb) => bridge.onQuitRequest((requestId) => { void Promise.resolve().then(cb).catch(() => {}).finally(() => bridge.quitReady(requestId)); })
+        : null,
     },
     updates: info.update.status === "unsupported" ? null : {
       get: () => update,

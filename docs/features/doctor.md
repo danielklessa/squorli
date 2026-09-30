@@ -35,6 +35,7 @@ Both are decisions made by Claude, confirmed by the user on 28 September 2026. T
 - Texts in both languages from the server (above), a stable `id` per check for scripts.
 - The directory probes TCP and never UDP (nothing answers a bare UDP packet on LiveKit's port); UDP is the browser's job. The plan had left this open ("the directory could offer an echo, to decide when building").
 - `LIVEKIT_TCP_PORT`/`LIVEKIT_UDP_PORT` are passed to the server container too (`compose.yml`; defaults 7881/7882 in `config.ts`) so the report names the right numbers.
+- Since 30 September 2026 (`docs/features/limits.md`) the TCP media check resolves the media node's address, not always `PUBLIC_DOMAIN`: `LIVEKIT_NODE_IP` when set (the server reads it now too), else the host of `LIVEKIT_PUBLIC_URL` when it names another machine, else `PUBLIC_DOMAIN` (`mediaHost()`, tested). A media node on another host than the app server was probed at the wrong address before.
 - One doctor run at a time per server (a second caller shares the running one), 10 runs per IP and minute (`ipDoctor`), because every run opens connections outward and re-registers at the directory (its registration limit is 10 per minute and IP).
 - A failed TCP connect from the server itself is a warning, not a failure (hairpin NAT is common); the directory's and the browser's verdicts are the ones that count.
 - The wrapper's texts are the server's; the wrapper adds only the container list, the host's DNS view and the closing line about UDP.

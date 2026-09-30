@@ -3,7 +3,7 @@ import {
   AvatarUpdateResponse, avatarDigest, directoryAvatarPayload,
   BackupBlob, BackupParamsResponse, challengeMessage, createBackup, deriveBackupKeys, directoryActionMessage, directoryBackupMessage, directoryDmReportPayload, DmReportResponse, type DmReportContent, directoryProfilePayload,
   directoryRegisterMessage, directorySoundSettingsPayload, openBackup, type AccountSettings, type SealedSettings, type SoundSettings,
-  MuteState, ReadStateResponse, StatusApiKeyResponse, DoctorReport, ReportsResponse, ModLogResponse, type CreateReportRequest, type CloseReportRequest, type DeleteRecentHours, type Attachment, type Category, type Channel, type RadioStation, type Role, type StatusApiMode,
+  MuteState, ReadStateResponse, StatusApiKeyResponse, DoctorReport, LimitsReport, ReportsResponse, ModLogResponse, type CreateReportRequest, type CloseReportRequest, type DeleteRecentHours, type Attachment, type Category, type Channel, type RadioStation, type Role, type StatusApiMode,
   type DiscordImportRequest, type DiscordImportResult, type ImportPlan,
   LocalBackupBlob, LocalBackupParamsResponse, LocalHandle, LocalHandleResponse, localRegisterMessage,
   DmBlobPutResponse, LinkLookupResponse, directoryDmBlobUrl, directoryLinkLookupPayload, OverwritesResponse, type PermissionOverwrite, type ChannelNotification, type ChannelBlock, type ChannelBlockMinutes,
@@ -204,7 +204,14 @@ export class ServerApi {
   async uploadAttachment(file: File): Promise<Attachment> {
     const form = new FormData();
     form.append("file", file, file.name);
-    return this.request<Attachment>("POST", "/api/attachments", undefined, { form });
+    try {
+      return await this.request<Attachment>("POST", "/api/attachments", undefined, { form });
+    } catch (err) {
+      // A refused upload as a sentence (docs/features/limits.md): the file, or the server's storage, is too big.
+      if (err instanceof ApiError && err.code === "too_large") throw new Error(t("upload.tooLarge", { name: file.name, maxMb: typeof err.body.maxMb === "number" ? err.body.maxMb : "?" }));
+      if (err instanceof ApiError && err.code === "storage_full") throw new Error(t("upload.storageFull", { name: file.name }));
+      throw err;
+    }
   }
 
   // ---------- Voice
@@ -218,6 +225,8 @@ export class ServerApi {
   /** Setup check (docs/features/doctor.md, MANAGE_SERVER): the server's report, and a token for the browser's media test. */
   doctor() { return this.request<DoctorReport>("GET", "/api/doctor").then((r) => DoctorReport.parse(r)); }
   doctorRtcToken() { return this.request<RtcTokenResponse>("POST", "/api/doctor/rtc-token").then((r) => RtcTokenResponse.parse(r)); }
+  /** Operator limits (docs/features/limits.md, MANAGE_SERVER): what the configuration bounds this server to and what is in use. */
+  limits() { return this.request<LimitsReport>("GET", "/api/settings/limits").then((r) => LimitsReport.parse(r)); }
   /** Server icon (PNG/JPEG/WebP/GIF, 2 MB); appears in the sidebar and as the favicon. */
   async uploadServerIcon(file: File): Promise<{ ok: true; iconUrl: string | null }> {
     const form = new FormData();
@@ -307,6 +316,7 @@ export async function explainLoginError(err: unknown, api: ServerApi, here: stri
     case "rate_limited": return t("err.rateLimited");
     case "invite_required": return t("err.inviteRequired");
     case "invite_invalid": return t("err.inviteInvalid");
+    case "server_full": return t("err.serverFull");
     case "account_required": return t("err.accountRequired");
     case "registration_required": return t("err.registrationRequired");
     case "account_suspended": return suspendedText(suspendedUntilOfError(err) || null);
@@ -537,6 +547,8 @@ export function explainLocalError(err: unknown): string {
       case "device_signature_invalid": return t("err.deviceProof");
       case "invite_required": return t("err.inviteRequired");
       case "invite_invalid": return t("err.inviteInvalid");
+      case "server_full": return t("err.serverFull");
+      case "storage_full": return t("local.storage_full");
       case "banned": return `${t("err.banned")}${typeof err.body.reason === "string" && err.body.reason ? `: ${err.body.reason}` : "."}`;
       default: return err.message;
     }

@@ -87,6 +87,12 @@ export function shouldPlayCue(cue: SoundCue, settings: SoundSettings, ctx: { dea
   return ctx.force === true || settings[cue];
 }
 
+/** How long a cue sounds, in milliseconds: the last tone's end plus the start offset and the tail of its decay (playTones). */
+export function cueDurationMs(cue: SoundCue): number {
+  const end = Math.max(0, ...CUE_TONES[cue].map((t) => t.start + t.dur));
+  return Math.ceil((end + 0.01 + 0.02) * 1000);
+}
+
 /**
  * Play a cue on an existing AudioContext. Never throws: a blocked or closed context simply stays silent.
  * The context is shared with the microphone gate, which does not use its destination, so the cues are the only output.

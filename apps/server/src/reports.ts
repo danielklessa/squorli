@@ -6,6 +6,7 @@ import { copyFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { signAttachment, verifyAttachment } from "./attachmentLinks";
 import type { Config } from "./config";
+import type { StorageMeter } from "./limits";
 import type { Db } from "./db";
 import { attachments, channels, messages, reports } from "./db/schema";
 import type { Hub } from "./hub";
@@ -29,7 +30,7 @@ export class ReportsService {
   private readonly dir: string;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly app: FastifyInstance, private readonly db: Db, private readonly hub: Hub, config: Config, private readonly log: FastifyBaseLogger) {
+  constructor(private readonly app: FastifyInstance, private readonly db: Db, private readonly hub: Hub, config: Config, private readonly log: FastifyBaseLogger, private readonly meter: StorageMeter | null = null) {
     this.dir = join(config.DATA_DIR, "reports");
   }
 
@@ -70,12 +71,16 @@ export class ReportsService {
       },
     }).returning({ id: reports.id });
     const id = inserted!.id;
-    if (files.length) {
+    // The storage quota (docs/features/limits.md): copies that do not fit are left out, the report keeps its snapshot.
+    if (files.length && (this.meter === null || await this.meter.room(files.reduce((a, f) => a + f.size, 0)))) {
       const dir = join(this.dir, id);
       await mkdir(dir, { recursive: true });
       for (const [n, f] of files.entries()) {
         await copyFile(join(this.app.attachmentsDir, f.id), join(dir, String(n))).catch((err) => this.log.warn({ err, reportId: id, attachment: f.id }, "Anhang nicht in die Meldung kopiert"));
       }
+      this.meter?.invalidate();
+    } else if (files.length) {
+      this.log.warn({ reportId: id, files: files.length }, "Speicherkontingent voll (STORAGE_QUOTA_MB): die Anhaenge wurden nicht in die Meldung kopiert");
     }
     await this.broadcastCount();
     return id;

@@ -41,6 +41,7 @@ export async function loadSettings(db: Db): Promise<ServerSettings> {
     iconUrl: row.iconMime && row.iconUpdatedAt ? `/api/server-icon?v=${row.iconUpdatedAt.getTime()}` : null,
     statusApi: row.statusApi, statusApiRoleId: row.statusApiRoleId,
     doctor: true, // the setup check exists (docs/features/doctor.md)
+    limits: true, // the operator limits' report exists (GET /api/settings/limits, docs/features/limits.md)
     // Suspended directory accounts (users/suspension.ts): without a directory there is nothing to refuse and no switch.
     ...(directoryConfigured ? { refuseSuspended: row.refuseSuspended } : {}),
   };

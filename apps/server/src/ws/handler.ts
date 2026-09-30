@@ -11,6 +11,7 @@ import { actorOf, loadChannels, loadSettings, loadState, permissionListeners } f
 import type { VoicePresence } from "../voice/presence";
 import type { RadioMetadata } from "../radio/metadata";
 import type { LivekitAdmin } from "../livekit/admin";
+import { seatsFull, seatsTaken } from "../limits";
 import { Liveness, PING_EVERY_MS } from "./liveness";
 import { canIn, resolveChannel } from "../channelGuard";
 import { visibility } from "../visibility";
@@ -31,7 +32,7 @@ const GAME_CHANGE_MS = 5000;
 /** Close code for a connection that sends more events than `LIMITS.wsEvents` allows (docs/features/rate-limits.md). */
 export const CLOSE_RATE_LIMITED = 4008;
 
-export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presence: VoicePresence<WebSocket>, radioMeta: RadioMetadata, lk: LivekitAdmin, wsLimit: (() => WindowCounter) | null = null) {
+export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presence: VoicePresence<WebSocket>, radioMeta: RadioMetadata, lk: LivekitAdmin, wsLimit: (() => WindowCounter) | null = null, limits: { voiceSeatsMax?: number | undefined } = {}) {
   // Who sits in a voice channel goes only to those who may see the channel (docs/features/channel-permissions.md).
   const unsubscribe = presence.onChange((channelId, members) => {
     hub.broadcastToChannel(channelId, voiceStateEvent(channelId, members));
@@ -191,6 +192,8 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
           const blocked = granted ? null : channelBlockStore.of(channel.id, userId);
           if (blocked) return send({ type: "error", code: "forbidden", message: blocked.source === "votekick" ? "votekicked" : "channel_blocked" });
           if (channel.userLimit !== null && !granted && presence.channelOfUser(userId) !== channel.id && presence.members(channel.id).length >= channel.userLimit) return send({ type: "error", code: "forbidden", message: "channel_full" });
+          // VOICE_SEATS_MAX (docs/features/limits.md), the same as POST /api/rtc-token: the seats of the whole server, the member's own seat excepted.
+          if (limits.voiceSeatsMax !== undefined && seatsFull(seatsTaken(presence.seated(), await lk.roomsByIdentity(), userId), limits.voiceSeatsMax)) return send({ type: "error", code: "forbidden", message: "voice_seats_full" });
           const [user] = await db.select({ publicKey: users.publicKey, displayName: users.displayName, handle: users.handle }).from(users).where(eq(users.id, userId)).limit(1);
           if (!user) return socket.close(4003, "unauthorized");
           // The same account joins from another device or tab (user's wish, 22 September 2026): its voice elsewhere on this

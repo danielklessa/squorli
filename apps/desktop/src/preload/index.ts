@@ -51,6 +51,8 @@ const bridge: DesktopBridge = {
   onUpdateState: (cb) => subscribe<UpdateState>(IPC.updateState, cb),
   checkForUpdates: () => ipcRenderer.send(IPC.updateCheck),
   restartAndInstall: () => ipcRenderer.send(IPC.updateInstall),
+  onQuitRequest: (cb) => subscribe<number>(IPC.quitRequest, cb),
+  quitReady: (requestId) => ipcRenderer.send(IPC.quitReady, requestId),
   secrets: {
     available: ipcRenderer.sendSync(IPC.secretsAvailable) === true,
     get: (key: string) => { const v: unknown = ipcRenderer.sendSync(IPC.secretsGet, key); return typeof v === "string" ? v : null; },

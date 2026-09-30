@@ -1458,6 +1458,84 @@ if (health0.directoryUrl) {
   await api("DELETE", `/api/invites/${invK.code}`, undefined, owner.token);
 }
 
+// ---------- Limits (docs/features/limits.md)
+// /api/ready and the report always; the refusals only against a server started with the limits of the recipe there:
+// SMOKE_LIMITS=1 STORAGE_QUOTA_MB=1 VOICE_SEATS_MAX=6 MEMBER_MAX=8 RATE_LIMIT_FACTOR=5 for the server (six seats: earlier
+// sections seat up to five at once; eight members: the vote kick needs three guests next to owner, B and C, and the seat
+// part here four fresh members and one more), SMOKE_LIMITS=1 here.
+{
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const [sReady, rReady] = await api("GET", "/api/ready");
+  check("limits: /api/ready answers 200 with the database up", sReady === 200 && rReady.ok === true && rReady.database === "up", `${sReady}`);
+  const [sLim, lim] = await api("GET", "/api/settings/limits", undefined, owner.token);
+  const [sLimB] = await api("GET", "/api/settings/limits", undefined, B.token);
+  check("limits: the report (storage, voice seats, members, upload size) for MANAGE_SERVER only",
+    sLim === 200 && typeof lim.storage?.usedBytes === "number" && "quotaMb" in (lim.storage ?? {}) && typeof lim.voiceSeats?.used === "number" && typeof lim.members?.count === "number" && typeof lim.maxUploadMb === "number" && sLimB === 403,
+    `${sLim} ${sLimB} ${JSON.stringify(lim)}`);
+  if (process.env.SMOKE_LIMITS === "1") {
+    check("limits: the server runs with the recipe's limits", lim.storage.quotaMb === 1 && lim.voiceSeats.max !== null && lim.members.max !== null, JSON.stringify({ storage: lim.storage.quotaMb, seats: lim.voiceSeats.max, members: lim.members.max }));
+    // Voice seats: everybody leaves first, then people are seated until the limit (the owner on wsA, B on wsB, then fresh
+    // members with sockets of their own); the next one is refused, a seated one is not (a switch keeps the seat), and the
+    // seat is free again after leaving. Only up to 8 seats, so the recipe's VOICE_SEATS_MAX stays small.
+    wsA.send({ type: "voice.leave" }); wsB.send({ type: "voice.leave" });
+    await sleep(400);
+    const [, limNow] = await api("GET", "/api/settings/limits", undefined, owner.token);
+    const need = limNow.voiceSeats.max - limNow.voiceSeats.used;
+    const [, invS] = await api("POST", "/api/invites", { maxUses: 12 }, owner.token);
+    if (need >= 1 && need <= 8) {
+      const seatWs = [{ ws: wsA, user: owner }, { ws: wsB, user: B }];
+      const seated = [], fresh = [];
+      for (let i = 0; i < need; i++) {
+        let seat = seatWs[i];
+        if (!seat) { const u = await login(await newKey(), invS.code); seat = { ws: await connectWs(u.token), user: u }; fresh.push(seat); }
+        seat.ws.send({ type: "voice.join", channelId: voiceCh.id });
+        const sat = await waitNew(seat.ws, (e) => e.type === "voice.state" && e.channelId === voiceCh.id && e.members.some((m) => m.userId === seat.user.userId)).catch(() => null);
+        if (sat) seated.push(seat); else console.log(`FAIL limits: seat ${i + 1} of ${need} could not sit down (${seat.user.status ?? "?"} ${seat.user.body?.error ?? ""})`), failures++;
+      }
+      const extra = await login(await newKey(), invS.code);
+      const [sSeat, rSeat] = await api("POST", "/api/rtc-token", { channelId: voiceCh.id }, extra.token);
+      const [sOwn] = await api("POST", "/api/rtc-token", { channelId: voiceCh.id }, owner.token);
+      const [, limSeated] = await api("GET", "/api/settings/limits", undefined, owner.token);
+      const pEmpty = waitNew(wsA, (e) => e.type === "voice.state" && e.channelId === voiceCh.id && e.members.length === 0);
+      for (const seat of seated) seat.ws.send({ type: "voice.leave" });
+      await pEmpty;
+      const [sFree] = await api("POST", "/api/rtc-token", { channelId: voiceCh.id }, extra.token);
+      check(`limits: VOICE_SEATS_MAX=${limNow.voiceSeats.max} answers 409 voice_seats_full once every seat is taken, not for a seated member, free again after leaving; the report counts the seats`,
+        seated.length === need && sSeat === 409 && rSeat.error === "voice_seats_full" && rSeat.max === limNow.voiceSeats.max && sOwn === 200 && sFree === 200 && limSeated.voiceSeats.used === limNow.voiceSeats.max,
+        `${sSeat} ${rSeat.error ?? ""} own ${sOwn} free ${sFree} used ${limSeated.voiceSeats.used}/${limNow.voiceSeats.max}`);
+      for (const seat of fresh) await seat.ws.close();
+      for (const u of [...fresh.map((f) => f.user), extra]) await api("DELETE", `/api/members/${u.userId}`, undefined, owner.token);
+    } else console.log(`info limits: VOICE_SEATS_MAX ${limNow.voiceSeats.max} bei ${limNow.voiceSeats.used} belegten Plaetzen; nicht aufgefuellt (Rezept: hoechstens 8 frei)`);
+    await api("DELETE", `/api/invites/${invS.code}`, undefined, owner.token);
+    // Storage: 1 MB in all; 300 KB uploads until one is refused (at most 6), the refusal is 413 storage_full and the report stays under the quota.
+    const statuses = [];
+    let refusal = null;
+    for (let i = 0; i < 6 && !refusal; i++) {
+      const fd = new FormData(); fd.append("file", new Blob([new Uint8Array(300 * 1024)], { type: "application/octet-stream" }), `block${i}.bin`);
+      const [sUp, rUp] = await api("POST", "/api/attachments", fd, owner.token);
+      statuses.push(sUp);
+      if (sUp !== 200) refusal = { status: sUp, body: rUp };
+    }
+    const [, limFull] = await api("GET", "/api/settings/limits", undefined, owner.token);
+    check("limits: STORAGE_QUOTA_MB=1 lets uploads through until the quota and then answers 413 storage_full; the total stays under the quota",
+      refusal !== null && refusal.status === 413 && refusal.body.error === "storage_full" && refusal.body.quotaMb === 1 && statuses.filter((s) => s === 200).length >= 1 && limFull.storage.usedBytes <= 1024 * 1024,
+      `${statuses.join(",")} ${refusal?.body?.error ?? ""} used ${limFull.storage.usedBytes}`);
+    // Members: fill the server up to MEMBER_MAX with server accounts, the next one is refused with 403 server_full (no invite use burnt).
+    const gap = lim.members.max - lim.members.count;
+    if (gap >= 0 && gap <= 12) {
+      const [, invF] = await api("POST", "/api/invites", { maxUses: gap + 3 }, owner.token);
+      const made = [];
+      for (let i = 0; i < gap; i++) made.push(await login(await newKey(), invF.code));
+      const extra = await login(await newKey(), invF.code);
+      check("limits: MEMBER_MAX admits members up to the limit and refuses the next with 403 server_full",
+        made.every((r) => r.status === 200) && extra.status === 403 && extra.body.error === "server_full" && extra.body.max === lim.members.max,
+        `${made.map((r) => r.status).join(",")} extra ${extra.status} ${extra.body.error}`);
+      for (const r of made) await api("DELETE", `/api/members/${r.userId}`, undefined, owner.token);
+      await api("DELETE", `/api/invites/${invF.code}`, undefined, owner.token);
+    } else console.log(`info limits: MEMBER_MAX ${lim.members.max} liegt ${gap} ueber der Mitgliederzahl ${lim.members.count}; nicht aufgefuellt (Rezept: hoechstens 12 darueber)`);
+  } else console.log("info limits: die Ablehnungen (storage_full, voice_seats_full, server_full) prueft nur ein Server mit SMOKE_LIMITS=1 (docs/features/limits.md)");
+}
+
 // ---------- Protocol version
 const wsOld = new WebSocket(BASE.replace(/^http/, "ws") + "/api/ws");
 await new Promise((r) => wsOld.on("open", r));
