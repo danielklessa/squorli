@@ -4,7 +4,7 @@ Homepage: **https://squorli.com**
 
 Self-hosted, open-source community chat with text, voice and video channels, similar to Discord. Every server belongs to the person who runs it. Squorli Server includes the browser client. A desktop app for Windows and Linux (the same client in its own window, `apps/desktop`) is available as an early version: https://squorli.com/en/download/.
 
-Official repository: [Squorli Server on GitHub](https://github.com/danielklessa/squorli-server). Licensed under the [Apache License 2.0](LICENSE). A server can optionally connect to the [Squorli Directory](https://directory.squorli.com), a separately operated service that gives users a global handle, lets them find friends across servers and exchange end-to-end encrypted direct messages. Without a directory, a server works completely on its own.
+Official repository: [Squorli Server on GitHub](https://github.com/danielklessa/squorli). Licensed under the [Apache License 2.0](LICENSE). A server can optionally connect to the [Squorli Directory](https://directory.squorli.com), a separately operated service that gives users a global handle, lets them find friends across servers and exchange end-to-end encrypted direct messages. Without a directory, a server works completely on its own.
 
 This README explains how to run your own Squorli server. Working on the code: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -38,7 +38,7 @@ The stack consists of the app server (this repository, including the web client)
 On a Linux host (x86_64) with root access, `deploy/install.sh` does the steps of the quick start below by asking questions, in German or English:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/danielklessa/squorli-server/main/deploy/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/install.sh -o install.sh
 sudo bash install.sh
 ```
 
@@ -48,7 +48,7 @@ Running the installer again on an existing installation updates it (new image an
 
 ## Windows without Docker
 
-For a Windows machine there is a package that needs no Docker: the app server with its own Node.js, PostgreSQL, LiveKit and Caddy as Windows services. It is a ZIP of about 115 MB, attached to every [release of Squorli Server](https://github.com/danielklessa/squorli-server/releases) as `squorli-server-<version>-windows-x64.zip` with a `.sha256` file.
+For a Windows machine there is a package that needs no Docker: the app server with its own Node.js, PostgreSQL, LiveKit and Caddy as Windows services. It is a ZIP of about 115 MB, attached to every [release of Squorli Server](https://github.com/danielklessa/squorli/releases) as `squorli-server-<version>-windows-x64.zip` with a `.sha256` file.
 
 **Requirements:** Windows 10 from 22H2, Windows 11 (Home too) or Windows Server 2019, 2022 or 2025, 64 bit (x64); an administrator; 2 GB of free disk space; domain, ports and bandwidth as [above](#requirements). Windows PowerShell 5.1 is part of Windows. The setup installs Microsoft's Visual C++ runtime when it is missing (after asking). A PC works as a server, with limits you should know: Windows Update restarts it, a PC in standby answers nobody (the setup offers to switch standby off), and the upload of a home connection is small for video; behind a router you forward the ports and need dynamic DNS when the public address changes.
 
@@ -89,10 +89,10 @@ With a web server on the machine already (IIS holds 80 and 443 on many Windows S
 
 ## Quick start with the published image
 
-The public image is **`ghcr.io/danielklessa/squorli-server:latest`** (tags and digests: [container package](https://github.com/danielklessa/squorli-server/pkgs/container/squorli-server)). You still need a checkout of this repository for the Compose files and the mounted LiveKit and Caddy configuration; no local build is required.
+The public image is **`ghcr.io/danielklessa/squorli-server:latest`** (tags and digests: [container package](https://github.com/danielklessa/squorli/pkgs/container/squorli-server)). You still need a checkout of this repository for the Compose files and the mounted LiveKit and Caddy configuration; no local build is required.
 
 ```bash
-git clone https://github.com/danielklessa/squorli-server.git
+git clone https://github.com/danielklessa/squorli.git
 cd squorli-server
 cp .env.example .env
 ```
@@ -240,11 +240,11 @@ Create a new installation directory and download only the deployment configurati
 ```bash
 mkdir -p squorli/deploy/caddy squorli/deploy/livekit squorli/deploy/proxies
 cd squorli
-curl -fL https://raw.githubusercontent.com/danielklessa/squorli-server/main/.env.example -o .env
-curl -fL https://raw.githubusercontent.com/danielklessa/squorli-server/main/deploy/compose.yml -o deploy/compose.yml
-curl -fL https://raw.githubusercontent.com/danielklessa/squorli-server/main/deploy/caddy/Caddyfile -o deploy/caddy/Caddyfile
-curl -fL https://raw.githubusercontent.com/danielklessa/squorli-server/main/deploy/livekit/livekit.yaml -o deploy/livekit/livekit.yaml
-curl -fL https://raw.githubusercontent.com/danielklessa/squorli-server/main/deploy/proxies/nginx.ports.yml -o deploy/proxies/nginx.ports.yml
+curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/.env.example -o .env
+curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/compose.yml -o deploy/compose.yml
+curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/caddy/Caddyfile -o deploy/caddy/Caddyfile
+curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/livekit/livekit.yaml -o deploy/livekit/livekit.yaml
+curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/proxies/nginx.ports.yml -o deploy/proxies/nginx.ports.yml
 ```
 
 Run the download step only once in a fresh directory; repeating it overwrites configuration. Edit .env, replace the hostname and secrets, set PROXY_MODE=bundled and APP_IMAGE=ghcr.io/danielklessa/squorli-server:latest. Generate separate secrets with `openssl rand -hex 32`. Reserve the first login with OWNER_PUBLIC_KEY (a Squorli account's key) or sign in first yourself (without a directory: create the first server account) right after the start. The nginx overlay is only needed for an external proxy.

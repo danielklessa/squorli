@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ThirdPartyPackage } from "./licenses/types";
 import { t } from "./i18n";
 
-const SOURCE_URL = "https://github.com/danielklessa/squorli-server";
+const SOURCE_URL = "https://github.com/danielklessa/squorli";
 const APACHE_URL = "https://www.apache.org/licenses/LICENSE-2.0";
 
 /**

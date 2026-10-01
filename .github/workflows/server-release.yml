@@ -39,7 +39,7 @@ jobs:
         run: |
           version="${TAG#v}"
           notes="apps/server/release-notes/$version.md"
-          image="ghcr.io/${{ github.repository }}:$TAG"
+          image="ghcr.io/danielklessa/squorli-server:$TAG" # the image's name, not the repository's (ci.yml)
           footer="Image: \`$image\` (also \`:latest\`). Update an installation made with the install script: \`squorli backup\`, then \`squorli update\`; with Compose by hand: set \`APP_IMAGE=$image\` in \`.env\`, then \`docker compose pull\` and \`up -d\`. Windows without Docker: the package \`squorli-server-$version-windows-x64.zip\` below, with its \`.sha256\` file; update an installation with \`squorli update\` in a window opened as administrator (it backs up first). Database migrations run by themselves at the start and cannot be undone: back up first. Guide: https://squorli.com/en/docs/install/"
           if [ -f "$notes" ]; then { cat "$notes"; echo; echo "---"; echo; echo "$footer"; } > body.md; else echo "$footer" > body.md; fi
           if gh release view "$TAG" >/dev/null 2>&1; then

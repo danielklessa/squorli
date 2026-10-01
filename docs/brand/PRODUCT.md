@@ -7,16 +7,16 @@ Last updated: 15 September 2026. Keep this file byte-identical in the brand pack
 | Name | Meaning | Official destination |
 | --- | --- | --- |
 | Squorli | The overall brand: a home for community conversations, voice and video | https://squorli.com |
-| Squorli Server | The self-hosted, open-source community server and its web client | https://github.com/danielklessa/squorli-server |
+| Squorli Server | The self-hosted, open-source community server and its web client | https://github.com/danielklessa/squorli |
 | Squorli Directory | The separately operated identity, discovery and friends service; not open source | https://directory.squorli.com |
 
 The website is being prepared for squorli.com; this statement is not a deployment status claim. The Directory destination was supplied by the project owner. Do not advertise a public source repository for the Directory. Generic deployment examples may use chat.example.org for a community's own server.
 
 ## Product description
 
-The official published server container is `ghcr.io/danielklessa/squorli-server:latest`. Its package page is https://github.com/danielklessa/squorli-server/pkgs/container/squorli-server. This image includes the server and web client, not the separately operated Directory. Use the package page for available tags/digests; do not invent versions or architecture support. `latest` is mutable. Compose installation uses `APP_IMAGE`, the matching profile, `pull`, and `up -d --no-build`; a source build remains an alternative.
+The official published server container is `ghcr.io/danielklessa/squorli-server:latest`. Its package page is https://github.com/danielklessa/squorli/pkgs/container/squorli-server. This image includes the server and web client, not the separately operated Directory. Use the package page for available tags/digests; do not invent versions or architecture support. `latest` is mutable. Compose installation uses `APP_IMAGE`, the matching profile, `pull`, and `up -d --no-build`; a source build remains an alternative.
 
-Always link the open-source Squorli Server to https://github.com/danielklessa/squorli-server in public copy, documentation and installation examples. Clone using the same URL with `.git`; link individual files using GitHub's `/blob/main/` path. Development remotes and container registries are separate configuration and do not determine the public source address.
+Always link the open-source Squorli Server to https://github.com/danielklessa/squorli in public copy, documentation and installation examples. Clone using the same URL with `.git`; link individual files using GitHub's `/blob/main/` path. Development remotes and container registries are separate configuration and do not determine the public source address.
 
 Squorli gives gaming, creator and other communities a place for text, voice, video and screen sharing on a server they operate themselves. Roles, invitations and moderation belong to each server. The browser client is implemented; a desktop app for Windows and Linux (the same client in its own window) is available as an early version from https://squorli.com, macOS is planned.
 

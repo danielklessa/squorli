@@ -55,7 +55,7 @@ jobs:
       - name: stable names the image of this release
         if: steps.newest.outputs.move == 'yes'
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          image="ghcr.io/danielklessa/squorli-server" # the image's name, not the repository's (ci.yml)
           # A copy of the manifest as it is, not an index around it: stable then has the digest of the release's image,
           # and Docker's containerd image store gives both the same image id.
           docker buildx imagetools create --prefer-index=false --tag "$image:stable" "$image:$TAG"

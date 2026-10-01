@@ -74,7 +74,9 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          # The image keeps its name although the repository is `squorli` since 1 October 2026: every installation pulls
+          # `squorli-server:stable`, and GHCR does not redirect. Same name in server-release.yml and stable-image.yml.
+          images: ghcr.io/danielklessa/squorli-server
           tags: |
             type=ref,event=branch
             type=ref,event=tag

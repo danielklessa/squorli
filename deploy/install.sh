@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Squorli Server: interactive installer for a Linux host (Docker Compose with the published image, no source checkout).
 #
-#   curl -fsSL https://raw.githubusercontent.com/danielklessa/squorli-server/main/deploy/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/install.sh -o install.sh
 #   sudo bash install.sh
 #
 # Asks for domain, proxy setup, directory and owner, installs Docker if it is missing (get.docker.com, after asking),
@@ -18,7 +18,7 @@
 set -Eeuo pipefail
 
 REF="${SQUORLI_REF:-main}"
-RAW_BASE="${SQUORLI_RAW_BASE:-https://raw.githubusercontent.com/danielklessa/squorli-server/$REF}"
+RAW_BASE="${SQUORLI_RAW_BASE:-https://raw.githubusercontent.com/danielklessa/squorli/$REF}"
 DEFAULT_IMAGE="ghcr.io/danielklessa/squorli-server:latest"
 DEFAULT_DIRECTORY="https://directory.squorli.com"
 DEFAULT_TRUSTED="172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1"
@@ -764,8 +764,8 @@ case "${1:-help}" in
     hand=0
     case " $changed " in *" server "*) if by_hand; then hand=1; fi ;; esac
     if [ "$hand" = 1 ]; then
-      say "!  Die neue Version von Squorli Server verlangt vorher Handarbeit, wenn die Installation älter ist als $BY_HAND, und wird nicht automatisch eingespielt. Versionshinweise, Abschnitt \"Before you update\": https://github.com/danielklessa/squorli-server/releases" \
-        "!  The new version of Squorli Server asks for work by hand first when the installation is older than $BY_HAND, and is not installed automatically. Release notes, section \"Before you update\": https://github.com/danielklessa/squorli-server/releases"
+      say "!  Die neue Version von Squorli Server verlangt vorher Handarbeit, wenn die Installation älter ist als $BY_HAND, und wird nicht automatisch eingespielt. Versionshinweise, Abschnitt \"Before you update\": https://github.com/danielklessa/squorli/releases" \
+        "!  The new version of Squorli Server asks for work by hand first when the installation is older than $BY_HAND, and is not installed automatically. Release notes, section \"Before you update\": https://github.com/danielklessa/squorli/releases"
       if [ "$auto" = 1 ]; then say "   Danach: squorli update" "   Then: squorli update"; exit 10; fi
     fi
     if [ "$check" = 1 ]; then t "Einspielen mit: squorli update" "Install them with: squorli update"; exit 10; fi

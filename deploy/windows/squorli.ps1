@@ -49,7 +49,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-$Repository = 'danielklessa/squorli-server'
+$Repository = 'danielklessa/squorli'
 # The task of Windows' scheduler that runs the automatic updates
 $TaskName = 'SquorliAutoUpdate'
 $Utf8 = New-Object Text.UTF8Encoding $false
