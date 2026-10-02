@@ -44,6 +44,7 @@ export async function loadSettings(db: Db): Promise<ServerSettings> {
     limits: true, // the operator limits' report exists (GET /api/settings/limits, docs/features/limits.md)
     // Suspended directory accounts (users/suspension.ts): without a directory there is nothing to refuse and no switch.
     ...(directoryConfigured ? { refuseSuspended: row.refuseSuspended } : {}),
+    privacyPolicyUrl: row.privacyPolicyUrl,
   };
 }
 

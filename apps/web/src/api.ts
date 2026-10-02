@@ -218,7 +218,7 @@ export class ServerApi {
   rtcToken(channelId: string) { return this.request<RtcTokenResponse>("POST", "/api/rtc-token", { channelId }).then((r) => RtcTokenResponse.parse(r)); }
 
   // ---------- Admin
-  updateSettings(patch: { name?: string; openJoin?: boolean; localAccounts?: boolean; listed?: boolean; description?: string | null; radioAutoStop?: boolean; afkChannelId?: string | null; statusApi?: StatusApiMode; statusApiRoleId?: string | null; refuseSuspended?: boolean }) { return this.request("PATCH", "/api/settings", patch); }
+  updateSettings(patch: { name?: string; openJoin?: boolean; localAccounts?: boolean; listed?: boolean; description?: string | null; radioAutoStop?: boolean; afkChannelId?: string | null; statusApi?: StatusApiMode; statusApiRoleId?: string | null; refuseSuspended?: boolean; privacyPolicyUrl?: string | null }) { return this.request("PATCH", "/api/settings", patch); }
   /** Status API (docs/features/status-api.md): the key for mode "key" (MANAGE_SERVER), and a fresh one that replaces it. */
   getStatusApiKey() { return this.request<StatusApiKeyResponse>("GET", "/api/settings/status-api-key").then((r) => StatusApiKeyResponse.parse(r)); }
   regenerateStatusApiKey() { return this.request<StatusApiKeyResponse>("POST", "/api/settings/status-api-key").then((r) => StatusApiKeyResponse.parse(r)); }
@@ -341,6 +341,8 @@ export type Health = {
   inviteRequired?: boolean;
   /** No owner yet, and the owner registers as a server account with the setup code from the installation (OWNER_SETUP_CODE). */
   ownerSetup?: boolean;
+  /** The server's privacy policy (https), linked under the form that creates a server account; null or missing = none. */
+  privacyPolicyUrl?: string | null;
   /** Server version (package.json), shown at the bottom of the login next to the Squorli note. */
   version: string;
 };

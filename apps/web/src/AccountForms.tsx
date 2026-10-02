@@ -1,9 +1,10 @@
 import { BACKUP_MIN_PASSWORD, DIRECTORY_HANDLE_PREFIX, LOCAL_HANDLE_PREFIX, LocalHandle, type DeviceInfo } from "@squorli/protocol";
 import { useState, type ReactNode } from "react";
 import { DevicePicker } from "./DevicePicker";
-import { t } from "./i18n";
+import { locale, t } from "./i18n";
 import { createTabs, loginPrefix, type CreateTab, type LoginKind } from "./loginView";
 import { PasswordInput } from "./PasswordInput";
+import { platform } from "./platform";
 import { safeHref } from "./safeHref";
 
 /**
@@ -114,13 +115,37 @@ export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onL
   );
 }
 
-/** The fields of a new server account: `~handle` (checked while typing), the password twice, the warning that nobody can reset it. */
-export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, idPrefix, ownerSetup = false }: {
+/** A link out of the client: a new tab in the browser, the system's browser in the desktop app (like "Konto anlegen"). */
+function ExternalLink({ url, children }: { url: string; children: ReactNode }) {
+  const href = safeHref(url);
+  if (href === undefined) return <>{children}</>;
+  return <a href={href} target="_blank" rel="noreferrer" onClick={platform.home ? undefined : (e) => { e.preventDefault(); platform.links.openExternal(href); }}>{children}</a>;
+}
+
+/** The directory's privacy policy: its redirect to the operator's website, in the client's language. */
+const directoryPrivacyUrl = (directoryUrl: string): string => `${directoryUrl.replace(/\/+$/, "")}/datenschutz?lang=${locale}`;
+
+/**
+ * The sentence under a form that creates an account (2 October 2026, docs/features/local-accounts.md): by creating it the
+ * user accepts the privacy policy, a link, no checkbox (the directory's account page says the same). `text` holds `{link}`.
+ */
+function PrivacyNote({ text, url }: { text: string; url: string }) {
+  const [before, after = ""] = text.split("{link}");
+  return <p className="muted small">{before}<ExternalLink url={url}>{t("login.privacyPolicy")}</ExternalLink>{after}</p>;
+}
+
+/**
+ * The fields of a new server account: `~handle` (checked while typing), the password twice, the warning that nobody can reset
+ * it, and the server's privacy policy where the operator named one (`privacyPolicyUrl`, health; nothing otherwise).
+ */
+export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, idPrefix, ownerSetup = false, privacyPolicyUrl = null }: {
   busy: boolean; checkFree: ((handle: string) => Promise<boolean>) | null;
   /** `ownerCode`: the setup code the owner typed (only with `ownerSetup`); empty = none, an ordinary registration. */
   onRegister: (handle: string, password: string, ownerCode?: string) => Promise<void>; submitLabel?: string; idPrefix: string;
   /** The server waits for its owner (health `ownerSetup`): a field for the setup code from the installation. */
   ownerSetup?: boolean;
+  /** The server's privacy policy (health `privacyPolicyUrl`); null = none named. */
+  privacyPolicyUrl?: string | null;
 }) {
   const [handle, setHandle] = useState("");
   const [ownerCode, setOwnerCode] = useState("");
@@ -166,6 +191,7 @@ export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, id
         )}
       </div>
       <p className="muted small">{t("login.localPasswordWarning")}</p>
+      {privacyPolicyUrl && <PrivacyNote text={t("login.privacyServer")} url={privacyPolicyUrl} />}
       <button className="login-primary" onClick={() => void submit()} disabled={busy || !valid || taken === clean || pw.length < BACKUP_MIN_PASSWORD || pw !== pw2}>{busy ? t("login.registering") : submitLabel ?? t("login.createLocal")}</button>
     </div>
   );
@@ -214,8 +240,8 @@ export function CreateAccount({ directoryUrl, localAccounts, busy, local, direct
 }
 
 /** A directory handle for the key this member is signed in with (the directory tab of `ClaimAccount`). */
-function DirectoryClaimForm({ busy, emailRequired, onRegister }: {
-  busy: boolean; emailRequired: boolean;
+function DirectoryClaimForm({ directoryUrl, busy, emailRequired, onRegister }: {
+  directoryUrl: string; busy: boolean; emailRequired: boolean;
   onRegister: (handle: string, email?: string, code?: string) => Promise<"done" | "failed" | { sentTo: string }>;
 }) {
   const [handle, setHandle] = useState("");
@@ -249,6 +275,7 @@ function DirectoryClaimForm({ busy, emailRequired, onRegister }: {
           <small className="muted">{t("login.registerCodeSent", { to: sentTo })}</small>
         </label>
       )}
+      <PrivacyNote text={t("login.privacyDirectory")} url={directoryPrivacyUrl(directoryUrl)} />
       <button className="login-primary" onClick={() => void submit()} disabled={busy || !LocalHandle.safeParse(clean).success || (emailRequired && !email.includes("@")) || (!!sentTo && code.trim().length !== 8)}>
         {busy ? t("login.registering") : emailRequired && !sentTo ? t("login.registerSendCode") : t("login.registerHandle")}
       </button>
@@ -261,12 +288,14 @@ function DirectoryClaimForm({ busy, emailRequired, onRegister }: {
  * roles stay, but the server lets them in only with an account. Same tabs as creating one; the account is made for the key
  * they are signed in with.
  */
-export function ClaimAccount({ serverName, directoryUrl, localAccounts, emailRequired, error, onClaimLocal, onClaimDirectory, onLogout, checkFree }: {
+export function ClaimAccount({ serverName, directoryUrl, localAccounts, emailRequired, error, onClaimLocal, onClaimDirectory, onLogout, checkFree, privacyPolicyUrl }: {
   serverName: string; directoryUrl: string | null; localAccounts: boolean; emailRequired: boolean; error: string | null;
   onClaimLocal: (handle: string, password: string) => Promise<void>;
   onClaimDirectory: (handle: string, email?: string, code?: string) => Promise<"done" | "failed" | { sentTo: string }>;
   onLogout: () => void;
   checkFree: ((handle: string) => Promise<boolean>) | null;
+  /** The server's privacy policy (health `privacyPolicyUrl`), for the server account's form. */
+  privacyPolicyUrl: string | null;
 }) {
   const [busy, setBusy] = useState(false);
   const wrap = <A extends unknown[], R>(fn: (...a: A) => Promise<R>) => async (...a: A): Promise<R> => { setBusy(true); try { return await fn(...a); } finally { setBusy(false); } };
@@ -276,8 +305,8 @@ export function ClaimAccount({ serverName, directoryUrl, localAccounts, emailReq
       <p className="muted">{t("claim.text", { server: serverName })}</p>
       {error && <p className="error">{error}</p>}
       <CreateAccount directoryUrl={directoryUrl} localAccounts={localAccounts} busy={busy} openExternal={null}
-        directoryTab={<DirectoryClaimForm busy={busy} emailRequired={emailRequired} onRegister={wrap(onClaimDirectory)} />}
-        local={<LocalRegisterForm idPrefix="claim" busy={busy} checkFree={checkFree} onRegister={wrap(onClaimLocal)} submitLabel={t("claim.submit")} />} />
+        directoryTab={directoryUrl ? <DirectoryClaimForm directoryUrl={directoryUrl} busy={busy} emailRequired={emailRequired} onRegister={wrap(onClaimDirectory)} /> : undefined}
+        local={<LocalRegisterForm idPrefix="claim" busy={busy} checkFree={checkFree} onRegister={wrap(onClaimLocal)} submitLabel={t("claim.submit")} privacyPolicyUrl={privacyPolicyUrl} />} />
       <button type="button" className="secondary" onClick={onLogout} disabled={busy}>{t("profile.signOut")}</button>
     </div>
   );

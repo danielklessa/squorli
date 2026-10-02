@@ -1,4 +1,4 @@
-import { PERMISSION_GROUPS, Permission, hasPermission, type Ban, type DoctorReport, type DoctorStatus, type Invite, type LimitsReport, type PermissionName, type Role, type ServerState, type StatusApiMode } from "@squorli/protocol";
+import { PERMISSION_GROUPS, PRIVACY_POLICY_URL_MAX, Permission, PrivacyPolicyUrl, hasPermission, type Ban, type DoctorReport, type DoctorStatus, type Invite, type LimitsReport, type PermissionName, type Role, type ServerState, type StatusApiMode } from "@squorli/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { ServerApi } from "./api";
 import { askConfirm } from "./dialogs";
@@ -77,6 +77,8 @@ type RunFn = (fn: () => Promise<unknown>) => Promise<void>;
 function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; server: ServerState; directoryUrl: string | null; run: RunFn; save: RunFn }) {
   const [name, setName] = useState(server.settings.name);
   const [description, setDescription] = useState(server.settings.description ?? "");
+  const [privacyUrl, setPrivacyUrl] = useState(server.settings.privacyPolicyUrl ?? "");
+  const privacyValid = !privacyUrl.trim() || PrivacyPolicyUrl.safeParse(privacyUrl).success;
   const owners = server.members.filter((m) => m.isOwner);
   const fileRef = useRef<HTMLInputElement>(null);
   return (
@@ -102,6 +104,15 @@ function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; s
           {t("admin.refuseSuspended")}
         </label>
         <span className="muted small">{t("admin.refuseSuspendedHint")}</span>
+      </>}
+      {/* The server's privacy policy (docs/features/local-accounts.md): linked under the form for a new server account; a server from before it does not send the field. */}
+      {server.settings.privacyPolicyUrl !== undefined && <>
+        <label className="stack">{t("admin.privacyPolicyUrl")}
+          <input type="url" value={privacyUrl} maxLength={PRIVACY_POLICY_URL_MAX} placeholder="https://" autoCapitalize="none" spellCheck={false} onChange={(e) => setPrivacyUrl(e.target.value)} aria-describedby="admin-privacy-hint" />
+          {!privacyValid && <small className="error">{t("admin.privacyPolicyUrlInvalid")}</small>}
+        </label>
+        <SaveButton disabled={!privacyValid || (privacyUrl.trim() || null) === server.settings.privacyPolicyUrl} onSave={() => save(() => api.updateSettings({ privacyPolicyUrl: privacyUrl.trim() || null }))} />
+        <span id="admin-privacy-hint" className="muted small">{t("admin.privacyPolicyUrlHint")}</span>
       </>}
       <h3>{t("admin.directoryHeading")}</h3>
       <label className="check">

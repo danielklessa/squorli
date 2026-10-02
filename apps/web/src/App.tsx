@@ -990,7 +990,7 @@ function ServerStatus({ s, store, state, rail, onRetry, onClose, onOpen, join }:
         {!claim && s.error && s.waiting !== "unreachable" && <p className="error">{s.error}</p>}
         {claim && <ClaimAccount serverName={name} directoryUrl={directoryHere ? s.directoryUrl : null} localAccounts={localAccounts} emailRequired={state.directoryEmailRequired} error={s.error}
           onClaimLocal={(h, pw) => store.claimLocal(s.host, h, pw)} onClaimDirectory={(h, email, c) => store.claimDirectory(s.host, h, email, c)}
-          onLogout={onClose} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} />}
+          onLogout={onClose} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} privacyPolicyUrl={s.privacyPolicyUrl} />}
         {accountForms && firstContact && <p className="muted">{t(handle ? "join.hintAccount" : "join.hintNoAccount", { host: s.host })}</p>}
         {accountForms && s.accountNeeded && <p className="muted">{t("login.accountNeeded")}</p>}
         {!busy && !offline && (join !== null || s.accountNeeded) && !claim && (
@@ -1006,7 +1006,7 @@ function ServerStatus({ s, store, state, rail, onRetry, onClose, onOpen, join }:
             onDirectory={async () => {}} onLocal={(h, pw, replaceDevice) => store.loginLocal(s.host, h, pw, code(), replaceDevice)} onEmailCode={null} />}
           <CreateAccount directoryUrl={s.directoryUrl} localAccounts={localAccounts} busy={busy}
             openExternal={platform.home ? null : (url) => platform.links.openExternal(url)}
-            local={<LocalRegisterForm idPrefix={`join-${s.host}`} busy={busy} ownerSetup={s.ownerSetup} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} onRegister={(h, pw, ownerCode) => store.registerLocal(s.host, h, pw, code(), ownerCode)} />} />
+            local={<LocalRegisterForm idPrefix={`join-${s.host}`} busy={busy} ownerSetup={s.ownerSetup} privacyPolicyUrl={s.privacyPolicyUrl} checkFree={conn ? (h) => conn.api.localHandleFree(h) : null} onRegister={(h, pw, ownerCode) => store.registerLocal(s.host, h, pw, code(), ownerCode)} />} />
         </>}
         {!busy && (
           <div className="row">

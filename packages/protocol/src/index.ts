@@ -145,6 +145,12 @@ export const StatusApiMode = z.enum(["off", "key", "public"]);
  * (a client or server from before them says nothing).
  */
 export const VoiceStatus = z.object({ micMuted: z.boolean(), deafened: z.boolean(), cameraOn: z.boolean().default(false), screenOn: z.boolean().default(false) });
+/** Longest address of a server's privacy policy (`ServerSettings.privacyPolicyUrl`). */
+export const PRIVACY_POLICY_URL_MAX = 500;
+/** The address of a server's privacy policy: https only, since the client links it before sign-in (docs/features/local-accounts.md). */
+export const PrivacyPolicyUrl = z.string().trim().min(1).max(PRIVACY_POLICY_URL_MAX).refine((s) => {
+  try { const u = new URL(s); return u.protocol === "https:" && !!u.hostname && !u.username && !u.password; } catch { return false; }
+}, { message: "https_url" });
 
 export const ServerSettings = z.object({
   name: z.string().min(1).max(64),
@@ -207,8 +213,15 @@ export const ServerSettings = z.object({
    * flag: a server from before it does not send the field, and one without a directory has nothing to refuse.
    */
   refuseSuspended: z.boolean().optional(),
+  /**
+   * The server's privacy policy (2 October 2026, docs/features/local-accounts.md): the operator answers for the data of the
+   * server accounts, so the form that creates one links this address ("Mit dem Anlegen des Kontos akzeptierst du die
+   * Datenschutzerklärung dieses Servers."); /api/health carries it for the login. null = none, the form says nothing.
+   * Optional = feature flag: a server from before it does not send the field and the admin area hides it.
+   */
+  privacyPolicyUrl: PrivacyPolicyUrl.nullable().optional(),
 });
-export const UpdateSettingsRequest = ServerSettings.pick({ name: true, openJoin: true, localAccounts: true, listed: true, description: true, radioAutoStop: true, afkChannelId: true, statusApi: true, statusApiRoleId: true, refuseSuspended: true }).partial();
+export const UpdateSettingsRequest = ServerSettings.pick({ name: true, openJoin: true, localAccounts: true, listed: true, description: true, radioAutoStop: true, afkChannelId: true, statusApi: true, statusApiRoleId: true, refuseSuspended: true, privacyPolicyUrl: true }).partial();
 /** The key of the status API in mode "key" (MANAGE_SERVER only); null = none yet (made when the mode is switched to "key"). */
 export const StatusApiKeyResponse = z.object({ key: z.string().nullable() });
 /**

@@ -85,6 +85,7 @@ export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: 
     const [keyRow] = body.data.statusApi === "key" ? await db.select({ key: serverSettings.statusApiKey }).from(serverSettings).where(eq(serverSettings.id, SETTINGS_ID)).limit(1) : [];
     await db.update(serverSettings).set({ ...compact(body.data), ...(keyRow && !keyRow.key ? { statusApiKey: newStatusApiKey() } : {}) }).where(eq(serverSettings.id, SETTINGS_ID));
     if (body.data.statusApi !== undefined && body.data.statusApi !== before.statusApi) req.log.info({ by: m.userId, statusApi: body.data.statusApi }, "Status-API umgestellt");
+    if (body.data.privacyPolicyUrl !== undefined && body.data.privacyPolicyUrl !== (before.privacyPolicyUrl ?? null)) req.log.info({ by: m.userId, privacyPolicyUrl: body.data.privacyPolicyUrl }, "Link zur Datenschutzerklärung geändert");
     const afkChanged = afkChannelId !== undefined && afkChannelId !== (before.afkChannelId ?? null);
     // The new AFK channel loses its radio; LiveKit silences whoever sits in it and gives the old one's members their grants
     // back. Current clients rejoin with a fresh token on the settings change anyway; this holds for all the others.

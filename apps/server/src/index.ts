@@ -158,8 +158,9 @@ async function main() {
     /** `inviteRequired`: new members need an invite code (the server is not open), so the login shows the field from the start. No secret: a sign-in without a code answers `invite_required` anyway. */
     /** `localAccounts`: server accounts (`~name`) may be registered here; `requireAccount` is always true since then (every sign-in needs an account). */
     /** `ownerSetup`: no owner yet and OWNER_SETUP_CODE is set, so the registration of a server account asks for that code (local-accounts.md). */
-    ...(await loadSettings(db).then((st) => ({ serverName: st.name, iconUrl: st.iconUrl, requireAccount: true, inviteRequired: !st.openJoin, localAccounts: st.localAccounts === true, ownerSetup: st.ownerId === null && config.OWNER_SETUP_CODE !== undefined }))
-      .catch(() => ({ serverName: null, iconUrl: null, requireAccount: true, inviteRequired: false, localAccounts: false, ownerSetup: false }))),
+    /** `privacyPolicyUrl`: the server's privacy policy (Verwaltung > Server), linked under the form that creates a server account; null = none. */
+    ...(await loadSettings(db).then((st) => ({ serverName: st.name, iconUrl: st.iconUrl, requireAccount: true, inviteRequired: !st.openJoin, localAccounts: st.localAccounts === true, ownerSetup: st.ownerId === null && config.OWNER_SETUP_CODE !== undefined, privacyPolicyUrl: st.privacyPolicyUrl ?? null }))
+      .catch(() => ({ serverName: null, iconUrl: null, requireAccount: true, inviteRequired: false, localAccounts: false, ownerSetup: false, privacyPolicyUrl: null }))),
     version: VERSION,
     /** Directory service (M6) that this server recognizes; the client registers handles there. null = none. */
     directoryUrl: config.DIRECTORY_URL ?? null,

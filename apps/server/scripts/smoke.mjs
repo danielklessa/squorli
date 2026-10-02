@@ -216,6 +216,17 @@ const [, hOpen] = await api("GET", "/api/health");
 await api("PATCH", "/api/settings", { openJoin: false }, owner.token);
 const [, hClosed] = await api("GET", "/api/health");
 check("health inviteRequired follows openJoin", hOpen.inviteRequired === false && hClosed.inviteRequired === true);
+// The privacy policy's link (docs/features/local-accounts.md): https only, in the settings and in /api/health for the login.
+{
+  const [sHttp] = await api("PATCH", "/api/settings", { privacyPolicyUrl: "http://example.org/privacy" }, owner.token);
+  const [sSet] = await api("PATCH", "/api/settings", { privacyPolicyUrl: "https://example.org/datenschutz" }, owner.token);
+  const [, hSet] = await api("GET", "/api/health");
+  const [, sState] = await api("GET", "/api/state", undefined, owner.token);
+  await api("PATCH", "/api/settings", { privacyPolicyUrl: null }, owner.token);
+  const [, hNone] = await api("GET", "/api/health");
+  check("privacy policy link: https only, in settings and health, null clears it", sHttp === 400 && sSet === 200 && hSet.privacyPolicyUrl === "https://example.org/datenschutz"
+    && sState.settings.privacyPolicyUrl === "https://example.org/datenschutz" && hNone.privacyPolicyUrl === null, `${sHttp} ${sSet} ${hSet.privacyPolicyUrl} ${hNone.privacyPolicyUrl}`);
+}
 
 // ---------- Structure
 const [sc, cat] = await api("POST", "/api/categories", { name: "Smoke" }, owner.token);

@@ -1,4 +1,4 @@
-import { DEVICE_REFUSED, PROTOCOL_VERSION, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, sessionEndReasonOf, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
+import { DEVICE_REFUSED, PROTOCOL_VERSION, PrivacyPolicyUrl, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, sessionEndReasonOf, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
 import { ServerApi, explainLoginError, suspendedText, suspendedUntilOfError, type Health } from "./api";
 import type { VoteKickState } from "./voteKick";
 import type { Identity } from "./identity";
@@ -86,6 +86,8 @@ export type ServerConnState = {
   inviteRequired: boolean;
   /** The server waits for its owner, who registers a server account with the setup code (from /api/health). */
   ownerSetup: boolean;
+  /** The server's privacy policy (from /api/health), linked under the form that creates a server account; null = none. */
+  privacyPolicyUrl: string | null;
   serverVersion: string | null;
   /** Directory service named by this server; null = none. */
   directoryUrl: string | null;
@@ -196,7 +198,7 @@ export class ServerConnection {
     this.state = {
       host, base, me: null, userId: null, deviceList: false, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
       voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
-      serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, ownerSetup: false, serverVersion: null, directoryUrl: null,
+      serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, ownerSetup: false, privacyPolicyUrl: null, serverVersion: null, directoryUrl: null,
       refused: false, suspendedUntil: null,
     };
     // Token rejected by the server (expired, signed out from another device): do not keep running with a dead token.
@@ -240,7 +242,7 @@ export class ServerConnection {
     const health = await this.api.getHealth().catch(() => null);
     this.set({
       serverName: health?.serverName ?? null, iconUrl: health?.iconUrl ? this.api.abs(health.iconUrl) : null, serverDomain: health?.domain?.toLowerCase() ?? null,
-      directoryUrl: health?.directoryUrl ?? null, requireAccount: !!health?.directoryUrl && health?.requireAccount === true, localAccounts: health?.localAccounts === true, inviteRequired: health?.inviteRequired === true, ownerSetup: health?.ownerSetup === true, serverVersion: health?.version ?? null,
+      directoryUrl: health?.directoryUrl ?? null, requireAccount: !!health?.directoryUrl && health?.requireAccount === true, localAccounts: health?.localAccounts === true, inviteRequired: health?.inviteRequired === true, ownerSetup: health?.ownerSetup === true, privacyPolicyUrl: PrivacyPolicyUrl.safeParse(health?.privacyPolicyUrl).data ?? null, serverVersion: health?.version ?? null,
       deviceList: health?.devices === true,
     });
     return health;

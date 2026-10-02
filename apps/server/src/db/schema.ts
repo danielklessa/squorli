@@ -124,6 +124,8 @@ export const serverSettings = pgTable("server_settings", {
   statusApiRoleId: uuid("status_api_role_id").references((): AnyPgColumn => roles.id, { onDelete: "set null" }),
   /** Refuse directory accounts the directory's operator suspended (admin area > server; users/suspension.ts). On by default. */
   refuseSuspended: boolean("refuse_suspended").notNull().default(true),
+  /** The server's privacy policy (https), linked under the form that creates a server account; null = none (admin area > server). */
+  privacyPolicyUrl: text("privacy_policy_url"),
 });
 
 /** Membership. Anyone missing here sees nothing and can do nothing. */

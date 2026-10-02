@@ -152,7 +152,7 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
         {claim ? (
           <ClaimAccount serverName={home.serverName ?? home.host} directoryUrl={state.directoryUrl} localAccounts={localAccounts} emailRequired={state.directoryEmailRequired} error={home.error}
             onClaimLocal={(handle, pw) => store.claimLocal(home.host, handle, pw)} onClaimDirectory={(handle, email, code) => store.claimDirectory(home.host, handle, email, code)}
-            onLogout={() => store.logout()} checkFree={(h) => store.home!.api.localHandleFree(h)} />
+            onLogout={() => store.logout()} checkFree={(h) => store.home!.api.localHandleFree(h)} privacyPolicyUrl={home.privacyPolicyUrl} />
         ) : <>
           {/* Always there when the server takes new members by invite only (user's wish, 19 September 2026); it holds the code of an invite link. */}
           {showInvite && (
@@ -177,7 +177,7 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
               catch (err) { return api.explainDirectoryError(err); }
             } : null} />
           <CreateAccount directoryUrl={state.directoryUrl} localAccounts={localAccounts} busy={busy} openExternal={null}
-            local={<LocalRegisterForm idPrefix="login" busy={busy} ownerSetup={home.ownerSetup} checkFree={(h) => store.home!.api.localHandleFree(h)} onRegister={registerLocal} />} />
+            local={<LocalRegisterForm idPrefix="login" busy={busy} ownerSetup={home.ownerSetup} privacyPolicyUrl={home.privacyPolicyUrl} checkFree={(h) => store.home!.api.localHandleFree(h)} onRegister={registerLocal} />} />
           {state.directoryError && <p className="error small">{state.directoryError}</p>}
           <details className="login-details">
             <summary>{t("login.deviceKey")}</summary>

@@ -3,7 +3,7 @@ import {
   ClientEvent, CreateMessageRequest, MarkReadRequest, MuteRequest, ReadStateResponse, DEFAULT_EVERYONE_PERMISSIONS, DEFAULT_MEMBER_PERMISSIONS, PERMISSION_GROUPS, Permission, RtcTokenRequest, ServerEvent,
   CHANNEL_OVERRIDABLE, CHANNEL_PERMISSION_GROUPS, channelOverridableFor,
   ServerSettings, ServerStatus, StatusApiMode, UpdateMeRequest, VerifyRequest, challengeMessage, displayNameOf, hasPermission, mentionedUserIds, permissionNames,
-  UpdateSettingsRequest, WS_CLOSE_ACCOUNT_SUSPENDED, suspendedCloseReason, suspendedUntilOf,
+  PRIVACY_POLICY_URL_MAX, UpdateSettingsRequest, WS_CLOSE_ACCOUNT_SUSPENDED, suspendedCloseReason, suspendedUntilOf,
 } from "./index";
 
 const U1 = "6f1c2a4e-1b2c-4d3e-8f90-123456789abc";
@@ -158,5 +158,20 @@ describe("suspended directory accounts on a chat server", () => {
     expect(ServerSettings.parse(settings).refuseSuspended).toBeUndefined();
     expect(ServerSettings.parse({ ...settings, refuseSuspended: false }).refuseSuspended).toBe(false);
     expect(UpdateSettingsRequest.parse({ refuseSuspended: true })).toEqual({ refuseSuspended: true });
+  });
+});
+
+describe("the server's privacy policy", () => {
+  const settings = { name: "S", openJoin: true, ownerId: null, iconUrl: null, requireAccount: true, requireAccountLocked: true, listed: false, description: null };
+  it("is absent on a server that predates it and null for none", () => {
+    expect(ServerSettings.parse(settings).privacyPolicyUrl).toBeUndefined();
+    expect(ServerSettings.parse({ ...settings, privacyPolicyUrl: null }).privacyPolicyUrl).toBeNull();
+    expect(UpdateSettingsRequest.parse({ privacyPolicyUrl: null })).toEqual({ privacyPolicyUrl: null });
+  });
+  it("takes an https address only", () => {
+    expect(UpdateSettingsRequest.parse({ privacyPolicyUrl: " https://example.org/datenschutz " })).toEqual({ privacyPolicyUrl: "https://example.org/datenschutz" });
+    for (const bad of ["http://example.org/privacy", "javascript:alert(1)", "example.org/privacy", "https://", "https://user:pw@example.org/", "", `https://example.org/${"a".repeat(PRIVACY_POLICY_URL_MAX)}`]) {
+      expect(UpdateSettingsRequest.safeParse({ privacyPolicyUrl: bad }).success, bad).toBe(false);
+    }
   });
 });

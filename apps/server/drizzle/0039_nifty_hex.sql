@@ -1,0 +1,1 @@
+ALTER TABLE "server_settings" ADD COLUMN "privacy_policy_url" text;
