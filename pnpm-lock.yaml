@@ -125,8 +125,8 @@ importers:
         specifier: ^2.22.3
         version: 2.22.3(@types/dom-mediacapture-record@1.0.22)
       lucide-static:
-        specifier: 0.545.0
-        version: 0.545.0
+        specifier: 1.48.0
+        version: 1.48.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -2318,8 +2318,8 @@ packages:
     resolution: {integrity: sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==}
     engines: {node: '>=10'}
 
-  lucide-static@0.545.0:
-    resolution: {integrity: sha512-2i81WNw3y+sN17gG75DKZbd43pGJREyoAQRK5IG8djCWhISoK6Ri1ovbKwOjFR+St2LHTQhu+EJygmUIWMotew==}
+  lucide-static@1.48.0:
+    resolution: {integrity: sha512-ZUGgZ4rzlLfVbhN2Zi37TMrTaSpXAbWx6Y/xZxKSDLPiqxtTK7Mw2M+oBJa0gjV8p3+CWBHh48u+IC9+jKlUjA==}
 
   machina@7.0.1:
     resolution: {integrity: sha512-0Xkgs8NeBvO2hW6bjJT8ewLWrMfh1haMPstaghpASWjXkLjRhtDiaJG1Kb7mslaOHxZYxpH7PIjpmirRVYbMMA==}
@@ -5107,7 +5107,7 @@ snapshots:
     dependencies:
       yallist: 4.0.0
 
-  lucide-static@0.545.0: {}
+  lucide-static@1.48.0: {}
 
   machina@7.0.1: {}
 
