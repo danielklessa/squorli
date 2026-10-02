@@ -41,8 +41,9 @@ let [status, body] = await api("POST", "/api/auth/verify", { challengeId: ch.cha
 if (status === 403 && body.error === "registration_required" && mode === "seed") {
   [, ch] = await api("POST", "/api/auth/challenge", { publicKey });
   const handle = `s${publicKey.slice(0, 12)}`;
-  // No real encryption: the server never opens the backup of a key
-  const backup = { ciphertext: Buffer.from(raw, "hex").toString("base64"), params: { kdf: "pbkdf2-sha256", iterations: 100_000, salt: "00".repeat(16), iv: "00".repeat(12) }, authKey: "ab".repeat(32) };
+  // No real encryption: the server never opens the backup of a key. The rounds are what the server demands since 0.8.4
+  // (at least 600,000; a lower number is refused as backup_weak), the rest is a dummy.
+  const backup = { ciphertext: Buffer.from(raw, "hex").toString("base64"), params: { kdf: "pbkdf2-sha256", iterations: 600_000, salt: "00".repeat(16), iv: "00".repeat(12) }, authKey: "ab".repeat(32) };
   [status, body] = await api("POST", "/api/local/register", { challengeId: ch.challengeId, publicKey, signature: sign(`squorli-local-register\n${health.domain}\n${ch.nonce}\n${handle}\n${backup.ciphertext}`), handle, backup, ownerCode: extra });
 }
 if (!body.sessionToken) fail(`sign-in: ${status} ${JSON.stringify(body)}`);

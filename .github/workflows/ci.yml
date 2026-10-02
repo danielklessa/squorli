@@ -40,7 +40,7 @@ jobs:
 
   # Known vulnerabilities in the production dependencies (`pnpm audit --prod`; security audit of 2 October 2026, S15). Shown in
   # the run, never blocking: an advisory that appears tomorrow must not stop a release made today. A red job means: read its
-  # log and update the package (docs/DEVELOPMENT.md, "Dependencies"). Dependabot (.github/dependabot.yml) opens the updates.
+  # log and update the package (docs/DEVELOPMENT.md, "Dependencies").
   audit:
     runs-on: ubuntu-latest
     continue-on-error: true
