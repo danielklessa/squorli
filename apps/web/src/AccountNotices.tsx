@@ -1,7 +1,7 @@
 import type { AccountNotice, ReportReason } from "@squorli/protocol";
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
-import { fmtDateTime, t } from "./i18n";
+import { fmtDateTime, locale, t } from "./i18n";
 import { platform } from "./platform";
 import { safeHref } from "./safeHref";
 
@@ -16,20 +16,25 @@ export function noticeText(n: Pick<AccountNotice, "kind" | "reason" | "until">, 
   return t(`notice.${n.kind}`, { handle, reason, until: n.until ? fmtDateTime(n.until) : "" });
 }
 
-/** Where the contact address is: the directory's address of the operator's legal notice. */
-const legalUrl = (directoryUrl: string): string => `${directoryUrl.replace(/\/+$/, "")}/impressum`;
+/**
+ * A page of the directory's operator through the directory's own redirect (`/impressum`, `/regeln`: the operator's website
+ * in the reader's language): a link in the browser, the system's browser in the desktop app.
+ */
+function DirectoryPageLink({ directoryUrl, path, label }: { directoryUrl: string; path: string; label: string }) {
+  const href = safeHref(`${directoryUrl.replace(/\/+$/, "")}/${path}?lang=${locale}`);
+  return href === undefined ? <>{label}</>
+    : platform.home ? <a href={href} target="_blank" rel="noreferrer">{label}</a>
+      : <button className="link" onClick={() => platform.links.openExternal(href)}>{label}</button>;
+}
 
+/** Where the contact address is: the operator's legal notice. */
 function LegalLine({ directoryUrl }: { directoryUrl: string }) {
-  const href = safeHref(legalUrl(directoryUrl));
-  return (
-    <p className="muted small">
-      {t("notice.closing")}{" "}
-      {href === undefined ? t("notice.legal")
-        : platform.home ? <a href={href} target="_blank" rel="noreferrer">{t("notice.legal")}</a>
-          : <button className="link" onClick={() => platform.links.openExternal(href)}>{t("notice.legal")}</button>}
-      .
-    </p>
-  );
+  return <p className="muted small">{t("notice.closing")} <DirectoryPageLink directoryUrl={directoryUrl} path="impressum" label={t("notice.legal")} />.</p>;
+}
+
+/** What a measure is measured against: the rules of use (2 October 2026, reports stage D). */
+function RulesLine({ directoryUrl }: { directoryUrl: string }) {
+  return <p className="muted small">{t("notice.rules")} <DirectoryPageLink directoryUrl={directoryUrl} path="regeln" label={t("notice.rulesLink")} />.</p>;
 }
 
 /**
@@ -64,6 +69,7 @@ export function NoticesDialog({ notices, handle, directoryUrl, onRead, onClose }
           <p className="muted small">{fmtDateTime(current.createdAt)}{unread.length > 1 ? ` · ${t("notice.more", { n: unread.length - 1 })}` : ""}</p>
           <p className={current.kind === "suspend" ? "notice-text suspended" : "notice-text"}>{noticeText(current, handle)}</p>
           {current.kind === "suspend" && <p className="small">{t("notice.suspendServers")}</p>}
+          {current.kind !== "unsuspend" && <RulesLine directoryUrl={directoryUrl} />}
           <LegalLine directoryUrl={directoryUrl} />
           {err && <p className="error">{err}</p>}
           <div className="dialog-actions">
@@ -87,7 +93,7 @@ export function SuspendedNote({ until, reason, handle, directoryUrl, onCheck }: 
       <strong><Icon name="ban" /> {t("notice.suspendedTitle")}</strong>
       <p className="small">{until ? noticeText({ kind: "suspend", reason: reason ?? "other", until }, handle) : t("notice.suspendedNoDate", { handle })}</p>
       <p className="small">{t("notice.suspendServers")}</p>
-      {directoryUrl && <LegalLine directoryUrl={directoryUrl} />}
+      {directoryUrl && <><RulesLine directoryUrl={directoryUrl} /><LegalLine directoryUrl={directoryUrl} /></>}
       <button className="secondary small" disabled={busy} onClick={() => { setBusy(true); void onCheck().finally(() => setBusy(false)); }}>{t("notice.checkAgain")}</button>
     </div>
   );

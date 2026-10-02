@@ -122,16 +122,18 @@ function ExternalLink({ url, children }: { url: string; children: ReactNode }) {
   return <a href={href} target="_blank" rel="noreferrer" onClick={platform.home ? undefined : (e) => { e.preventDefault(); platform.links.openExternal(href); }}>{children}</a>;
 }
 
-/** The directory's privacy policy: its redirect to the operator's website, in the client's language. */
-const directoryPrivacyUrl = (directoryUrl: string): string => `${directoryUrl.replace(/\/+$/, "")}/datenschutz?lang=${locale}`;
+/** The directory's privacy policy and rules of use: its redirects to the operator's website, in the client's language. */
+const directoryPageUrl = (directoryUrl: string, page: "datenschutz" | "regeln"): string => `${directoryUrl.replace(/\/+$/, "")}/${page}?lang=${locale}`;
 
 /**
  * The sentence under a form that creates an account (2 October 2026, docs/features/local-accounts.md): by creating it the
  * user accepts the privacy policy, a link, no checkbox (the directory's account page says the same). `text` holds `{link}`.
  */
-function PrivacyNote({ text, url }: { text: string; url: string }) {
-  const [before, after = ""] = text.split("{link}");
-  return <p className="muted small">{before}<ExternalLink url={url}>{t("login.privacyPolicy")}</ExternalLink>{after}</p>;
+function PrivacyNote({ text, url, rulesUrl }: { text: string; url: string; rulesUrl?: string }) {
+  // `{rules}` (the directory's rules of use, 2 October 2026) is optional; the server's sentence has only `{link}`.
+  const parts = text.split(/(\{link\}|\{rules\})/);
+  return <p className="muted small">{parts.map((part, i) => part === "{link}" ? <ExternalLink key={i} url={url}>{t("login.privacyPolicy")}</ExternalLink>
+    : part === "{rules}" && rulesUrl ? <ExternalLink key={i} url={rulesUrl}>{t("login.rulesOfUse")}</ExternalLink> : part)}</p>;
 }
 
 /**
@@ -275,7 +277,7 @@ function DirectoryClaimForm({ directoryUrl, busy, emailRequired, onRegister }: {
           <small className="muted">{t("login.registerCodeSent", { to: sentTo })}</small>
         </label>
       )}
-      <PrivacyNote text={t("login.privacyDirectory")} url={directoryPrivacyUrl(directoryUrl)} />
+      <PrivacyNote text={t("login.privacyDirectory")} url={directoryPageUrl(directoryUrl, "datenschutz")} rulesUrl={directoryPageUrl(directoryUrl, "regeln")} />
       <button className="login-primary" onClick={() => void submit()} disabled={busy || !LocalHandle.safeParse(clean).success || (emailRequired && !email.includes("@")) || (!!sentTo && code.trim().length !== 8)}>
         {busy ? t("login.registering") : emailRequired && !sentTo ? t("login.registerSendCode") : t("login.registerHandle")}
       </button>

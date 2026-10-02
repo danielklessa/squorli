@@ -124,6 +124,8 @@ Code: protocol `directory.ts` (`DirectoryAccount.suspendedUntil`, `AccountStatus
 
 The account's status carries the notices about measures (decision 11: fixed wording in both languages, the reason from the reports' list, never who reported, no text of the operator's). The client shows the unread ones as a modal, the newest first; "Verstanden" marks one as read in the account (signed `notice-read`), "Später" leaves it for the next start. A connected client hears `notices.changed` and reads its status again, so a warning appears while one is chatting. The texts are the account page's (`notice.*`).
 
+**The rules of use (2 October 2026):** the dialog and the suspended state carry a line above the closing one, "Was erlaubt ist, steht in den Nutzungsregeln." (`notice.rules`, `notice.rulesLink`; a link to the directory's redirect `/regeln?lang=`, which leads to the operator's website), not for the end of a suspension; the closing line's link goes through the same helper (`DirectoryPageLink`) and now carries `?lang=` too. Checked: typecheck, web tests (497), both components rendered in a headless Chrome. Ships with the next desktop app and server release.
+
 ### Decisions made by Claude, confirmed by the user on 27 September 2026 ("alles andere hört sich für mich gut an")
 
 - **The session stays.** The plan said the sessions end like on a ban (which deletes them). Built: the session row stays and is refused while the suspension lasts, so it works again when the suspension ends or is lifted, without a new sign-in; switching the setting off has the same effect at once.
