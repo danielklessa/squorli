@@ -30,11 +30,11 @@ jobs:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG || github.ref }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -55,7 +55,7 @@ jobs:
       - run: pnpm --filter @squorli/desktop dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.os }}
           if-no-files-found: error
@@ -75,11 +75,11 @@ jobs:
     steps:
       # The version's release notes (apps/desktop/release-notes/<version>.md, written with the `desktop-release` skill before
       # the tag is set). Checked out BEFORE the artifacts arrive: a checkout empties the folder it works in.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
           sparse-checkout: apps/desktop/release-notes
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
