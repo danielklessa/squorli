@@ -32,3 +32,17 @@ export const PAGE_HEADERS: Record<string, string> = {
   "x-content-type-options": "nosniff",
   "x-frame-options": "DENY",
 };
+
+/** HSTS for the host: a year, no subdomains, no preload (other names of the operator's keep their own TLS state). */
+export const HSTS = "max-age=31536000";
+
+/**
+ * Whether an answer gets `Strict-Transport-Security`: only when the request really arrived over https (the proxy's
+ * X-Forwarded-Proto, believed only from TRUSTED_PROXIES, so Fastify's `req.protocol`) and not for `localhost`, because a
+ * browser remembers HSTS per host without the port and would turn the developer's other http://localhost:... pages into
+ * https for a year (security audit, 2 October 2026, S11). Set here and not in the proxy templates so that every proxy
+ * (Caddy, nginx, Traefik, IIS) is covered.
+ */
+export function wantsHsts(publicDomain: string, protocol: string): boolean {
+  return protocol === "https" && publicDomain.toLowerCase() !== "localhost";
+}

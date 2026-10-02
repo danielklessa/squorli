@@ -50,7 +50,7 @@ async function verify(key, invite, userAgent) {
 // Server accounts (docs/features/local-accounts.md): the test's backup is no real encryption, the server never opens it anyway.
 const localHandleOf = (key) => `s${key.publicKey.slice(0, 12)}`;
 const authKeyOf = (key, salt = "") => createHash("sha256").update(`auth:${salt}${key.publicKey}`).digest("hex");
-const backupOf = (key, salt = "") => ({ ciphertext: Buffer.from(key.priv).toString("base64"), params: { kdf: "pbkdf2-sha256", iterations: 100_000, salt: "00".repeat(16), iv: "00".repeat(12) }, authKey: authKeyOf(key, salt) });
+const backupOf = (key, salt = "") => ({ ciphertext: Buffer.from(key.priv).toString("base64"), params: { kdf: "pbkdf2-sha256", iterations: 600_000, salt: "00".repeat(16), iv: "00".repeat(12) }, authKey: authKeyOf(key, salt) });
 async function register(key, invite, userAgent, handle = localHandleOf(key)) {
   const [, ch] = await api("POST", "/api/auth/challenge", { publicKey: key.publicKey });
   const backup = backupOf(key);
@@ -346,8 +346,14 @@ check("server accounts: signing in again with the key alone", Lv.status === 200 
 const [sPar, par] = await api("GET", `/api/local/backup/${handleL}/params`);
 const [sBad, bad] = await api("POST", "/api/local/backup/fetch", { handle: handleL, authKey: "00".repeat(32) });
 const [sBlob, blob] = await api("POST", "/api/local/backup/fetch", { handle: handleL, authKey: authKeyOf(keyL) });
-check("server accounts: backup parameters, wrong password 401, the blob for the right one", sPar === 200 && par.iterations === 100000 && !("iv" in par) && sBad === 401 && bad.error === "auth_invalid"
+check("server accounts: backup parameters, wrong password 401, the blob for the right one", sPar === 200 && par.iterations === 600000 && !("iv" in par) && sBad === 401 && bad.error === "auth_invalid"
   && sBlob === 200 && blob.publicKey === keyL.publicKey && blob.ciphertext === backupOf(keyL).ciphertext && blob.params.iv === "00".repeat(12), `${sPar} ${sBad} ${sBlob}`);
+// A backup below 600,000 rounds is refused at registration (security audit, 2 October 2026): the check comes before the signature's.
+const keyW = await newKey();
+const [, chW] = await api("POST", "/api/auth/challenge", { publicKey: keyW.publicKey });
+const weakBackup = { ...backupOf(keyW), params: { ...backupOf(keyW).params, iterations: 100_000 } };
+const [sWeak, rWeak] = await api("POST", "/api/local/register", { challengeId: chW.challengeId, publicKey: keyW.publicKey, signature: "00".repeat(64), handle: `sweak${keyW.publicKey.slice(0, 8)}`, backup: weakBackup });
+check("server accounts: a backup below 600,000 rounds is refused (backup_weak)", sWeak === 400 && rWeak.error === "backup_weak", `${sWeak} ${rWeak.error ?? ""}`);
 const [sUnk] = await api("GET", "/api/local/backup/nobody.here/params");
 check("server accounts: an unknown handle -> 404", sUnk === 404, `${sUnk}`);
 const [sPw1] = await api("PUT", "/api/local/backup", { oldAuthKey: "11".repeat(32), backup: backupOf(keyL, "new") }, L.token);
@@ -666,6 +672,11 @@ const [sru3] = await api("PUT", `/api/channels/${voiceCh.id}/radio`, { url: stre
 const typed = await radioOf();
 check("radio: a typed address needs CONTROL_RADIO and is checked like a station's; stationId null, named by its host", sru0 === 403 && sru1 === 400 && sru2 === 502 && sru3 === 200
   && typed?.stationId === null && typed?.streamUrl === streamUrl && typed?.name === "streams.radiobob.de", `${sru0} ${sru1} ${sru2} ${sru3} ${typed?.name}`);
+// A plain stream address on an internal host is refused as well (security audit, 2 October 2026): every listener's client would
+// be told to ask it. The station that plays stays.
+const [sru4, sru4b] = await api("PUT", `/api/channels/${voiceCh.id}/radio`, { url: "http://192.168.1.1:8000/live.mp3" }, owner.token);
+const stayed = await radioOf();
+check("radio: a plain stream address on an internal host is refused, the running station stays", sru4 === 502 && sru4b.error === "radio_forbidden_host" && stayed?.streamUrl === streamUrl, `${sru4} ${sru4b.error ?? ""}`);
 // A Twitch channel page: no audio stream, clients show Twitch's player; the server normalizes the address and asks nobody.
 const [srt0] = await api("PUT", `/api/channels/${voiceCh.id}/radio`, { url: "https://twitch.tv/Squorli_Test/" }, owner.token);
 const twitch = await radioOf();

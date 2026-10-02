@@ -38,6 +38,20 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  # Known vulnerabilities in the production dependencies (`pnpm audit --prod`; security audit of 2 October 2026, S15). Shown in
+  # the run, never blocking: an advisory that appears tomorrow must not stop a release made today. A red job means: read its
+  # log and update the package (docs/DEVELOPMENT.md, "Dependencies"). Dependabot (.github/dependabot.yml) opens the updates.
+  audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm audit --prod --audit-level=moderate
+
   # The server also runs on Windows without Docker (docs/features/windows.md): typecheck, tests and builds on Windows,
   # the package and its acceptance test (windows-package.yml). Not for tags: a tag v* runs the same through
   # server-release.yml, which attaches the package to the release, and the commit was tested when its branch was pushed.

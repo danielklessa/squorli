@@ -29,3 +29,18 @@ export function isAppNavigation(url: string, origins: readonly string[]): boolea
   const u = parse(url);
   return !!u && origins.includes(originOf(u));
 }
+
+/**
+ * Whether a frame is the client itself and may use the shell's bridge (`isClientFrame` in index.ts asks this after it has
+ * checked that the frame is a main frame). The origin alone is not enough: a window the client opens (`window.open`, the web
+ * radio's `/player-window.html`) lives on the same origin, and a child window may get the parent's preload (Electron's default
+ * for `window.open`, not verified here), which would give it the whole bridge, the stored keys included (security audit,
+ * 2 October 2026, C4). Only the client's own page
+ * counts: any other HTML file of the app is refused; the client's address may carry a path of its own (`/invite/<code>` in a
+ * browser) but never names another document.
+ */
+export function isClientPage(url: string, origins: readonly string[]): boolean {
+  const u = parse(url);
+  if (!u || !origins.includes(originOf(u))) return false;
+  return !/\.html?$/i.test(u.pathname) || u.pathname === "/index.html";
+}

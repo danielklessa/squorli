@@ -8,8 +8,14 @@
 export type NotificationSettings = {
   /** Show notifications on this device. */
   on: boolean;
-  /** Put the message's text into the notification; false = only who wrote where (for a screen others see). */
+  /** Put the text of a mention into the notification; false = only who wrote where (for a screen others see). */
   preview: boolean;
+  /**
+   * The same for a direct message, kept apart and off until the user switches it on (security audit, 2 October 2026, C7):
+   * direct messages are end-to-end encrypted, but the system may keep a notification's text in plain text (Windows keeps
+   * them in a database that outlives the window), which would undo that.
+   */
+  dmPreview: boolean;
   /** Also while a game or another application runs in full screen (desktop app on Windows, which can tell); off by default. */
   fullscreen: boolean;
 };
@@ -17,7 +23,7 @@ export type NotificationSettings = {
 const KEY = "chat.notifications.v1";
 
 export function defaultNotificationSettings(desktop: boolean): NotificationSettings {
-  return { on: desktop, preview: true, fullscreen: false };
+  return { on: desktop, preview: true, dmPreview: false, fullscreen: false };
 }
 
 export function loadNotificationSettings(desktop: boolean): NotificationSettings {
@@ -25,7 +31,7 @@ export function loadNotificationSettings(desktop: boolean): NotificationSettings
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<NotificationSettings> | null;
     if (!raw || typeof raw !== "object") return fallback;
-    return { on: typeof raw.on === "boolean" ? raw.on : fallback.on, preview: typeof raw.preview === "boolean" ? raw.preview : fallback.preview, fullscreen: raw.fullscreen === true };
+    return { on: typeof raw.on === "boolean" ? raw.on : fallback.on, preview: typeof raw.preview === "boolean" ? raw.preview : fallback.preview, dmPreview: raw.dmPreview === true, fullscreen: raw.fullscreen === true };
   } catch { return fallback; }
 }
 

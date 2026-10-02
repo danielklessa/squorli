@@ -1,5 +1,5 @@
 import {
-  AVATAR_MAX_BYTES, BackupParams, LocalAvatarRequest, LocalBackupFetchRequest, LocalClaimRequest, LocalDeleteRequest, LocalHandle,
+  AVATAR_MAX_BYTES, BACKUP_ITERATIONS, BackupParams, LocalAvatarRequest, LocalBackupFetchRequest, LocalClaimRequest, LocalDeleteRequest, LocalHandle,
   LocalPasswordChangeRequest, LocalRegisterRequest, Uuid, localRegisterMessage, sniffAvatarMime, type LocalBackup, type LocalBackupBlob,
   localClaimMessage,
   LocalDeviceRevokeRequest, deviceEnrolMessage, labelFromUserAgent, type DevicesResponse, type TooManyDevicesResponse,
@@ -21,7 +21,7 @@ import { deleteUserAccount } from "../users/deleteUser";
 import type { VoicePresence } from "../voice/presence";
 import { ipKey } from "../rateLimits";
 import { replaceFile } from "../replaceFile";
-import { ChallengeStore, RateLimiter } from "./challenges";
+import { ChallengeStore, EscalatingLimiter, RateLimiter } from "./challenges";
 import { deviceSignatureValid, type Devices } from "../users/devices";
 import { admit, checkChallenge, checkDeviceProof, isFirstEver, originOf, ownerCodeMatches, signatureValid } from "./routes";
 import { hasAccount, requireMember, requireSession } from "./session";
@@ -49,7 +49,8 @@ export async function registerLocalAccountRoutes(
   const registerByIp = perIp(20);
   const paramsByIp = perIp(30);
   const fetchByIp = perIp(10);
-  const fetchByHandle = new RateLimiter(10);
+  // Per handle the blocks grow (5 minutes, 15 minutes, an hour; auth/challenges.ts, security audit S12).
+  const fetchByHandle = new EscalatingLimiter(10);
   // Password checks behind a session (change, deletion): per account as well, over an hour, so a stolen session guesses
   // slowly from any number of addresses.
   const passwordByUser = new RateLimiter(10, 60 * 60_000);
@@ -93,6 +94,9 @@ export async function registerLocalAccountRoutes(
     const body = LocalRegisterRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request", detail: body.error.issues[0]?.message ?? null });
     const { challengeId, publicKey, signature, handle, backup, invite, ownerCode } = body.data;
+    // A new backup below the clients' 600,000 rounds is refused (security audit, 2 October 2026, S12): once somebody has the
+    // database, the password alone protects the key, and PBKDF2 with fewer rounds is cracked that much faster.
+    if (backup.params.iterations < BACKUP_ITERATIONS) return reply.code(400).send({ error: "backup_weak" });
     // The owner's setup code (OWNER_SETUP_CODE): a wrong one, or one after the owner exists, is said as such; the right one
     // opens the registration even where server accounts are off, until the owner exists.
     if (ownerCode !== undefined && (!ownerCodeMatches(config, ownerCode) || !(await isFirstEver(db, config, publicKey, ownerCode)))) return reply.code(403).send({ error: "owner_code_invalid" });
@@ -222,6 +226,7 @@ export async function registerLocalAccountRoutes(
     if (!s) return;
     const body = LocalPasswordChangeRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    if (body.data.backup.params.iterations < BACKUP_ITERATIONS) return reply.code(400).send({ error: "backup_weak" });
     const account = { userId: s.userId };
     if (!attemptPassword(req.ip, account)) return reply.code(429).send({ error: "rate_limited" });
     const [row] = await db.select({ authHash: localAccounts.authHash }).from(localAccounts).where(eq(localAccounts.userId, s.userId)).limit(1);

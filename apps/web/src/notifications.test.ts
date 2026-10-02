@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { notificationBody, notificationFor, parseNotificationTag } from "./notifications";
+import { describe, expect, it, vi } from "vitest";
+import { defaultNotificationSettings, loadNotificationSettings, notificationBody, notificationFor, parseNotificationTag } from "./notifications";
 
 const ID = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
@@ -34,5 +34,20 @@ describe("parseNotificationTag", () => {
     expect(parseNotificationTag("dm:")).toBeNull();
     expect(parseNotificationTag("mention:nohost")).toBeNull();
     expect(parseNotificationTag("other")).toBeNull();
+  });
+});
+
+describe("direct message previews (security audit, 2 October 2026)", () => {
+  it("are off by default, also on a device whose stored settings predate the switch", () => {
+    expect(defaultNotificationSettings(true).dmPreview).toBe(false);
+    expect(defaultNotificationSettings(false).dmPreview).toBe(false);
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } });
+    try {
+      store.set("chat.notifications.v1", JSON.stringify({ on: true, preview: true, fullscreen: false }));
+      expect(loadNotificationSettings(true)).toMatchObject({ on: true, preview: true, dmPreview: false });
+      store.set("chat.notifications.v1", JSON.stringify({ on: true, preview: true, dmPreview: true, fullscreen: false }));
+      expect(loadNotificationSettings(true).dmPreview).toBe(true);
+    } finally { vi.unstubAllGlobals(); }
   });
 });

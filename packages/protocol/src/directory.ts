@@ -280,7 +280,12 @@ export type DeviceRevokeResponse = z.infer<typeof DeviceRevokeResponse>;
 // mails a notice instead of a code, `email-verify` answers 409 `email_taken` if another account confirmed it in the meantime.
 // With `features.emailRequired` a confirmed address can be replaced but not removed (409 `email_required`).
 // `EmailAddress` and `EmailCode` are defined above the registration, which uses them too.
-export const EmailUpdateRequest = SignedActionRequest.extend({ email: EmailAddress.nullable() });
+/**
+ * `code` (2 October 2026, security audit D3): a code of the authenticator or a recovery code, mandatory when the account's
+ * authenticator is on: whoever holds only the account's key (a copied browser profile) must not point the mails of the key
+ * retrievals and the fallback factor at an address of their own. Optional here, so the clients from before keep parsing.
+ */
+export const EmailUpdateRequest = SignedActionRequest.extend({ email: EmailAddress.nullable(), code: SecondFactorCode.optional() });
 export const EmailVerifyRequest = SignedActionRequest.extend({ code: EmailCode });
 /** Request an e-mail code with the password (sign-in without the authenticator): same proof as BackupFetchRequest. */
 export const EmailCodeRequest = z.object({ handle: Handle, authKey: BackupAuthKey });

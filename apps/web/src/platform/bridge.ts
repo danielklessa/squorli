@@ -225,7 +225,9 @@ export interface DesktopBridge {
 }
 
 /** What the shell keeps encrypted for the client (identity.ts): the identity key, and the server accounts' keys and tokens. */
-export const SECRET_KEYS = ["chat.identity.v1", "chat.serverAccounts.v1"] as const;
+// `chat.sessions.v2` since 2 October 2026 (security audit, C5): the sessions of the directory account were the one secret
+// left in the profile's localStorage, readable by anyone who copies the folder.
+export const SECRET_KEYS = ["chat.identity.v1", "chat.serverAccounts.v1", "chat.sessions.v2"] as const;
 
 /** A notification the client asks the shell to show; `tag` comes back when it is clicked. */
 /** `inFullscreen`: show it also while a game or another application runs in full screen (Windows; the setting in Einstellungen > Töne). */

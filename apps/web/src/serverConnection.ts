@@ -7,6 +7,7 @@ import { freshPlan, nextTry, planAfterUser, sessionRejected, type RetryPlan } fr
 import { showNotice } from "./dialogs";
 import { mentionsUser } from "./mentions";
 import { catchUp, loadReadState, markRead, pruneReadState, saveReadState, type ReadState } from "./readState";
+import { redactForLog } from "./logRedact";
 
 /**
  * Connection to exactly one chat server (multi-server client): session, WebSocket with reconnect, server state,
@@ -536,7 +537,7 @@ export class ServerConnection {
     else if (e.type === "voice.status") { this.voiceStatus = { micMuted: e.micMuted, deafened: e.deafened, cameraOn: e.cameraOn, screenOn: e.screenOn }; if (this.state.server?.settings.statusApi === undefined) return; } // a server from before it would answer bad_message
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     const text = JSON.stringify(e);
-    this.pushLog({ dir: "out", at: Date.now(), text });
+    this.pushLog({ dir: "out", at: Date.now(), text: redactForLog(text) });
     this.ws.send(text);
   }
 

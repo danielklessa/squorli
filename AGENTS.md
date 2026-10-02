@@ -179,7 +179,7 @@ Only what applies everywhere. Area conventions: `apps/server/AGENTS.md`, `apps/w
 - **Protocol version, new server events, new permissions:** read `packages/protocol/AGENTS.md` first (a `PROTOCOL_VERSION` bump is costly; permissions are sorted by meaning and need a migration).
 - **Configuration:** Exclusively via environment variables, validated in `config.ts`. The server loads `apps/server/.env` via `process.loadEnvFile` (built into Node, no dotenv dependency); variables already set take precedence. In the container there is no .env file, everything comes via compose.
 - **No new dependencies** without need; if necessary, pin the version as before (caret ranges) and commit the lockfile.
-- **Security:** Do not weaken the auth path (single-use challenge, domain binding of the signature, session TTL). LiveKit secret at least 16 characters (schema), 32+ in production. `TRUSTED_PROXIES` only relevant in external mode.
+- **Security:** Do not weaken the auth path (single-use challenge, domain binding of the signature, session TTL). LiveKit secret at least 16 characters (schema), 32+ in production; a template's placeholder as the secret (`placeholderSecretProblems` in `config.ts`) stops a production start, a short one only warns (security audit, 2 October 2026). `TRUSTED_PROXIES` only relevant in external mode.
 - **Tests:** Vitest, files `*.test.ts` next to the code. Pure logic (stores, schemas) via unit test; flows via `scripts/smoke.mjs`.
 
 ## 6. Architecture in brief

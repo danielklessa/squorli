@@ -8,7 +8,7 @@ import { hwndOfHandle, hwndOfSource, isDesktopWidget } from "./captureSource";
 import { findControl } from "./controlArgs";
 import { findDeepLink } from "./deepLinkArgs";
 import { E0_FLAG, keysLine, scanCodeOf } from "./keyCodes";
-import { isAllowedExternal, windowOpenDecision } from "./navigation";
+import { isAllowedExternal, isClientPage, windowOpenDecision } from "./navigation";
 import { appIdRegistration, inFullscreen, readNotification } from "./notifications";
 import { SPLASH_SKIP_URL, mayInstallAtStart, splashHtml, splashScript, splashView } from "./splashPage";
 import { updateMode } from "./updateMode";
@@ -334,5 +334,18 @@ describe("inFullscreen", () => {
       ["add", "HKCU\\Software\\Classes\\AppUserModelId\\com.squorli.desktop", "/v", "DisplayName", "/t", "REG_SZ", "/d", "Squorli", "/f"],
       ["add", "HKCU\\Software\\Classes\\AppUserModelId\\com.squorli.desktop", "/v", "IconUri", "/t", "REG_SZ", "/d", "C:\\x\\icon.png", "/f"],
     ]);
+  });
+});
+
+describe("isClientPage (security audit, 2 October 2026)", () => {
+  const origins = ["app://squorli", "http://localhost:5173"];
+  it("accepts the client's own page, with or without a path of its own", () => {
+    for (const u of ["app://squorli/", "app://squorli/index.html", "app://squorli/?x=1", "app://squorli/invite/AbCdEf123456", "http://localhost:5173/", "http://localhost:5173/index.html"]) expect(isClientPage(u, origins), u).toBe(true);
+  });
+  it("refuses another document of the app, such as the web radio's player window, which lives on the same origin", () => {
+    for (const u of ["app://squorli/player-window.html", "app://squorli/player-window.html?src=x", "app://squorli/test/screenshare.html", "http://localhost:5173/player-window.html", "app://squorli/PLAYER-WINDOW.HTML"]) expect(isClientPage(u, origins), u).toBe(false);
+  });
+  it("refuses a foreign origin and what is no address", () => {
+    for (const u of ["https://evil.example/", "app://other/", "about:blank", "", "not a url", "file:///C:/x/index.html"]) expect(isClientPage(u, origins), u).toBe(false);
   });
 });

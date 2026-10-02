@@ -35,6 +35,10 @@ export function NotificationSettings() {
         <input type="checkbox" checked={settings.preview} disabled={!active} onChange={(e) => change({ ...settings, preview: e.target.checked })} />
         {t("notify.preview")}
       </label>
+      <label className="check">
+        <input type="checkbox" checked={settings.dmPreview} disabled={!active} onChange={(e) => change({ ...settings, dmPreview: e.target.checked })} />
+        {t("notify.previewDm")}
+      </label>
       {platform.notifications.knowsFullscreen && (
         <label className="check">
           <input type="checkbox" checked={settings.fullscreen} disabled={!active} onChange={(e) => change({ ...settings, fullscreen: e.target.checked })} />

@@ -16,8 +16,10 @@ export { checkHost, isInternalAddress, publicLookup };
 const AUDIO = /^audio\/(?!x-mpegurl|mpegurl|x-scpls)/i;
 
 /**
- * What clients should play for a station's address. A plain stream address is returned as it is (no request at all);
- * a playlist is fetched (public hosts only, short timeout, small body) and its first entry taken.
+ * What clients should play for a station's address. A plain stream address is returned as it is (no request to it; its host
+ * must not be an internal address, because every listener's client would be told to ask it: a member with CONTROL_RADIO
+ * could point the whole channel at the router or a machine in somebody's LAN, security audit 2 October 2026, S14; a name that
+ * does not resolve is let through as before); a playlist is fetched (public hosts only, short timeout, small body) and its first entry taken.
  */
 export async function resolveStreamUrl(stationUrl: string): Promise<ResolveResult> {
   // A Twitch channel page is not played as audio: clients show Twitch's player for it. One spelling, no request.
@@ -29,7 +31,7 @@ export async function resolveStreamUrl(stationUrl: string): Promise<ResolveResul
   let url = stationUrl;
   let playlist = isPlaylistUrl(url);
   for (let hop = 0; hop < MAX_HOPS; hop++) {
-    if (!playlist) return { ok: true, streamUrl: url };
+    if (!playlist) return (await checkHost(new URL(url).hostname)) === "internal" ? { ok: false, error: "forbidden_host" } : { ok: true, streamUrl: url };
     // The check here only tells "forbidden" from "unreachable" for the member; the guard is safeGet's lookup, which checks
     // the address it actually connects to (at every redirect too), so a name that resolves elsewhere a moment later
     // (DNS rebinding) reaches nothing internal (25 September 2026; before, a plain fetch resolved the name a second time).
@@ -46,5 +48,6 @@ export async function resolveStreamUrl(stationUrl: string): Promise<ResolveResul
     url = entry;
     playlist = isPlaylistUrl(url);
   }
-  return playlist ? { ok: false, error: "unreachable" } : { ok: true, streamUrl: url };
+  if (playlist) return { ok: false, error: "unreachable" };
+  return (await checkHost(new URL(url).hostname)) === "internal" ? { ok: false, error: "forbidden_host" } : { ok: true, streamUrl: url };
 }

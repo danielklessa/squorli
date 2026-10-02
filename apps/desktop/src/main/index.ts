@@ -25,6 +25,7 @@ import { registerAppScheme, serveApp } from "./scheme";
 import { PlayerAudioOutput } from "./playerAudio";
 import { readPlayerOutputLabel } from "./playerAudioScript";
 import { applyPermissions, focusPopout, letPlayersEmbed, lockDownContents, openExternal } from "./security";
+import { isClientPage } from "./navigation";
 import { createSplash, type Splash } from "./splash";
 import { createQuitHandoff } from "./quitHandoff";
 import { createTray, setTrayAttention, setTrayLanguage } from "./tray";
@@ -185,7 +186,7 @@ function controlKey(): string {
 const isClientFrame = (event: IpcMainEvent | IpcMainInvokeEvent): boolean => {
   const frame = event.senderFrame;
   if (!frame || frame.parent !== null) return false;
-  try { return origins.includes(originOf(frame.url)); } catch { return false; }
+  try { return isClientPage(frame.url, origins); } catch { return false; }
 };
 
 function createWindow(splash: Splash | null = null): BrowserWindow {

@@ -1,0 +1,31 @@
+# Updates of the dependencies (security audit of 2 October 2026, S15). Weekly, grouped so that one week is a few pull
+# requests and not thirty; security updates come on their own as soon as an advisory exists (GitHub's default), whatever
+# the schedule says. The pnpm lock file is read through the "npm" ecosystem. Nothing merges by itself: CI (typecheck, tests,
+# build) runs on every pull request, and a major version of a package the server's behaviour depends on (fastify,
+# @fastify/static, drizzle-orm, electron, livekit) is looked at by hand (docs/DEVELOPMENT.md, "Dependencies").
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3

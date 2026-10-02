@@ -120,6 +120,33 @@ const Env = z.object({
 /** `publicOrigin`: where the outside reaches this server (absolute links in the status API): https://PUBLIC_DOMAIN, in dev http://localhost:PORT. */
 export type Config = z.infer<typeof Env> & { trustedProxies: string[]; livekitPublicUrl: string; directoryProofUrl: string; publicOrigin: string };
 
+/**
+ * Secrets that stand in a template of this repository (`.env.example`, `.env.development`, the Windows template): they are
+ * public, so whoever knows them can mint LiveKit tokens for any room and listen to every voice channel (security audit,
+ * 2 October 2026, S7). The installers replace them by a random value; an installation by hand that copied the template
+ * and never changed the line would run with them.
+ */
+const PLACEHOLDER_SECRET = /change-?me|^secret-secret-secret|^devsecret|^your-/i;
+
+/** What stops a production start: a LiveKit secret that is a template's placeholder. Empty outside production. */
+export function placeholderSecretProblems(c: { NODE_ENV: string; LIVEKIT_API_SECRET: string }): string[] {
+  if (c.NODE_ENV !== "production") return [];
+  return PLACEHOLDER_SECRET.test(c.LIVEKIT_API_SECRET)
+    ? ["LIVEKIT_API_SECRET ist der Platzhalter aus der Vorlage (.env.example) und damit oeffentlich bekannt: jeder koennte Tokens fuer jeden Raum ausstellen und alle Sprachkanaele mithoeren. Setze einen zufaelligen Wert (z. B. `openssl rand -hex 32`) in der .env und starte neu; derselbe Wert gehoert in die LiveKit-Konfiguration (LIVEKIT_KEYS)."]
+    : [];
+}
+
+/** What only deserves a line in the log: weak but not public (a shorter secret, the database's template password). */
+export function configWarnings(c: { NODE_ENV: string; LIVEKIT_API_SECRET: string; DATABASE_URL: string }): string[] {
+  if (c.NODE_ENV !== "production") return [];
+  const out: string[] = [];
+  if (c.LIVEKIT_API_SECRET.length < 32) out.push("LIVEKIT_API_SECRET hat weniger als 32 Zeichen: in Produktion sollten es mindestens 32 zufaellige sein (`openssl rand -hex 32`).");
+  let dbPassword = "";
+  try { dbPassword = decodeURIComponent(new URL(c.DATABASE_URL).password); } catch { /* the schema checked the address already */ }
+  if (PLACEHOLDER_SECRET.test(dbPassword)) out.push("Das Passwort der Datenbank (DATABASE_URL) ist der Platzhalter aus der Vorlage: setze ein zufaelliges Passwort (POSTGRES_PASSWORD in der .env und in der Datenbank).");
+  return out;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ""));
   const parsed = Env.safeParse(cleaned);
@@ -128,6 +155,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Ungueltige Konfiguration:\n${issues}`);
   }
   const c = parsed.data;
+  const problems = placeholderSecretProblems(c);
+  if (problems.length) throw new Error(`Unsichere Konfiguration:\n${problems.map((p) => `  ${p}`).join("\n")}`);
   const publicOrigin = c.PUBLIC_DOMAIN === "localhost" ? `http://localhost:${c.PORT}` : `https://${c.PUBLIC_DOMAIN}`;
   return {
     ...c,

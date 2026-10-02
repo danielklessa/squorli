@@ -19,15 +19,15 @@
     "smoke:devices": "node scripts/smoke-devices.mjs"
   },
   "dependencies": {
-    "@squorli/link-preview": "workspace:*",
-    "@squorli/protocol": "workspace:*",
     "@fastify/cors": "^10.0.0",
     "@fastify/multipart": "^9.4.0",
-    "@fastify/static": "^8.0.0",
+    "@fastify/static": "^10.1.5",
     "@fastify/websocket": "^11.0.0",
     "@noble/ed25519": "^2.1.0",
-    "drizzle-orm": "^0.36.0",
-    "fastify": "^5.0.0",
+    "@squorli/link-preview": "workspace:*",
+    "@squorli/protocol": "workspace:*",
+    "drizzle-orm": "^0.45.3",
+    "fastify": "^5.12.5",
     "livekit-server-sdk": "^2.7.0",
     "postgres": "^3.4.4",
     "zod": "^3.23.8"

@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import type { WebSocket } from "ws";
 import { registerAuthRoutes } from "./auth/routes";
 import { bootstrap } from "./bootstrap";
-import { loadConfig } from "./config";
+import { loadConfig, configWarnings } from "./config";
 import { webAppManifest } from "./webManifest";
 import { createDb, runMigrations } from "./db";
 import { attachments, channels } from "./db/schema";
@@ -59,6 +59,7 @@ import { VoicePresence } from "./voice/presence";
 import { registerWs, WS_MAX_PAYLOAD } from "./ws/handler";
 import { registerRateLimits } from "./rateLimits";
 import { PAGE_HEADERS } from "./webHeaders";
+import { registerHardening } from "./httpHardening";
 import { logOptions } from "./logRedact";
 import { loadLinkSecret } from "./attachmentLinks";
 import { installShutdown } from "./shutdown";
@@ -83,6 +84,7 @@ function loadDotEnv() {
 async function main() {
   loadDotEnv();
   const config = loadConfig();
+  for (const w of configWarnings(config)) console.warn(`WARNUNG: ${w}`);
 
   const app = Fastify({
     // No line per request and no addresses unless LOG_REQUESTS; query secrets never reach the log (logRedact.ts).
@@ -112,6 +114,8 @@ async function main() {
   // server rail). Auth runs exclusively through the bearer token in the header (no cookies), and the login signature stays bound to
   // PUBLIC_DOMAIN; so a foreign origin cannot do anything on the user's behalf without holding their token.
   await app.register(cors, { origin: true });
+  // HSTS over https, nosniff, and a server error that says nothing of itself (httpHardening.ts).
+  registerHardening(app, config.PUBLIC_DOMAIN);
   // While the server closes, the members' connections end one after the other. What reacts to that in the background
   // (member list, AFK move, radio) would ask a database that is closing and log a warning per member. Registered before
   // the WebSocket plugin, whose own hook is the one that ends the connections.
@@ -181,6 +185,13 @@ async function main() {
   if (config.REQUIRE_ACCOUNT !== undefined) app.log.warn("REQUIRE_ACCOUNT ist veraltet und wirkungslos: jede Anmeldung braucht seit den Serverkonten ein Konto (Verzeichnis-Handle oder ~Serverkonto)");
   if (config.LOCAL_ACCOUNTS === false && !config.DIRECTORY_URL) app.log.warn("LOCAL_ACCOUNTS=false ohne DIRECTORY_URL wirkungslos: ohne Verzeichnis sind Serverkonten der einzige Weg hinein");
   await bootstrap(db, config, app.log);
+  // No owner yet and nothing names one: whoever signs in first with an account becomes the owner (security audit, 2 October 2026,
+  // S8). The installer's default is a setup code; this is the way of an installation that chose "whoever signs in first" or
+  // that was set up by hand. Said at every start until the owner exists, so the operator signs in before anybody else does.
+  const ownerState = await loadSettings(db);
+  if (ownerState.ownerId === null && config.OWNER_PUBLIC_KEY === undefined && config.OWNER_SETUP_CODE === undefined) {
+    app.log.warn("Noch kein Besitzer, und weder OWNER_PUBLIC_KEY noch OWNER_SETUP_CODE sind gesetzt: wer sich als Erster mit einem Konto anmeldet, wird Besitzer. Melde dich jetzt selbst an, oder setze OWNER_SETUP_CODE (z. B. `openssl rand -hex 12`) und starte neu.");
+  }
   await loadLinkSecret(db);
   directory = new DirectoryClient(db, config, app.log);
   await directory.init();
@@ -312,11 +323,12 @@ async function main() {
       cacheControl: false, // we set cache-control ourselves (see setHeaders)
       // Hashed assets may be cached for a long time, the pages (index.html, player-window.html) never: otherwise, after a
       // deploy, a browser would point at asset names that no longer exist.
-      setHeaders: (res, path) => {
+      // (@fastify/static 10 hands this callback the Fastify reply; until 2 October 2026, version 8, the raw response.)
+      setHeaders: (reply, path) => {
         const page = path.endsWith(".html");
-        res.setHeader("cache-control", page ? "no-cache" : "public, max-age=31536000, immutable");
-        if (page) for (const [k, v] of Object.entries(PAGE_HEADERS)) res.setHeader(k, v);
-        else res.setHeader("x-content-type-options", "nosniff");
+        reply.header("cache-control", page ? "no-cache" : "public, max-age=31536000, immutable");
+        if (page) for (const [k, v] of Object.entries(PAGE_HEADERS)) reply.header(k, v);
+        else reply.header("x-content-type-options", "nosniff");
       },
     });
     app.setNotFoundHandler((req, reply) => {

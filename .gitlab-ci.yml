@@ -40,6 +40,20 @@ test:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
+# Known vulnerabilities in the production dependencies (security audit of 2 October 2026, S15). Shown, never blocking: a new
+# advisory must not stop a release; read the log and update the package (docs/DEVELOPMENT.md, "Dependencies").
+audit:
+  stage: test
+  image: node:24-alpine
+  allow_failure: true
+  before_script:
+    - corepack enable
+  script:
+    - pnpm audit --prod --audit-level=moderate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
 build:
   stage: build
   image: docker:29

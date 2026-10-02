@@ -14,7 +14,7 @@ import * as api from "./api";
 import type { AvatarImage } from "./avatarImage";
 import { DirectoryLink, type LinkStatus } from "./directoryLink";
 import { dmReportContent } from "./dmReports";
-import { IDENTITY_STORAGE_KEY, deviceSignerOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
+import { IDENTITY_STORAGE_KEY, readSecret, writeSecret, deviceSignerOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
 import { ServerConnection, type ServerConnState } from "./serverConnection";
 import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSettings } from "./accountSettings";
 import { loadBlockedLists, sameBlocked, saveBlockedLists, saveBlockedName, withBlocked, type BlockedLists } from "./blocked";
@@ -689,13 +689,13 @@ export class Store {
   // ---------- Sessions per server in localStorage
   private readSessions(): StoredSessions | null {
     try {
-      const raw = localStorage.getItem(SESSIONS_KEY);
+      const raw = readSecret(SESSIONS_KEY);
       if (raw) return JSON.parse(raw) as StoredSessions;
       const v1 = localStorage.getItem(SESSION_KEY_V1);
       if (v1) {
         const s = JSON.parse(v1) as { token: string; publicKey: string };
         const migrated: StoredSessions = { publicKey: s.publicKey, tokens: this.homeHost !== null ? { [this.homeHost]: s.token } : {} };
-        localStorage.setItem(SESSIONS_KEY, JSON.stringify(migrated));
+        writeSecret(SESSIONS_KEY, JSON.stringify(migrated));
         localStorage.removeItem(SESSION_KEY_V1);
         return migrated;
       }
@@ -717,10 +717,10 @@ export class Store {
       const prev = this.readSessions();
       const tokens = prev && prev.publicKey === pk ? { ...prev.tokens } : {};
       if (token) tokens[host] = token; else delete tokens[host];
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify({ publicKey: pk, tokens } satisfies StoredSessions));
+      writeSecret(SESSIONS_KEY, JSON.stringify({ publicKey: pk, tokens } satisfies StoredSessions));
     } catch { /* never mind */ }
   }
-  private forgetAllTokens() { try { localStorage.removeItem(SESSIONS_KEY); localStorage.removeItem(SESSION_KEY_V1); } catch { /* never mind */ } }
+  private forgetAllTokens() { try { writeSecret(SESSIONS_KEY, null); localStorage.removeItem(SESSION_KEY_V1); } catch { /* never mind */ } }
 
   // ---------- Server rail: switching servers and opening foreign servers
   /** Map a host from the directory (PUBLIC_DOMAIN) onto the key in `servers`: your own server is called `homeHost` here. */

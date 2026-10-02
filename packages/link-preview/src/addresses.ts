@@ -7,10 +7,14 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
  * in a message) must never be made to ask the machine itself or its private network.
  */
 const internal = new BlockList();
-for (const [net, bits] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16], ["224.0.0.0", 3]] as const) internal.addSubnet(net, bits, "ipv4");
+// Since 2 October 2026 (security audit S14) also the IETF protocol range 192.0.0.0/24, the benchmark range 198.18.0.0/15 and the
+// documentation ranges (never a real host, and some networks route them inward).
+for (const [net, bits] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 3]] as const) internal.addSubnet(net, bits, "ipv4");
 // No rule for ::ffff:0:0/96: Node's BlockList compares IPv4 and IPv4-mapped IPv6 addresses with each other, so such a rule
 // would block every IPv4 address, and the IPv4 rules above already cover the mapped spelling (pinned by the test).
-for (const [net, bits] of [["::", 127], ["64:ff9b::", 96], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]] as const) internal.addSubnet(net, bits, "ipv6");
+// `::/96` covers the loopback, the unspecified address and the deprecated IPv4-compatible spelling (`::10.0.0.1`); 6to4 (2002::/16),
+// Teredo (2001::/32) and the local-use NAT64 prefix carry an IPv4 address inside, which a gateway may turn into an internal one.
+for (const [net, bits] of [["::", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["2001::", 32], ["2001:db8::", 32], ["2002::", 16], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8]] as const) internal.addSubnet(net, bits, "ipv6");
 
 export function isInternalAddress(address: string): boolean {
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);

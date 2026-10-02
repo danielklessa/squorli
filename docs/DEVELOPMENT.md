@@ -102,6 +102,10 @@ challenge, signature, replay protection, profile, LiveKit token, WebSocket hands
 
 `.github/workflows/ci.yml` (GitHub) and `.gitlab-ci.yml` (GitLab) run `pnpm typecheck`, `pnpm test` and `pnpm build` on every push and pull/merge request. On the default branch and on git tags they additionally build the production image (Dockerfile target `app`) and push it to the registry: `ghcr.io/danielklessa/squorli-server` on GitHub, the project registry on GitLab. Keep both pipelines in step.
 
+## Dependencies
+
+`pnpm audit --prod` lists known vulnerabilities in what the server and the client ship; both CIs run it as a job that is shown and never blocking (`audit`), and `.github/dependabot.yml` opens weekly, grouped pull requests (security updates at once). Read a red `audit` job and update the package named in it. **Majors of the packages the server's behaviour hangs on are updated by hand and checked with `pnpm smoke` against a fresh scratch database** (migrations run through drizzle's migrator): fastify, `@fastify/static` (its `setHeaders` callback got the Fastify reply instead of the raw response in version 10), drizzle-orm, livekit-server-sdk, electron. A vulnerable package that only a dependency of a dependency asks for is patched with an entry under `overrides:` in `pnpm-workspace.yaml` inside its major version (the file says why; remove the entry when the parent asks for the fixed version itself).
+
 ## Website and shared brand
 
 The sibling `../squorli-website` project provides the German/English public website for https://squorli.com and German/English installation documentation. The guide source is `../squorli-website/src/pages/[lang]/docs/install.astro`; the planned public path is `/en/docs/install/`.

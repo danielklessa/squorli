@@ -18,6 +18,10 @@ services:
   server:
     image: ${APP_IMAGE:-ghcr.io/danielklessa/squorli-server:latest}
     restart: unless-stopped
+    # No privileges beyond a plain process (security audit, 2 October 2026): the service binds a high port and writes only to its
+    # own volume or mapped folder, so it needs no capability and no setuid; a hole in it gets less to work with.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     logging: *logging
     environment:
       NODE_ENV: production

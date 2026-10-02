@@ -184,7 +184,7 @@ token = savedToken;
 // ---------- Server accounts: this server decides.
 const authKeyOf = (key, salt = "") => createHash("sha256").update(`auth:${salt}${key.publicKey}`).digest("hex");
 // Bound to the server's host, as every client makes a server account's backup (the server only passes the mark on).
-const backupOf = (key) => ({ ciphertext: Buffer.from(key.priv).toString("base64"), params: { kdf: "pbkdf2-sha256", iterations: 100_000, salt: "00".repeat(16), iv: "00".repeat(12), bound: true }, authKey: authKeyOf(key) });
+const backupOf = (key) => ({ ciphertext: Buffer.from(key.priv).toString("base64"), params: { kdf: "pbkdf2-sha256", iterations: 600_000, salt: "00".repeat(16), iv: "00".repeat(12), bound: true }, authKey: authKeyOf(key) });
 const local = await newKey();
 const handle = `g${stamp}`;
 const l1 = await newKey(); const l2 = await newKey();

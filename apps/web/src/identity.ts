@@ -27,7 +27,7 @@ export function setSecretStore(store: SecretStore | null) { secretStore = store;
  * Read a secret. With a secret store, a value still in localStorage (an app from before, or the browser storage of this
  * origin) is moved over: written there, read back, and only then removed from localStorage.
  */
-function readSecret(key: string): string | null {
+export function readSecret(key: string): string | null {
   if (!secretStore) return localStorage.getItem(key);
   const stored = secretStore.get(key);
   if (stored !== null) return stored;
@@ -35,7 +35,7 @@ function readSecret(key: string): string | null {
   if (legacy !== null && secretStore.set(key, legacy) && secretStore.get(key) === legacy) localStorage.removeItem(key);
   return legacy;
 }
-function writeSecret(key: string, value: string | null) {
+export function writeSecret(key: string, value: string | null) {
   if (secretStore && secretStore.set(key, value)) { localStorage.removeItem(key); return; }
   if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
 }
