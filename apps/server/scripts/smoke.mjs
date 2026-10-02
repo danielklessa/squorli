@@ -17,7 +17,7 @@ const OWNER_FILE = join(dirname(fileURLToPath(import.meta.url)), ".smoke-owner.j
 const hex = (b) => Buffer.from(b).toString("hex");
 let failures = 0;
 const check = (label, ok, detail = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${label}${detail ? " " + detail : ""}`); if (!ok) failures++; };
-const P = { ADMINISTRATOR: 1, MANAGE_CHANNELS: 4, KICK_MEMBERS: 16, VIEW_CHANNELS: 128, SEND_MESSAGES: 256, MANAGE_MESSAGES: 512, CONNECT_VOICE: 1024, ATTACH_FILES: 2048, STREAM_VIDEO: 4096, MODERATE_VOICE: 8192, VIEW_VIDEO: 16384, CONTROL_RADIO: 32768, MOVE_MEMBERS: 65536, BYPASS_STICKY: 131072, MANAGE_REPORTS: 262144 };
+const P = { ADMINISTRATOR: 1, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK_MEMBERS: 16, BAN_MEMBERS: 32, VIEW_CHANNELS: 128, SEND_MESSAGES: 256, MANAGE_MESSAGES: 512, CONNECT_VOICE: 1024, ATTACH_FILES: 2048, STREAM_VIDEO: 4096, MODERATE_VOICE: 8192, VIEW_VIDEO: 16384, CONTROL_RADIO: 32768, MOVE_MEMBERS: 65536, BYPASS_STICKY: 131072, MANAGE_REPORTS: 262144 };
 
 async function api(method, path, body, token, raw = false, extraHeaders = {}) {
   const headers = { ...extraHeaders };
@@ -515,6 +515,22 @@ await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, mo
 const [so3] = await api("PUT", `/api/members/${B.userId}/owner`, { owner: false }, owner.token);
 const [, stOwn2] = await api("GET", "/api/state", undefined, B.token);
 check("revoke owner -> back to role permissions", so3 === 200 && stOwn2.members.find((m) => m.userId === B.userId)?.isOwner === false && (stOwn2.myPermissions & P.ADMINISTRATOR) === 0 && stOwn2.members.find((m) => m.userId === owner.userId)?.isOwner === true);
+// Assigning a role needs its permissions too, as editing one does (security audit, 2 October 2026): by position alone a helper
+// with MANAGE_ROLES gave themselves any role below their own.
+{
+  const [, helper] = await api("POST", "/api/roles", { name: "Smoke-Helper", permissions: P.MANAGE_ROLES | P.KICK_MEMBERS }, owner.token);
+  await api("PATCH", `/api/roles/${helper.id}`, { position: 50 }, owner.token);
+  const [, banner] = await api("POST", "/api/roles", { name: "Smoke-Banner", permissions: P.BAN_MEMBERS }, owner.token);
+  const [, kicker] = await api("POST", "/api/roles", { name: "Smoke-Kicker", permissions: P.KICK_MEMBERS }, owner.token);
+  await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id] }, owner.token);
+  const [sg1, rg1] = await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id, banner.id] }, B.token);
+  const [sg2] = await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id, kicker.id] }, B.token);
+  const [, stG] = await api("GET", "/api/state", undefined, B.token);
+  check("roles: a helper cannot give themselves a role with permissions they lack, one with their own they can", sg1 === 403 && rg1.error === "cannot_grant" && sg2 === 200
+    && (stG.myPermissions & P.BAN_MEMBERS) === 0 && stG.members.find((m) => m.userId === B.userId)?.roleIds.includes(kicker.id), `${sg1} ${rg1.error ?? ""} ${sg2}`);
+  await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id] }, owner.token);
+  for (const r of [helper, banner, kicker]) await api("DELETE", `/api/roles/${r.id}`, undefined, owner.token);
+}
   // ---------- Reports and the moderation log (docs/features/reports.md)
   {
     const textCh = ownerState.channels.find((c) => c.kind === "text");
@@ -566,6 +582,15 @@ check("revoke owner -> back to role permissions", so3 === 200 && stOwn2.members.
     const [c3S, c3R] = await api("POST", `/api/reports/${rep3.id}/close`, { action: "deleteRecent", hours: 1 }, owner.token);
     const bulk = await bulkP;
     check("reports: deleteRecent removes the member's recent messages with one bulk event per channel", c3S === 200 && c3R.deleted >= 2 && bulk.ids.length >= 2, `${c3S} ${c3R.deleted}`);
+    // Deleting through a report needs MANAGE_MESSAGES and, for the person's recent messages, a rank above them (security audit,
+    // 2 October 2026): B moderates reports here but ranks below the owner.
+    await api("PATCH", `/api/roles/${modRole.id}`, { permissions: P.KICK_MEMBERS | P.MANAGE_MESSAGES | P.MANAGE_REPORTS }, owner.token);
+    await api("POST", `/api/channels/${textCh.id}/messages`, { content: "vom Owner" }, owner.token);
+    const [, repO] = await api("POST", "/api/reports", { kind: "member", userId: owner.userId, reason: "other" }, B.token);
+    const [cO, cOR] = await api("POST", `/api/reports/${repO.id}/close`, { action: "deleteRecent", hours: 24 }, B.token);
+    const [cO2] = await api("POST", `/api/reports/${repO.id}/close`, { action: "dismiss" }, B.token);
+    check("reports: a moderator cannot delete the recent messages of somebody above them through a report", cO === 403 && cOR.error === "target_above_you" && cO2 === 200, `${cO} ${cOR.error ?? ""} ${cO2}`);
+    await api("PATCH", `/api/roles/${modRole.id}`, { permissions: P.KICK_MEMBERS | P.MANAGE_MESSAGES }, owner.token);
     const [lgB] = await api("GET", "/api/mod-log", undefined, B.token);
     const [lgS, lg] = await api("GET", "/api/mod-log", undefined, owner.token);
     const closedEntries = lg.entries?.filter((e) => e.action === "report_closed") ?? [];
@@ -1140,6 +1165,26 @@ if (health0.directoryUrl) {
   const Cnew = await login(keyC, invite2.code);
   check("leave: joining again afterwards creates a new user", Cnew.status === 200 && Cnew.userId !== C.userId, `${Cnew.status}`);
   await api("DELETE", `/api/members/${Cnew.userId}`, undefined, owner.token);
+  // A ban outlives the deletion (security audit, 2 October 2026): a banned account that leaves through the directory stays banned.
+  const keyF = await newKey();
+  const [, chF] = await dj("POST", "/api/challenge", { publicKey: keyF.publicKey });
+  const handleF = `smokeban_${keyF.publicKey.slice(0, 6)}`;
+  const sigF = hex(await ed.signAsync(new TextEncoder().encode(`community-directory-register
+${dh.host}
+${handleF}
+${chF.nonce}`), keyF.priv));
+  await dj("POST", "/api/register", { handle: handleF, publicKey: keyF.publicKey, challengeId: chF.challengeId, signature: sigF });
+  const [, invF] = await api("POST", "/api/invites", {}, owner.token);
+  const F = await login(keyF, invF.code);
+  await api("POST", "/api/bans", { userId: F.userId, reason: "Bann bleibt" }, owner.token);
+  const [slF, rlF] = await dsigned(keyF, "server-leave", "/api/servers/leave", host, { server: host });
+  const [, invF2] = await api("POST", "/api/invites", {}, owner.token);
+  const Fagain = await login(keyF, invF2.code);
+  const [, bansF] = await api("GET", "/api/bans", undefined, owner.token);
+  const banF = bansF.find((b) => b.reason === "Bann bleibt");
+  check("leave: a banned account deleted through the directory stays banned", slF === 200 && rlF.delivered === true && Fagain.status === 403 && Fagain.body.error === "banned" && !!banF && banF.userId !== F.userId,
+    `${slF} ${JSON.stringify(rlF)} ${Fagain.status} ${Fagain.body?.error ?? ""}`);
+  if (banF) await api("DELETE", `/api/bans/${banF.userId}`, undefined, owner.token);
 }
 
 // ---------- Channel permissions (docs/features/channel-permissions.md): overwrites, hard visibility, the write rules,

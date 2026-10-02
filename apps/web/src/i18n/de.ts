@@ -709,6 +709,8 @@ export const de = {
   "report.actionDelete": "Nachricht löschen",
   "report.actionDeleteRecent": "Nachrichten der letzten Zeit löschen",
   "report.actionDismiss": "Ohne Maßnahme schließen",
+  "report.err.forbidden": "Dafür brauchst du in diesem Kanal das Recht, Nachrichten zu verwalten.",
+  "report.err.target_above_you": "Diese Person steht über dir, ihre Nachrichten kannst du nicht löschen.",
   "report.deleteTitle": "Gemeldete Nachricht löschen?",
   "report.deleteText": "Die Nachricht verschwindet für alle; die Kopie in der Meldung bleibt bis zum Ablauf der Frist. Die Person erhält den Hinweis, dass ein Moderator ihre Nachricht entfernt hat.",
   "report.deleteRecentTitle": "Nachrichten von {name} löschen?",

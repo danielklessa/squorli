@@ -708,6 +708,8 @@ export const en: Messages = {
   "report.actionDelete": "Delete message",
   "report.actionDeleteRecent": "Delete recent messages",
   "report.actionDismiss": "Close without action",
+  "report.err.forbidden": "That needs the permission to manage messages in this channel.",
+  "report.err.target_above_you": "This person ranks above you, you cannot delete their messages.",
   "report.deleteTitle": "Delete the reported message?",
   "report.deleteText": "The message disappears for everybody; the copy in the report stays until the retention period ends. The person gets a notice that a moderator removed their message.",
   "report.deleteRecentTitle": "Delete messages by {name}?",

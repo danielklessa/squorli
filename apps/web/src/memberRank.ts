@@ -1,4 +1,4 @@
-import type { Member, Role } from "@squorli/protocol";
+import { Permission, hasPermission, type Member, type Role } from "@squorli/protocol";
 
 /**
  * The server's rank rules (`apps/server/src/authz.ts`, `actorOf` in `state.ts`) for the member menu, so that it only offers what the
@@ -37,8 +37,19 @@ export function canSetRolesOf(me: Pick<Member, "userId" | "roleIds" | "isOwner">
   return me.isOwner || topPositionOf(me, roles) > topPositionOf(target, roles);
 }
 
-/** The roles `me` may give or take: never the default role, and only roles below the own highest one (owners: all); in the owner's order. */
+/** The server-wide permissions of a member from their roles, the default role included (the server's `actorOf`). */
+export function permissionsOf(m: Pick<Member, "roleIds" | "isOwner">, roles: readonly Role[]): number {
+  if (m.isOwner) return Permission.ADMINISTRATOR;
+  return roles.filter((r) => r.isDefault || m.roleIds.includes(r.id)).reduce((mask, r) => mask | r.permissions, 0);
+}
+
+/**
+ * The roles `me` may give or take: never the default role, only roles below the own highest one (owners: all), and only roles
+ * whose permissions `me` holds (the server's `canGrant`, since 2 October 2026); in the owner's order.
+ */
 export function assignableRoles(me: Pick<Member, "roleIds" | "isOwner">, roles: readonly Role[]): Role[] {
   const top = topPositionOf(me, roles);
-  return rolesByRank(roles).filter((r) => !r.isDefault && (me.isOwner || r.position < top));
+  const mine = permissionsOf(me, roles);
+  const grantable = (r: Role) => hasPermission(mine, Permission.ADMINISTRATOR) || (r.permissions & ~mine) === 0;
+  return rolesByRank(roles).filter((r) => !r.isDefault && (me.isOwner || r.position < top) && grantable(r));
 }

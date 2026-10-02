@@ -1,6 +1,6 @@
 import { DELETE_RECENT_HOURS, Permission, hasPermission, type DeleteRecentHours, type ModLogEntry, type Report } from "@squorli/protocol";
 import { useCallback, useEffect, useState } from "react";
-import type { ServerApi } from "./api";
+import { ApiError, type ServerApi } from "./api";
 import { askConfirm, askInput, askSelect } from "./dialogs";
 import { Icon } from "./Icon";
 import { fmtDateTime, t, tOr } from "./i18n";
@@ -29,8 +29,17 @@ export function ReportsTab({ api, myPermissions, run, openCount }: { api: Server
   useEffect(() => { void api.listModLog(null).then(setLog).catch(() => setLog({ entries: [], hasMore: false })); }, [api, openCount]);
   const canKick = hasPermission(myPermissions, Permission.KICK_MEMBERS);
   const canBan = hasPermission(myPermissions, Permission.BAN_MEMBERS);
+  // Deleting through a report needs MANAGE_MESSAGES, the person's recent messages a rank above them too (the server's
+  // rule since 2 October 2026); the channel's own overwrites and the rank only the server knows, so its refusal gets a text.
+  const canDelete = hasPermission(myPermissions, Permission.MANAGE_MESSAGES);
   const close = (r: Report, action: Report["action"] & string, extra: { hours?: DeleteRecentHours; note?: string } = {}) =>
-    run(async () => { await api.closeReport(r.id, { action, ...extra }); await reload(); });
+    run(async () => {
+      try { await api.closeReport(r.id, { action, ...extra }); } catch (e) {
+        if (e instanceof ApiError && (e.code === "forbidden" || e.code === "target_above_you")) throw new Error(t(`report.err.${e.code}`));
+        throw e;
+      }
+      await reload();
+    });
   const moreLog = () => run(async () => {
     const last = log?.entries[log.entries.length - 1];
     const next = await api.listModLog(last?.at ?? null);
@@ -72,8 +81,8 @@ export function ReportsTab({ api, myPermissions, run, openCount }: { api: Server
           ) : <p className="muted small">{t("report.snapshotGone")}</p>}
           {r.status === "open" ? (
             <div className="row report-actions">
-              {r.kind === "message" && r.messageExists && <button className="danger small" onClick={() => void run(async () => { if (await askConfirm({ title: t("report.deleteTitle"), text: t("report.deleteText"), confirmLabel: t("common.delete"), danger: true })) await close(r, "delete"); })}><Icon name="trash-2" /> {t("report.actionDelete")}</button>}
-              {r.reportedUserId && <button className="secondary small" onClick={() => void run(async () => { const h = await askDeleteRecentHours(t("report.deleteRecentTitle", { name: r.reportedName })); if (h && h !== "none") await close(r, "deleteRecent", { hours: h }); })}><Icon name="trash-2" /> {t("report.actionDeleteRecent")}</button>}
+              {r.kind === "message" && r.messageExists && canDelete && <button className="danger small" onClick={() => void run(async () => { if (await askConfirm({ title: t("report.deleteTitle"), text: t("report.deleteText"), confirmLabel: t("common.delete"), danger: true })) await close(r, "delete"); })}><Icon name="trash-2" /> {t("report.actionDelete")}</button>}
+              {r.reportedUserId && canDelete && <button className="secondary small" onClick={() => void run(async () => { const h = await askDeleteRecentHours(t("report.deleteRecentTitle", { name: r.reportedName })); if (h && h !== "none") await close(r, "deleteRecent", { hours: h }); })}><Icon name="trash-2" /> {t("report.actionDeleteRecent")}</button>}
               {r.reportedUserId && canKick && <button className="secondary small" onClick={() => void run(async () => { if (await askConfirm({ title: t("members.kickTitle", { name: r.reportedName }), text: t("members.kickText"), confirmLabel: t("members.kick"), danger: true })) { await api.kickMember(r.reportedUserId!); await close(r, "kick"); } })}><Icon name="user-x" /> {t("members.kick")}</button>}
               {r.reportedUserId && canBan && <button className="danger small" onClick={() => void run(async () => {
                 const reason = await askInput({ title: t("members.banTitle", { name: r.reportedName }), text: t("members.banText"), label: t("members.reason"), placeholder: t("members.reasonPlaceholder"), optional: true, confirmLabel: t("members.ban"), danger: true });

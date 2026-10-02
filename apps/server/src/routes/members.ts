@@ -2,7 +2,7 @@ import { BanRequest, MoveMemberRequest, Permission, SetMemberRolesRequest, SetOw
 import { desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireMember } from "../auth/session";
-import { can, canSetRolesOf, canTouchRole, outranks, type Actor } from "../authz";
+import { can, canGrant, canSetRolesOf, canTouchRole, outranks, type Actor } from "../authz";
 import type { Db } from "../db";
 import { bans, categoryOverwrites, channelOverwrites, channels, localAccounts, memberRoles, members, roles, sessions, users } from "../db/schema";
 import { localJoin, nameColumns } from "../names";
@@ -27,6 +27,9 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
   }
 
   async function removeMember(userId: string, reason: "kicked" | "banned", message: string | null) {
+    // Voice is a connection of its own: without this a modified client stayed in the LiveKit room after a kick or ban, hearing
+    // and speaking (security audit, 2 October 2026, S4). Taken before the presence forgets the seat.
+    const seat = presence.channelOfUser(userId);
     await db.delete(memberRoles).where(eq(memberRoles.userId, userId));
     // Their channel overwrites too: the users row stays (a kicked member may come back), so no cascade does it.
     await db.delete(channelOverwrites).where(eq(channelOverwrites.userId, userId));
@@ -38,6 +41,7 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     await channelBlockStore.clearUser(userId);
     visibility.dropUser(userId);
     hub.disconnectUser(userId, { type: "removed", reason, message });
+    if (seat) lk.removeParticipant(seat, userId).catch(() => {});
   }
 
   // Owners (several possible): only owners may appoint or revoke; not on yourself; the first owner
@@ -79,6 +83,9 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     // Only roles below your own position may be added or removed.
     const changed = [...wanted.filter((r) => !current.includes(r.id)), ...currentRoles.filter((r) => !body.data.roleIds.includes(r.id))];
     if (changed.some((r) => r.isDefault || !canTouchRole(m.actor, r.position))) return reply.code(403).send({ error: "role_above_you" });
+    // And only roles whose permissions one holds oneself, as when editing a role (security audit, 2 October 2026, S2): by
+    // position alone a helper with MANAGE_ROLES gave themselves any role below their own, ADMINISTRATOR included.
+    if (changed.some((r) => !canGrant(m.actor, r.permissions))) return reply.code(403).send({ error: "cannot_grant" });
 
     await db.delete(memberRoles).where(eq(memberRoles.userId, target.userId));
     const toInsert = wanted.filter((r) => !r.isDefault).map((r) => ({ userId: target.userId, roleId: r.id }));

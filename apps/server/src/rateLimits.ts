@@ -105,6 +105,18 @@ export function buildRules(factor: number): Rule[] {
   ];
 }
 
+/**
+ * The path the rules compare: the pattern of the route the router matched (`/api/channels/:id/messages`), else the decoded
+ * path. Never the raw URL: the router decodes `%61` to `a` before it matches, so `/%61pi/auth/verify` reached the route
+ * while the raw path did not start with `/api/`, and no limit counted it (security audit, 2 October 2026, S1). The pattern
+ * also covers whatever else the router forgives on the way (a trailing slash, an encoded letter in the middle).
+ */
+export function limitPath(route: string | undefined, url: string): string {
+  if (route?.startsWith("/api/")) return route;
+  const raw = url.split("?", 1)[0] ?? "";
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
 /** Register the hook. Returns a counter for WebSocket events, or null when the limits are off. */
 export function registerRateLimits(app: FastifyInstance, factor: number): (() => WindowCounter) | null {
   if (!(factor > 0)) {
@@ -116,7 +128,7 @@ export function registerRateLimits(app: FastifyInstance, factor: number): (() =>
   sweeper.unref();
   app.addHook("onClose", async () => clearInterval(sweeper));
   app.addHook("onRequest", async (req, reply) => {
-    const path = req.url.split("?", 1)[0] ?? "";
+    const path = limitPath(req.routeOptions.url, req.url);
     if (!path.startsWith("/api/")) return;
     let token: string | null | undefined;
     for (const rule of rules) {

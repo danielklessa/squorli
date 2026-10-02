@@ -3,10 +3,11 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
 import { requireMember } from "../auth/session";
-import { can } from "../authz";
-import { resolveChannel } from "../channelGuard";
+import { can, outranks } from "../authz";
+import { canIn, resolveChannel } from "../channelGuard";
 import type { Db } from "../db";
 import { localAccounts, members, messages, users } from "../db/schema";
+import { actorOf } from "../state";
 import type { Hub } from "../hub";
 import { listModLog, recordModLog } from "../modLog";
 import { avatarOf, localJoin, nameColumns } from "../names";
@@ -71,6 +72,19 @@ export async function registerReportRoutes(app: FastifyInstance, db: Db, hub: Hu
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const row = await service.get(req.params.id);
     if (!row) return reply.code(404).send({ error: "not_found" });
+    // Deleting through a report needs what deleting needs anywhere else (security audit, 2 October 2026, S3): the message
+    // itself MANAGE_MESSAGES in its channel, like DELETE /api/messages/:id; the person's recent messages MANAGE_MESSAGES and a
+    // rank above them, like the ban's delete choice. MANAGE_REPORTS alone let a moderator wipe an owner's week.
+    if (body.data.action === "delete" && row.messageId && row.status === "open") {
+      const [msg] = await db.select({ channelId: messages.channelId, authorId: messages.authorId }).from(messages).where(eq(messages.id, row.messageId)).limit(1);
+      const inChannel = msg ? await resolveChannel(db, m.userId, msg.channelId) : null;
+      if (msg && msg.authorId !== m.userId && !(inChannel && canIn(inChannel.perms, Permission.MANAGE_MESSAGES))) return reply.code(403).send({ error: "forbidden" });
+    }
+    if (body.data.action === "deleteRecent" && row.reportedUserId && row.status === "open") {
+      if (!can(m.actor, Permission.MANAGE_MESSAGES)) return reply.code(403).send({ error: "forbidden" });
+      const target = await actorOf(db, row.reportedUserId);
+      if (target && !outranks(m.actor, target)) return reply.code(403).send({ error: "target_above_you" });
+    }
     const closer = { userId: m.userId, name: displayNameOf(m) };
     const r = await service.close(row, closer, body.data.action, body.data.hours, body.data.note?.trim() || null);
     if (!r.ok) return reply.code(r.error === "already_closed" ? 409 : 400).send({ error: r.error });

@@ -25,6 +25,7 @@ import { ChallengeStore, RateLimiter } from "./challenges";
 import { deviceSignatureValid, type Devices } from "../users/devices";
 import { admit, checkChallenge, checkDeviceProof, isFirstEver, originOf, ownerCodeMatches, signatureValid } from "./routes";
 import { hasAccount, requireMember, requireSession } from "./session";
+import type { LivekitAdmin } from "../livekit/admin";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const sameHash = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -40,6 +41,7 @@ const stored = (b: LocalBackup) => ({ backupParams: b.params, ciphertext: b.ciph
  */
 export async function registerLocalAccountRoutes(
   app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, challenges: ChallengeStore, devices: Devices, meter: StorageMeter,
+  lk: Pick<LivekitAdmin, "removeParticipant">,
 ) {
   // The per-address limits follow RATE_LIMIT_FACTOR like the hook's (docs/features/rate-limits.md; 0 = off), so a load or
   // smoke test that registers many accounts from one address can raise them; the per-account ones stay as they are.
@@ -292,7 +294,7 @@ export async function registerLocalAccountRoutes(
     if (!row || s.handle) { refundPassword(req.ip, account); return reply.code(409).send({ error: "use_directory" }); }
     if (!sameHash(sha256(body.data.authKey), row.authHash)) return reply.code(401).send({ error: "auth_invalid" });
     refundPassword(req.ip, account);
-    const result = await deleteUserAccount(app, db, hub, presence, s.publicKey, async () => "confirmed");
+    const result = await deleteUserAccount(app, db, hub, presence, s.publicKey, async () => "confirmed", lk);
     if (result === "founder") return reply.code(409).send({ error: "founder" });
     await rm(avatarPath(s.userId), { force: true });
     return { ok: true };

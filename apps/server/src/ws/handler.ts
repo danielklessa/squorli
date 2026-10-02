@@ -31,6 +31,8 @@ const GAME_CHANGE_MS = 5000;
  */
 /** Close code for a connection that sends more events than `LIMITS.wsEvents` allows (docs/features/rate-limits.md). */
 export const CLOSE_RATE_LIMITED = 4008;
+/** The largest frame a client may send (the `ws` library closes with 1009 above it); a hello with its token is a few hundred bytes. */
+export const WS_MAX_PAYLOAD = 64 * 1024;
 
 export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presence: VoicePresence<WebSocket>, radioMeta: RadioMetadata, lk: LivekitAdmin, wsLimit: (() => WindowCounter) | null = null, limits: { voiceSeatsMax?: number | undefined } = {}) {
   // Who sits in a voice channel goes only to those who may see the channel (docs/features/channel-permissions.md).

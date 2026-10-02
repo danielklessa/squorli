@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { buildRules, ipKey, LIMITS, registerRateLimits, WindowCounter } from "./rateLimits";
+import { buildRules, ipKey, limitPath, LIMITS, registerRateLimits, WindowCounter } from "./rateLimits";
 
 describe("WindowCounter", () => {
   it("allows the limit per window, then refuses with the seconds left", () => {
@@ -58,6 +58,20 @@ describe("hook", () => {
     expect((await send("two")).statusCode).toBe(200);
     await a.close();
   });
+  it("counts an encoded path like the route it reaches (security audit, 2 October 2026)", async () => {
+    const a = await app(1);
+    // The router decodes %61 to "a": every spelling below reaches the same two routes and shares their counters.
+    const urls = ["/api/auth/challenge", "/%61pi/auth/challenge", "/api/%61uth/challenge", "/%61%70%69/auth/challenge"];
+    const codes: number[] = [];
+    for (let i = 0; i <= LIMITS.ipAuth.limit; i++) codes.push((await a.inject({ method: "POST", url: urls[i % urls.length]! })).statusCode);
+    expect(codes.slice(0, LIMITS.ipAuth.limit).every((c) => c === 200)).toBe(true);
+    expect(codes.at(-1)).toBe(429);
+    for (const url of urls) expect((await a.inject({ method: "POST", url })).statusCode).toBe(429);
+    const send = (url: string) => a.inject({ method: "POST", url, headers: { authorization: "Bearer one" } });
+    for (let i = 0; i < LIMITS.tokenMessages.limit; i++) expect((await send(i % 2 ? "/api/channels/x/m%65ssages" : "/api/channels/x/messages")).statusCode).toBe(200);
+    expect((await send("/api/channels/x/m%65ssages")).statusCode).toBe(429);
+    await a.close();
+  });
   it("leaves paths outside /api alone and does nothing at factor 0", async () => {
     const a = await app(0);
     for (let i = 0; i <= LIMITS.ipAuth.limit; i++) expect((await a.inject({ method: "POST", url: "/api/auth/challenge" })).statusCode).toBe(200);
@@ -65,6 +79,15 @@ describe("hook", () => {
     const b = await app(1);
     expect((await b.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
     await b.close();
+  });
+});
+
+describe("limitPath", () => {
+  it("takes the route's pattern, else the decoded path", () => {
+    expect(limitPath("/api/channels/:id/messages", "/api/channels/x/m%65ssages")).toBe("/api/channels/:id/messages");
+    expect(limitPath(undefined, "/%61pi/nothing?x=1")).toBe("/api/nothing");
+    expect(limitPath("/*", "/%61pi/nothing")).toBe("/api/nothing");
+    expect(limitPath(undefined, "/api/%E0%A4%A")).toBe("/api/%E0%A4%A");
   });
 });
 

@@ -56,7 +56,7 @@ import { visibility } from "./visibility";
 import { AfkMover } from "./voice/afk";
 import { moveGrants } from "./voice/confine";
 import { VoicePresence } from "./voice/presence";
-import { registerWs } from "./ws/handler";
+import { registerWs, WS_MAX_PAYLOAD } from "./ws/handler";
 import { registerRateLimits } from "./rateLimits";
 import { PAGE_HEADERS } from "./webHeaders";
 import { logOptions } from "./logRedact";
@@ -117,7 +117,9 @@ async function main() {
   // the WebSocket plugin, whose own hook is the one that ends the connections.
   let closing = false;
   app.addHook("preClose", async () => { closing = true; });
-  await app.register(websocket);
+  // No message from a client is anywhere near 64 KiB; the library's default (100 MiB) let a socket without a session make the
+  // server parse huge frames before any hello (security audit, 2 October 2026, S6).
+  await app.register(websocket, { options: { maxPayload: WS_MAX_PAYLOAD } });
   // Before every route: a refused request costs no database work (docs/features/rate-limits.md).
   const wsLimit = registerRateLimits(app, config.RATE_LIMIT_FACTOR);
 
@@ -258,7 +260,7 @@ async function main() {
 
   // Uploads (attachments, server icon): one file per request, size per MAX_UPLOAD_MB.
   await app.register(multipart, { limits: { fileSize: Math.round(config.MAX_UPLOAD_MB * 1024 * 1024), files: 1 } });
-  await registerAuthRoutes(app, db, config, hub, directory, presence, devices, meter);
+  await registerAuthRoutes(app, db, config, hub, directory, presence, devices, meter, lk);
   await registerUserRoutes(app, db, directory, hub, presence);
   await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta }, suspensions, meter);
   await registerLimitsRoutes(app, db, config, meter, presence, lk);
@@ -373,7 +375,7 @@ async function main() {
     // Register, then reconcile all users' names every 5 minutes (changes on the account page arrive without a reload this way).
     // Account deletion requested through the directory: founder check, confirm there (token), then delete locally.
     leaveHandler = async (publicKey) => {
-      const r = await deleteUserAccount(app, db, hub, presence, publicKey, () => directory!.confirmLeave(publicKey));
+      const r = await deleteUserAccount(app, db, hub, presence, publicKey, () => directory!.confirmLeave(publicKey), lk);
       // "founder" is decided before the directory is asked (so the request stays pending for the user to see). To a push
       // anyone can send it would tell which key founded the server: only when the user's request is really pending
       // (security review, 25 September 2026).

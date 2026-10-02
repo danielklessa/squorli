@@ -1,6 +1,6 @@
-import type { Role } from "@squorli/protocol";
+import { Permission, type Role } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
-import { assignableRoles, canSetRolesOf, rolesByRank, topPositionOf } from "./memberRank";
+import { assignableRoles, canSetRolesOf, permissionsOf, rolesByRank, topPositionOf } from "./memberRank";
 
 const role = (id: string, position: number, isDefault = false): Role => ({ id, name: id, color: null, permissions: 0, position, isDefault });
 const roles = [role("guest", 0, true), role("member", 1), role("mod", 5), role("admin", 9)];
@@ -32,6 +32,20 @@ describe("member rank", () => {
     expect(assignableRoles(admin, roles).map((r) => r.id)).toEqual(["mod", "member"]);
     expect(assignableRoles(founder, [...roles].reverse()).map((r) => r.id)).toEqual(["admin", "mod", "member"]);
     expect(assignableRoles(guest, roles)).toEqual([]);
+  });
+  it("offers only roles whose permissions one holds oneself (security audit, 2 October 2026)", () => {
+    const P = Permission;
+    const r2 = [
+      { ...role("guest", 0, true), permissions: P.VIEW_CHANNELS },
+      { ...role("helper", 6), permissions: P.MANAGE_ROLES | P.KICK_MEMBERS },
+      { ...role("mod", 3), permissions: P.KICK_MEMBERS | P.BAN_MEMBERS },
+      { ...role("boss", 2), permissions: P.ADMINISTRATOR },
+      { ...role("kicker", 1), permissions: P.KICK_MEMBERS },
+      { ...role("admin", 9), permissions: P.ADMINISTRATOR },
+    ];
+    expect(assignableRoles(m("h", ["helper"]), r2).map((r) => r.id)).toEqual(["kicker"]);
+    expect(assignableRoles(m("a", ["admin"]), r2).map((r) => r.id)).toEqual(["helper", "mod", "boss", "kicker"]);
+    expect(permissionsOf(m("h", ["helper"]), r2)).toBe(P.VIEW_CHANNELS | P.MANAGE_ROLES | P.KICK_MEMBERS);
   });
   it("lists roles in the owner's order whatever order they arrive in", () => {
     expect(rolesByRank([roles[2]!, roles[0]!, roles[3]!, roles[1]!]).map((r) => r.id)).toEqual(["admin", "mod", "member", "guest"]);

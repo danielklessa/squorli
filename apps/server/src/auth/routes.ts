@@ -16,6 +16,7 @@ import type { VoicePresence } from "../voice/presence";
 import { ChallengeStore } from "./challenges";
 import { tokenHash } from "./session";
 import { registerLocalAccountRoutes } from "./local";
+import type { LivekitAdmin } from "../livekit/admin";
 
 const hexToBytes = (h: string) => Uint8Array.from(Buffer.from(h, "hex"));
 
@@ -125,7 +126,7 @@ export async function admit(
   return { sessionToken: token, userId: user.id, expiresAt: expiresAt.toISOString(), registrationRequired };
 }
 
-export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, devices: Devices, meter: StorageMeter) {
+export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, devices: Devices, meter: StorageMeter, lk: Pick<LivekitAdmin, "removeParticipant">) {
   const challenges = new ChallengeStore();
   const sweeper = setInterval(() => challenges.sweep(), 30_000);
   app.addHook("onClose", async () => clearInterval(sweeper));
@@ -197,7 +198,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
     return res ?? undefined;
   });
 
-  await registerLocalAccountRoutes(app, db, config, hub, directory, presence, challenges, devices, meter);
+  await registerLocalAccountRoutes(app, db, config, hub, directory, presence, challenges, devices, meter, lk);
 }
 
 /** Check and consume an invite (atomically). true = valid and counted. */
