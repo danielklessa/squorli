@@ -17,14 +17,14 @@ Screen share with audio is part of the product, but the browsers impose limits n
 | Firefox | yes | no, rated low priority by Mozilla | confirmed |
 | Safari | yes | no to my knowledge | **verify** |
 | Desktop app, Windows | yes | yes: one window's audio, or the system's audio without the app, through a native helper (WASAPI process loopback, Windows 10 2004+); Chromium's loopback only as the fallback | signal measured in the app (18 September 2026, `docs/features/desktop.md`); a listener's side not yet checked |
-| Desktop app, macOS | yes | system audio needs an additional path (ScreenCaptureKit or virtual audio device) | **verify**, considerable effort possible |
+| Desktop app, macOS | yes | system audio needs an additional path (ScreenCaptureKit or virtual audio device) | **documented limitation** (the user, 3 October 2026): a macOS app, when it comes, shares video without audio and says so |
 | Desktop app, Linux | yes | conceivable via PipeWire/PulseAudio monitor, Wayland complicates video capture | **verify**, can be documented as a limitation |
 
 What follows from it:
 
 1. **Officially supported:** screen share with audio in Chromium browsers and in the desktop app on Windows. Everything else shares video without audio, with a clear notice in the UI (the stage's notice, `apps/web/src/voice/AGENTS.md`), never silently.
 2. **The share's audio is a separate audio track,** not mixed into the microphone: listeners control it separately (own volume, own output device) and the presenter does not hear themselves twice. That LiveKit handles several audio tracks per participant cleanly was an assumption of the plan ("to my knowledge yes"); a listener's side is part of the open rows.
-3. **macOS system audio in the desktop app** is the most expensive row. If verifying it turns out costly, it becomes a documented limitation instead of blocking a release (open decision in `docs/PLAN.md`).
+3. **macOS system audio in the desktop app** is the most expensive row. The user decided on 3 October 2026 that it is a documented limitation, not a requirement; nothing blocks a macOS build on it.
 4. Status of 15 September 2026: the picture of a screen share was tested end to end; the per-browser audio rows were not filled in.
 
 **The share dialog opens at once, the thumbnails load afterwards (28 September 2026, user's wish):** "Ändere den Screen Share Dialog bitte so, dass er auf geht und dann die Screenshots geladen werden um die lange Wartezeit auf die Auswahl zu vermeiden".

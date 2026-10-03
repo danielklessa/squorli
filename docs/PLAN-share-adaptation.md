@@ -77,8 +77,8 @@ A codec change means a republish and a visible interruption for all viewers, so 
 
 ## 4. Open decisions for the user
 
-1. Stage 3 (a) simulcast or (b) quality reports, or (a) first and (b) only if needed (asked on 25 September 2026, skipped by the user).
-2. Whether the governor may lower the picture below what the user picked in the dialog without asking (my proposal: yes, with the line in the tile and a way to pin; asked on 25 September 2026, skipped).
+1. ~~Stage 3 (a) simulcast or (b) quality reports, or (a) first and (b) only if needed~~ **decided by the user on 3 October 2026: (a) first, (b) only if the measurements ask for it** (skipped on 25 September 2026).
+2. ~~Whether the governor may lower the picture below what the user picked in the dialog without asking~~ **decided by the user on 3 October 2026: yes, with the line in the tile and a way to pin** (skipped on 25 September 2026).
 3. ~~Whether the standing VP8 share is ever governed~~ **decided by the user on 25 September 2026: no.**
 4. The ladder's rungs and times (section 3, stage 2) once stage 1 has real numbers.
 

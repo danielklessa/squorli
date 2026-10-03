@@ -39,7 +39,7 @@ Part of the project description (root `AGENTS.md` section 0). Read before changi
 - Einstellungen > Konto of a server account: password change and deletion (`LocalAccountSettings`); Profil: the avatar editor uploads to the server. Rail menu of such a server: "Vom Serverkonto abmelden" (forgets the key), "Konto auf diesem Server löschen" opens the settings (the password is needed). The desktop app with server accounts only offers "Mit Squorli-Konto anmelden" in Einstellungen > Konto (`Store.openAccountLogin`, the servers stay); its full sign-out forgets the server accounts' keys too.
 - Friends and direct messages: not offered to a member with a server account (they have no directory account; the member menu says "Serverkonto"), and not on a server shown with one's own server account.
 
-### My decisions (not confirmed by the user)
+### My decisions (confirmed by the user on 3 October 2026, except the rejected one below)
 
 - A server account gets a **fresh key per server**; it never reuses the directory key (the isolated server does not learn it, and the accounts of different servers cannot be linked by their key). Consequence: `OWNER_PUBLIC_KEY` can only name a directory account's key.
   - **Rejected:** 25 September 2026, user: the owner must also be nameable as a server account (~name). Built on 27 September 2026 as a setup code (`OWNER_SETUP_CODE`, section below).
@@ -103,7 +103,7 @@ From `docs/PLAN.md` 3.3 (user's decision of 25 September 2026: allow `~name` for
 - Both links go through `safeHref`; the browser opens them in a new tab, the desktop app in the system's browser (`platform.links.openExternal`, like the other links of the login). The sentence stands above the form's button. Texts: `login.privacyServer`, `login.privacyDirectory`, `login.privacyPolicy` (the sentences hold `{link}` where the link goes), `admin.privacyPolicyUrl`, `admin.privacyPolicyUrlHint`, `admin.privacyPolicyUrlInvalid`.
 - No `PROTOCOL_VERSION` bump: the settings field is optional (a server from before it does not send it, and the admin area then hides the field), the health field is read as missing = none. The README's paragraph on accounts names the setting in one sentence; `squorli doctor` does not check it.
 
-**Decisions made by Claude, not confirmed by the user:**
+**Decisions made by Claude, confirmed by the user on 3 October 2026:**
 - The field name `privacyPolicyUrl`, the limit of 500 characters, and refusing addresses with a user name or password in them.
 - The client also drops a value from `/api/health` that is not such an https address (a server from before the check, or one that sends anything else), instead of only relying on `safeHref` (which would let `http:` through).
 - The field sits in Verwaltung > Server for every server, also where server accounts are off: the owner's registration with the setup code and a later switch would otherwise show nothing.

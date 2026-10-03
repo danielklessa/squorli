@@ -134,7 +134,7 @@ The account's status carries the notices about measures (decision 11: fixed word
 - The date of a suspension goes to every registered chat server that asks about a key, as the names do.
 - Confirmed the same night ("Ich bestätige die Liste"): the client starts on a refused server only when the account has no other; the menu of a refused entry offers neither the report nor the account's deletion; the directory's account page does not show refused servers.
 
-### Decisions made by Claude, not confirmed by the user
+### Decisions made by Claude, confirmed by the user on 3 October 2026
 
 - Every request with a session is refused, not only the sign-in and the socket.
 - The notice appears by itself as a modal; notices that were read are only on the directory's account page.

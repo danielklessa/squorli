@@ -21,7 +21,7 @@ Code: `deploy/install.sh` (the question in `configure`, `NODE_DYN`, `write_env`,
 - A job of the installation that checks regularly, determines the address through a Squorli address if need be, and reconfigures and restarts LiveKit when needed ("ich denke wir sollten direkt eine Lösung bauen").
 - The router first, so the Squorli address carries less load.
 
-### Decisions made by Claude, not confirmed by the user
+### Decisions made by Claude, confirmed by the user on 3 October 2026
 
 - The Squorli address is the directory's `/api/ip` (directory.squorli.com), not the website: the website is static. A server with its own directory asks that one first; `LIVEKIT_NODE_IP_URL` names any other service that answers with the caller's address.
 - The default interval of 5 minutes, 1 to 60 allowed; the Linux timer counts from the last run (`OnUnitActiveSec`), cron takes `*/n`.

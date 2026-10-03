@@ -48,7 +48,7 @@ The installed desktop app 0.7.0 has none of this; it needs the next app release.
 
 Not changed: a connection lost *while* the client is open still shows the client with "verbinde neu …" (WebSocket reconnect, `reconnecting`), as before; a server that refuses the session (close 4011/4012, 401) still leads to the login with its note.
 
-Claude's decisions, not asked: that 404 counts as a refusal (an older server without `/api/me` would loop forever otherwise), that the notice offers "Abmelden" at all, and that a foreign server the device has never been on gets no retries.
+Claude's decisions, confirmed by the user on 3 October 2026: that 404 counts as a refusal (an older server without `/api/me` would loop forever otherwise), that the notice offers "Abmelden" at all, and that a foreign server the device has never been on gets no retries.
 
 Checked later that day (the desktop path): the client without a home server in headless Chrome (a Vite dev server with `VITE_HOMELESS=1` and `VITE_DIRECTORY_URL` at a fake directory on 3998: health, key lookup, challenge, signed account status naming `localhost:3999`; `chat.client.v1` planted as signed in with that server as the last one, the session in `chat.sessions.v2`): a silent server showed "Verbinde mit …" and after the 10 s limit the notice with retries; a stopped server the notice at once, with the rail's "+" and "Entdecken" available; the server started, the client came up; a reload while down showed the notice again. No exception or console error of the page in any state. Not checked: the real Electron shell, the real directory (friends socket, sealed settings).
 

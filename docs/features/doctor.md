@@ -30,7 +30,7 @@ The texts that name what to look at have two wordings, chosen by `process.platfo
 
 Both are decisions made by Claude, confirmed by the user on 28 September 2026. The smoke test takes `SMOKE_DOCTOR_TOKEN` for a server that has the variable set. Checked: `docs/features/windows.md`, phase 4.
 
-### Decisions made by Claude, not confirmed by the user
+### Decisions made by Claude, confirmed by the user on 3 October 2026
 
 - Texts in both languages from the server (above), a stable `id` per check for scripts.
 - The directory probes TCP and never UDP (nothing answers a bare UDP packet on LiveKit's port); UDP is the browser's job. The plan had left this open ("the directory could offer an echo, to decide when building").

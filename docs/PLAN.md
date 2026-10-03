@@ -73,15 +73,15 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 - **15 real cameras on a target server** over the internet: bandwidth in and out (`docker stats` on the host), CPU, the tile view; replaces the projection in `deploy/AGENTS.md`.
 - **A restrictive network** (mobile hotspot, a company Wi-Fi): does 7881/tcp carry it; TURN only if somebody needs it (user, 25 September 2026: "erst wenn sich jemand beschwert", then TURN over 443 by SNI passthrough).
-- **The screen share audio matrix:** fill the "verify" rows (`docs/features/voice-video.md`, test page `/test/screenshare.html`); open decision 6.1.
+- **The screen share audio matrix:** fill the "verify" rows (`docs/features/voice-video.md`, test page `/test/screenshare.html`).
 
 ### 3.3 Clients
 
-- **macOS desktop app** (user: medium): a mac build target and signing in CI, system audio through ScreenCaptureKit or a documented limitation (open decision 6.1).
+- **macOS desktop app** (user: medium): a mac build target and signing in CI. System audio in a share is a documented limitation there, not a requirement (the user, 3 October 2026); the matrix in `docs/features/voice-video.md` says so.
 
 ### 3.4 A screen share that adapts by itself (user: medium)
 
-`docs/PLAN-share-adaptation.md`: stage 1 (the sender's rows in the statistics), stage 2 (the governor), then stage 3 once decisions 1 and 2 there are made.
+`docs/PLAN-share-adaptation.md`: stage 1 (the sender's rows in the statistics), stage 2 (the governor, which may go below the quality the user picked, with the line in the tile and a way to pin), then stage 3 as simulcast first and the viewers' quality reports only if the measurements ask for them (the user, 3 October 2026).
 
 ### 3.5 Native Android app (user: medium)
 
@@ -97,7 +97,7 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 - **Link previews:** an "embed links" permission, an admin setting instead of `LINK_PREVIEWS`, smaller copies of large pictures, Twitch clips and Vimeo (`docs/features/link-previews.md`).
 - **Server accounts:** second factor and e-mail, friends and direct messages, an admin view of them (`docs/features/local-accounts.md`).
 - **Mentions:** `@everyone`/`@here`/role mentions, mentions in direct messages; unread marks do not read `defaultNotify` yet; two same-name members picked from the list in one message both point to the last one picked (bug) (`docs/features/mentions-unread.md`).
-- **Voice:** H.264 hardware encoding (LiveKit negotiates only the constrained baseline profile), AV1 for the screen share (decision 7, deferred), the quiet microphone on iPhone and in Firefox/Safari, "voices get quieter while watching a share" (not reproduced) (`docs/features/voice-video.md`).
+- **Voice:** H.264 hardware encoding (LiveKit negotiates only the constrained baseline profile), AV1 for the screen share (deferred by the user on 18 September 2026 and again on 3 October 2026), the quiet microphone on iPhone and in Firefox/Safari, "voices get quieter while watching a share" (not reproduced) (`docs/features/voice-video.md`).
 - **Radio:** re-reading a YouTube playlist that changed, the queue limit of 200 (`docs/features/radio.md`).
 - **Status API:** an env variable that pins the mode, the mobile join sheet's mute icons (`docs/features/status-api.md`).
 - **UI:** settings search and collapsible advanced sections; kick/ban still shown to members who do not outrank (the server refuses) (`docs/features/ui-admin.md`).
@@ -125,6 +125,4 @@ Most features were checked with typecheck, unit tests, smoke tests and headless 
 
 ## 6. Open decisions
 
-1. **macOS system audio in the desktop app:** a requirement or a documented limitation (after the matrix rows of 3.2).
-2. **The screen share's adaptation:** stage 3 (a) simulcast or (b) the viewers' quality reports, and whether the governor may go below the quality the user picked without asking (`docs/PLAN-share-adaptation.md`, section 4; the user skipped both on 25 September 2026).
-3. **AV1 for the screen share** (deferred by the user on 18 September 2026; `docs/features/voice-video.md`, "Screen share codec").
+None at the moment. The three that stood here (macOS system audio, the screen share's adaptation, AV1) were decided by the user on 3 October 2026 and are recorded in 3.3, 3.4 and 4 above. The decisions Claude made while building are marked in each feature note; the ones from after the plan cleanup of 25 September 2026 were confirmed by the user on 3 October 2026 (`docs/MILESTONE-LOG.md`).
