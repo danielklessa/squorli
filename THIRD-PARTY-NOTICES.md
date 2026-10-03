@@ -13,7 +13,7 @@ files, in `node_modules` of the container image.
 | @bufbuild/protobuf | 1.10.1 | (Apache-2.0 AND BSD-3-Clause) | https://github.com/bufbuild/protobuf-es |
 | @livekit/mutex | 1.1.1 | Apache-2.0 | https://github.com/livekit/ts-mutex |
 | @livekit/protocol | 1.50.4 | Apache-2.0 | https://github.com/livekit/protocol |
-| @livekit/track-processors | 0.8.0 | Apache-2.0 | https://github.com/livekit/track-processors-js |
+| @livekit/track-processors | 0.8.1 | Apache-2.0 | https://github.com/livekit/track-processors-js |
 | @mediapipe/tasks-vision | 0.10.14 | Apache-2.0 | http://mediapipe.dev |
 | @noble/curves | 2.4.0 | MIT | https://paulmillr.com/noble/ |
 | @noble/ed25519 | 2.3.0 | MIT | https://paulmillr.com/noble/ |
@@ -36,7 +36,7 @@ files, in `node_modules` of the container image.
 | lodash.isequal (desktop app only) | 4.5.0 | MIT | https://lodash.com/ |
 | loglevel | 1.9.2 | MIT | https://github.com/pimterry/loglevel |
 | loose-envify | 1.4.0 | MIT | https://github.com/zertosh/loose-envify |
-| lucide-static (Icon font, only the icons in use) | 0.545.0 | ISC | https://lucide.dev |
+| lucide-static (Icon font, only the icons in use) | 0.577.0 | ISC | https://lucide.dev |
 | machina | 7.0.1 | MIT | https://machina-js.org/ |
 | MediaPipe Selfie Segmenter (model) (Camera background blur, delivered by this server) | float16, 2023-05-07 | Apache-2.0 | https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter |
 | ms (desktop app only) | 2.1.3 | MIT | https://github.com/vercel/ms |
@@ -280,7 +280,7 @@ Apache License
 
 ## License text 2
 
-Applies to: @livekit/mutex 1.1.1, @livekit/track-processors 0.8.0, livekit-client 2.22.3
+Applies to: @livekit/mutex 1.1.1, @livekit/track-processors 0.8.1, livekit-client 2.22.3
 
 ```text
 Apache License
@@ -1412,12 +1412,12 @@ THE SOFTWARE.
 
 ## License text 21
 
-Applies to: lucide-static 0.545.0
+Applies to: lucide-static 0.577.0
 
 ```text
 ISC License
 
-Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2023 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2025.
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2026.
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted, provided that the above
@@ -1435,7 +1435,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 The MIT License (MIT) (for portions derived from Feather)
 
-Copyright (c) 2013-2023 Cole Bemis
+Copyright (c) 2013-2026 Cole Bemis
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

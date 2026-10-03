@@ -2,8 +2,8 @@
 @font-face { font-family: "lucide"; src: url("./lucide.woff2") format("woff2"); font-weight: normal; font-style: normal; font-display: block; }
 .ic { font-family: "lucide" !important; font-style: normal; font-weight: normal; line-height: 1; display: inline-block; vertical-align: -0.125em; -webkit-font-smoothing: antialiased; }
 .ic-activity::before { content: "\e038"; }
-.ic-app-window::before { content: "\e42a"; }
-.ic-audio-lines::before { content: "\e55e"; }
+.ic-app-window::before { content: "\e426"; }
+.ic-audio-lines::before { content: "\e55a"; }
 .ic-ban::before { content: "\e051"; }
 .ic-bell::before { content: "\e059"; }
 .ic-bell-off::before { content: "\e05a"; }
@@ -29,12 +29,12 @@
 .ic-grip-vertical::before { content: "\e0eb"; }
 .ic-hand::before { content: "\e1d7"; }
 .ic-hash::before { content: "\e0ef"; }
-.ic-headphone-off::before { content: "\e62d"; }
+.ic-headphone-off::before { content: "\e629"; }
 .ic-headphones::before { content: "\e0f1"; }
 .ic-heart::before { content: "\e0f2"; }
 .ic-image::before { content: "\e0f6"; }
 .ic-import::before { content: "\e22f"; }
-.ic-key-round::before { content: "\e4a7"; }
+.ic-key-round::before { content: "\e4a3"; }
 .ic-keyboard::before { content: "\e284"; }
 .ic-languages::before { content: "\e0fe"; }
 .ic-leaf::before { content: "\e2de"; }
@@ -51,7 +51,7 @@
 .ic-minimize::before { content: "\e11a"; }
 .ic-minus::before { content: "\e11c"; }
 .ic-monitor::before { content: "\e11d"; }
-.ic-monitor-smartphone::before { content: "\e3a6"; }
+.ic-monitor-smartphone::before { content: "\e3a2"; }
 .ic-moon::before { content: "\e11e"; }
 .ic-paperclip::before { content: "\e12d"; }
 .ic-pencil::before { content: "\e1f9"; }
@@ -79,7 +79,7 @@
 .ic-timer::before { content: "\e1e0"; }
 .ic-trash-2::before { content: "\e18e"; }
 .ic-triangle-alert::before { content: "\e193"; }
-.ic-trophy::before { content: "\e377"; }
+.ic-trophy::before { content: "\e373"; }
 .ic-undo-2::before { content: "\e2a1"; }
 .ic-user::before { content: "\e19f"; }
 .ic-user-minus::before { content: "\e1a1"; }
@@ -91,7 +91,7 @@
 .ic-video-off::before { content: "\e1a6"; }
 .ic-volume-2::before { content: "\e1ab"; }
 .ic-volume-x::before { content: "\e1ac"; }
-.ic-wand-sparkles::before { content: "\e35b"; }
+.ic-wand-sparkles::before { content: "\e357"; }
 .ic-x::before { content: "\e1b2"; }
 .ic-zoom-in::before { content: "\e1b6"; }
 .ic-zoom-out::before { content: "\e1b7"; }
