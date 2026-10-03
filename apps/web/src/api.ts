@@ -104,21 +104,24 @@ export class ServerApi {
       { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, handle, backup, ...(invite ? { invite } : {}), ...(ownerCode ? { ownerCode } : {}) }, { auth: false }));
   }
   /**
-   * The keys of a password (derived with the account's stored salt and iterations), bound to this server's host where the
-   * backup says so; `legacy` = an unbound backup from before 25 September 2026, which the client binds at the next chance.
+   * The keys of a password, derived with the account's stored salt and iterations and bound to the host this client reaches the
+   * server at. Parameters that do not say `bound` are refused (security audit C2, 3 October 2026): the server chooses salt and
+   * iterations, and an unbound derivation with the ones the directory shows for a handle is the very auth key of the directory
+   * account, which a foreign server could collect from whoever reuses that password. Backups of before 25 September 2026 were
+   * unbound (and this client used to bind them at the next sign-in); they no longer sign in.
    */
   private async localKeys(handle: string, password: string) {
     const p = LocalBackupParamsResponse.parse(await this.request("GET", `/api/local/backup/${encodeURIComponent(handle)}/params`, undefined, { auth: false }));
-    const keys = await deriveBackupKeys(password, p.salt, p.iterations, p.bound ? this.bindHost : undefined);
-    return { ...keys, legacy: !p.bound };
+    if (!p.bound) throw new Error(t("err.backupNotBound"));
+    return deriveBackupKeys(password, p.salt, p.iterations, this.bindHost);
   }
   /**
-   * Signing in on another device: fetch the account's key with handle + password and open it (`legacy`: see localKeys).
+   * Signing in on another device: fetch the account's key with handle + password and open it.
    * `enrol`: this installation's new device, enrolled with the fetch (docs/features/devices.md; its proof is bound to
    * `domain`, the host this client signs for). At the limit of devices the server answers 409 `too_many_devices` with the
    * list; the call comes again with `replaceDevice`, the device the user picked to make way.
    */
-  async localRestore(rawHandle: string, password: string, enrol?: { device: NewDevice; domain: string; replaceDevice?: string | undefined }): Promise<{ id: Identity; legacy: boolean }> {
+  async localRestore(rawHandle: string, password: string, enrol?: { device: NewDevice; domain: string; replaceDevice?: string | undefined }): Promise<Identity> {
     const handle = LocalHandle.parse(rawHandle);
     const keys = await this.localKeys(handle, password);
     const device = enrol ? { ...(await enrolFields(enrol.device, enrol.domain, handle)), ...(enrol.replaceDevice ? { replaceDevice: enrol.replaceDevice } : {}) } : {};
@@ -128,7 +131,7 @@ export class ServerApi {
     catch { throw new Error(t("err.backupUndecryptable")); }
     const restored = await identityFromPrivateKey(seed);
     if (restored.publicKey !== blob.publicKey) throw new Error(t("err.backupMismatch"));
-    return { id: { ...restored, device: enrol?.device.stored ?? null }, legacy: keys.legacy };
+    return { ...restored, device: enrol?.device.stored ?? null };
   }
   /**
    * A member from before server accounts (`registrationRequired`) registers a server account on `fresh`, a new key for this

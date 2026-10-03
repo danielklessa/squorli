@@ -441,9 +441,8 @@ export class Store {
     conn.state = { ...conn.state, connection: "logging-in", error: null, removed: null };
     this.publish(conn);
     let id: Identity;
-    let legacy = false;
     const device = await newDevice();
-    try { ({ id, legacy } = await conn.api.localRestore(handle, password, { device, domain: await this.signDomainOf(conn), replaceDevice })); }
+    try { id = await conn.api.localRestore(handle, password, { device, domain: await this.signDomainOf(conn), replaceDevice }); }
     catch (err) {
       await dropDevice(device.stored);
       if (err instanceof api.ApiError && err.code === "too_many_devices") {
@@ -458,9 +457,6 @@ export class Store {
     this.rememberServerAccount(host, id, handle.trim().toLowerCase(), null);
     try { await conn.login(await this.signDomainOf(conn), invite); }
     catch (err) { await dropDevice(id.device); this.dropServerAccount(host); throw err; }
-    // A backup from before 25 September 2026 is not bound to this server's host (backup.ts): encrypt it anew, bound, now
-    // that the password is at hand (the same password; the server keeps nothing else).
-    if (legacy) void conn.api.localChangePassword(id, handle.trim().toLowerCase(), password, password).catch(() => { /* next sign-in tries again */ });
   }
   /**
    * A member from before server accounts (`me.registrationRequired`) registers a server account on a fresh key for this server

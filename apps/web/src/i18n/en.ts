@@ -1315,6 +1315,7 @@ export const en: Messages = {
   "err.banned": "You are banned from this server",
   "err.backupUndecryptable": "The backup could not be decrypted (corrupted?).",
   "err.backupMismatch": "The backup does not match the registered key.",
+  "err.backupNotBound": "This server account still uses the old password scheme that is not bound to the server. For your security Squorli does not sign in with it. Contact the server's operator.",
   "err.sessionRevoked": "This session was signed out from another device.",
   "err.accountDeleted": "Your account on this server was deleted.",
   "err.notMember": "You are no longer a member of this server.",
