@@ -1,6 +1,6 @@
 # Multi-stage: builds protocol, web client and server. Image: docker build --target app -t squorli/app:local .
 # (compose.yml sets "target" itself.) The directory service has its own repo and image (squorli-directory).
-FROM node:24-alpine AS build
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
 RUN corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
@@ -17,7 +17,7 @@ RUN pnpm --filter @squorli/web build && pnpm --filter @squorli/server build \
  && pnpm --filter @squorli/server --prod deploy --legacy /out
 
 # ---- Chat server (API, WebSocket, web client)
-FROM node:24-alpine AS app
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS app
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /out/dist ./dist
