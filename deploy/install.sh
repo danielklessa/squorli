@@ -249,7 +249,7 @@ choose_dir() {
   fi
 }
 
-# Sets DOMAIN SERVER_NAME SETUP IMAGE DIRECTORY OWNER OWNER_CODE NODE_IP BIND_IP PROXY_IP PG_PASSWORD
+# Sets DOMAIN SERVER_NAME SETUP IMAGE DIRECTORY OWNER OWNER_CODE NODE_IP NODE_DYN BIND_IP PROXY_IP PG_PASSWORD
 configure() {
   local envf="$DIR/.env" c
   step "$(t "Einstellungen" "Settings")"
@@ -262,6 +262,7 @@ configure() {
   d_owner="$(env_get "$envf" OWNER_PUBLIC_KEY)"
   d_code="$(env_get "$envf" OWNER_SETUP_CODE)"
   d_node="$(env_get "$envf" LIVEKIT_NODE_IP)"
+  local d_dyn; d_dyn="$(env_get "$envf" LIVEKIT_DYNAMIC_IP)"
 
   while :; do
     ask DOMAIN "$(t "Domain, unter der der Server erreichbar ist (z. B. chat.example.org)" "Domain the server is reached under (e.g. chat.example.org)")" "$d_domain"
@@ -379,12 +380,25 @@ configure() {
     2) OWNER_CODE="${d_code:-$(secret | cut -c1-24)}" ;;
   esac
 
-  while :; do
-    ask NODE_IP "$(t "Öffentliche IP für Sprache und Video (leer = LiveKit ermittelt sie selbst)" "Public IP for voice and video (empty = LiveKit detects it itself)")" "$d_node"
-    [ -z "$NODE_IP" ] && break
-    is_ipv4 "$NODE_IP" && break
-    warn "$(t "Bitte eine IPv4-Adresse angeben oder leer lassen." "Please give an IPv4 address or leave it empty.")"
-  done
+  # The address LiveKit announces for media (docs/features/dynamic-ip.md): a server with an address of its own finds it
+  # itself; behind a home router the address changes, and a job keeps it current; or a fixed one.
+  local na na_def=1
+  [ -n "$d_node" ] && na_def=3
+  [ "$d_dyn" = true ] && na_def=2
+  choose na "$(t "Öffentliche IP-Adresse für Sprache und Video?" "Public IP address for voice and video?")" "$na_def" \
+    "$(t "LiveKit ermittelt sie selbst (ein Server mit eigener öffentlicher Adresse)" "LiveKit detects it itself (a server with a public address of its own)")" \
+    "$(t "Sie wechselt (Heimanschluss hinter einem Router): ein Job prüft sie alle 5 Minuten und passt LiveKit an" "It changes (a home connection behind a router): a job checks it every 5 minutes and adjusts LiveKit")" \
+    "$(t "Ich gebe eine feste Adresse ein" "I enter a fixed address")"
+  NODE_DYN=""
+  case "$na" in
+    1) NODE_IP="" ;;
+    2) NODE_DYN=true; NODE_IP="$d_node" ;;
+    3) while :; do
+         ask NODE_IP "$(t "Öffentliche IPv4-Adresse" "Public IPv4 address")" "$d_node"
+         is_ipv4 "$NODE_IP" && break
+         warn "$(t "Bitte eine IPv4-Adresse angeben." "Please give an IPv4 address.")"
+       done ;;
+  esac
 
   ask IMAGE "$(t "Container-Image (für Produktion am besten eine feste Version)" "Container image (for production preferably a fixed version)")" "$d_image"
 
@@ -510,7 +524,7 @@ summary() {
   esac
   printf '  %-18s %s\n' "$(t "Verzeichnis" "Folder")" "$DIR" "Domain" "$DOMAIN" "$(t "Servername" "Server name")" "$SERVER_NAME" \
     "HTTPS" "$how" "Directory" "${DIRECTORY:-$(t "keins" "none")}" "$(t "Besitzer" "Owner")" "${OWNER:-$([ -n "$OWNER_CODE" ] && t "Serverkonto mit Einrichtungscode" "server account with setup code" || t "wer sich zuerst anmeldet" "whoever signs in first")}" \
-    "LiveKit IP" "${NODE_IP:-$(t "automatisch" "automatic")}" "Image" "$IMAGE"
+    "LiveKit IP" "$([ "$NODE_DYN" = true ] && t "wechselnd (Job prüft alle 5 Minuten)" "changing (a job checks every 5 minutes)" || printf '%s' "${NODE_IP:-$(t "automatisch" "automatic")}")" "Image" "$IMAGE"
   printf '  %-18s %s\n' "$(t "Offene Ports" "Open ports")" "$([ "$SETUP" = bundled ] && printf '80/tcp 443/tcp ')$LK_TCP_PORT/tcp $LK_UDP_PORT/udp"
   confirm "$(t "So installieren?" "Install like this?")" y || exit 0
 }
@@ -566,6 +580,7 @@ write_env() {
   env_set "$envf" OWNER_PUBLIC_KEY "$OWNER"
   env_set "$envf" OWNER_SETUP_CODE "$OWNER_CODE"
   env_set "$envf" LIVEKIT_NODE_IP "$NODE_IP"
+  env_set "$envf" LIVEKIT_DYNAMIC_IP "$NODE_DYN"
   env_set "$envf" LIVEKIT_TCP_PORT "$LK_TCP_PORT"
   env_set "$envf" LIVEKIT_UDP_PORT "$LK_UDP_PORT"
   if [ "$SETUP" != bundled ]; then env_set "$envf" APP_PORT "$APP_PORT"; env_set "$envf" LIVEKIT_HTTP_PORT "$LK_HTTP_PORT"; fi
@@ -716,6 +731,147 @@ auto_off() {
     systemctl daemon-reload >/dev/null 2>&1 || true
   fi
   rm -f "$AUTO_CRON"
+}
+# ---- The public address for voice and video when it changes (docs/features/dynamic-ip.md): a job asks the router by
+# UPnP, else an address on the web that answers with the caller's IP, and when it differs from LIVEKIT_NODE_IP it writes
+# the new one into .env and recreates the livekit container (the app server keeps running). IPv4 only: the media ports
+# are forwarded for IPv4.
+NODEIP_TIMER=/etc/systemd/system/squorli-nodeip.timer
+NODEIP_SERVICE=/etc/systemd/system/squorli-nodeip.service
+NODEIP_CRON=/etc/cron.d/squorli-nodeip
+env_value() { sed -n "s/^$1=//p" ../.env | tail -n1 | tr -d "'\"" || true; }
+# env_write KEY VALUE: the first active KEY= line, else the first "#KEY=" line, else appended; the file keeps its rights
+# (written in place). The values are addresses and words: nothing to quote.
+env_write() {
+  K="$1" V="$2" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"] }
+    NR == FNR { if (index($0, k "=") == 1) active = 1; next }
+    !done && index($0, k "=") == 1 { print k "=" v; done = 1; next }
+    !active && !done && (index($0, "#" k "=") == 1 || index($0, "# " k "=") == 1) { print k "=" v; done = 1; next }
+    { print } END { if (!done) print k "=" v }' ../.env ../.env > ../.env.tmp \
+    && cat ../.env.tmp > ../.env && rm -f ../.env.tmp
+}
+# An IPv4 address that the internet can reach: no private, loopback, link-local, carrier-grade NAT or multicast range
+public_ipv4() {
+  local a b c d
+  [[ "$1" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+  a="${BASH_REMATCH[1]}"; b="${BASH_REMATCH[2]}"; c="${BASH_REMATCH[3]}"; d="${BASH_REMATCH[4]}"
+  [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] || return 1
+  [ "$a" -eq 0 ] || [ "$a" -eq 10 ] || [ "$a" -eq 127 ] || [ "$a" -ge 224 ] && return 1
+  [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ] && return 1
+  [ "$a" -eq 192 ] && [ "$b" -eq 168 ] && return 1
+  [ "$a" -eq 169 ] && [ "$b" -eq 254 ] && return 1
+  [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ] && return 1
+  return 0
+}
+# The router's public address by UPnP: GetExternalIPAddress of its WANIPConnection or WANPPPConnection service. The
+# description is tried at the addresses common routers use (AVM 49000, miniupnpd 5000, others), then upnpc when it is
+# installed (a multicast search needs a tool). Prints the address, or nothing.
+router_ip() {
+  local gw url base desc found svc path ctl ip
+  # The router: LIVEKIT_ROUTER_IP of .env (when the default route is a VPN, say), else the default route's gateway
+  gw="$(env_value LIVEKIT_ROUTER_IP)"
+  [ -n "$gw" ] || gw="$(ip -4 route show default 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "via") { print $(i + 1); exit } }')"
+  if [ -n "$gw" ]; then
+    for url in "http://$gw:49000/igddesc.xml" "http://$gw:5000/rootDesc.xml" "http://$gw:1900/igd.xml" "http://$gw:49152/rootDesc.xml" "http://$gw:49153/rootDesc.xml" "http://$gw:8000/rootDesc.xml"; do
+      desc="$(curl -4 -s --max-time 3 "$url" 2>/dev/null | tr -d '\n\r')" || continue
+      [ -n "$desc" ] || continue
+      found="$(printf '%s' "$desc" | awk 'BEGIN { RS = "<service>" }
+        match($0, /WAN(IP|PPP)Connection:[12]/) { svc = substr($0, RSTART, RLENGTH - 2)
+          if (match($0, /<controlURL>[^<]*<\/controlURL>/)) { print svc " " substr($0, RSTART + 12, RLENGTH - 25); exit } }')"
+      [ -n "$found" ] || continue
+      svc="${found%% *}"; path="${found#* }"
+      base="$(printf '%s' "$url" | sed 's|^\(http://[^/]*\).*|\1|')"
+      case "$path" in http://*|https://*) ctl="$path" ;; /*) ctl="$base$path" ;; *) ctl="$base/$path" ;; esac
+      ip="$(curl -4 -s --max-time 3 -H 'Content-Type: text/xml; charset="utf-8"' -H "SOAPAction: \"urn:schemas-upnp-org:service:$svc:1#GetExternalIPAddress\"" \
+        --data "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:GetExternalIPAddress xmlns:u=\"urn:schemas-upnp-org:service:$svc:1\"/></s:Body></s:Envelope>" \
+        "$ctl" 2>/dev/null | tr -d '\n\r' | sed -n 's|.*<NewExternalIPAddress>\([^<]*\)</NewExternalIPAddress>.*|\1|p')"
+      if [ -n "$ip" ]; then printf '%s\n' "$ip"; return 0; fi
+    done
+  fi
+  if command -v upnpc >/dev/null 2>&1; then
+    ip="$(upnpc -s 2>/dev/null | sed -n 's/^ExternalIPAddress = //p' | head -n1 | tr -d ' ')"
+    if [ -n "$ip" ]; then printf '%s\n' "$ip"; return 0; fi
+  fi
+  return 1
+}
+# The address an address on the web sees: LIVEKIT_NODE_IP_URL of .env, else the directory's GET /api/ip (the one of
+# DIRECTORY_URL, then the public one). Over IPv4 on purpose.
+web_ip() {
+  local url urls=() ip
+  url="$(env_value LIVEKIT_NODE_IP_URL)"
+  if [ -n "$url" ]; then urls=("$url")
+  else
+    url="$(env_value DIRECTORY_URL)"; url="${url%/}"
+    [ -n "$url" ] && urls+=("$url/api/ip")
+    [ "$url" != https://directory.squorli.com ] && urls+=(https://directory.squorli.com/api/ip)
+  fi
+  for url in "${urls[@]}"; do
+    ip="$(curl -4 -s --max-time 10 "$url" 2>/dev/null | head -n1 | tr -d ' \r')"
+    if public_ipv4 "$ip"; then printf '%s\n' "$ip"; return 0; fi
+  done
+  return 1
+}
+# The minutes of the job that is set up; nothing when there is none.
+nodeip_minutes() {
+  local f
+  for f in "$NODEIP_TIMER" "$NODEIP_CRON"; do
+    if [ -f "$f" ]; then sed -n 's/^# minutes: \([0-9]*\)$/\1/p' "$f" | head -n1; return; fi
+  done
+}
+nodeip_off() {
+  if [ -f "$NODEIP_TIMER" ] || [ -f "$NODEIP_SERVICE" ]; then
+    systemctl disable --now squorli-nodeip.timer >/dev/null 2>&1 || true
+    rm -f "$NODEIP_TIMER" "$NODEIP_SERVICE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  rm -f "$NODEIP_CRON"
+}
+# One check: finds the address, and when it is new writes it and recreates livekit. $1 = auto: the job's run, one line
+# in nodeip.log for a change or a failure, the time of every run in nodeip.last. Exit 1 when no address was found.
+nodeip_check() {
+  local auto="${1:-}" log="$here/nodeip.log" stamp="" ip="" src="" have cid
+  nsay() { if [ "$auto" = auto ]; then printf '%s' "$stamp" >> "$log"; t "$1" "$2" >> "$log"; else t "$1" "$2"; fi; }
+  if [ "$auto" = auto ]; then
+    stamp="$(date '+%Y-%m-%d %H:%M:%S')  "
+    if [ -f "$log" ] && [ "$(wc -c < "$log")" -gt 1048576 ]; then tail -n 2000 "$log" > "$log.tmp" && mv "$log.tmp" "$log"; fi
+  fi
+  if ip="$(router_ip)"; then
+    if public_ipv4 "$ip"; then src="$(t "Router" "router")"
+    else
+      [ "$auto" = auto ] || t "  !  Der Router nennt $ip, keine öffentliche Adresse (DS-Lite oder CGNAT: dann kommt von außen nichts an; oder ein zweiter Router davor)." \
+        "  !  The router says $ip, no public address (DS-Lite or CGNAT: nothing arrives from outside then; or a second router in front)."
+      ip=""
+    fi
+  fi
+  if [ -z "$ip" ]; then
+    if ip="$(web_ip)"; then src="$(t "Web" "web")"; fi
+  fi
+  if [ -z "$ip" ]; then
+    nsay "x Keine öffentliche IPv4-Adresse gefunden (Router per UPnP, Verzeichnis). LIVEKIT_NODE_IP bleibt, wie es ist." \
+      "x No public IPv4 address found (router by UPnP, directory). LIVEKIT_NODE_IP stays as it is."
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "-" > "$here/nodeip.last"
+    return 1
+  fi
+  printf '%s %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$ip" "$src" > "$here/nodeip.last"
+  have="$(env_value LIVEKIT_NODE_IP)"
+  if [ "$ip" = "$have" ]; then
+    [ "$auto" = auto ] || t "  ok Öffentliche Adresse $ip ($src), unverändert." "  ok Public address $ip ($src), unchanged."
+    return 0
+  fi
+  env_write LIVEKIT_NODE_IP "$ip"
+  cid="$(dc ps -q livekit 2>/dev/null | head -n1 || true)"
+  if [ -n "$cid" ]; then
+    if dc up -d --no-build livekit >/dev/null 2>&1; then
+      nsay "  ok Öffentliche Adresse ${have:-?} -> $ip ($src): LiveKit neu gestartet." "  ok Public address ${have:-?} -> $ip ($src): LiveKit restarted."
+    else
+      nsay "x Öffentliche Adresse ${have:-?} -> $ip ($src) geschrieben, aber LiveKit ließ sich nicht neu starten (squorli logs livekit)." \
+        "x Public address ${have:-?} -> $ip ($src) written, but LiveKit could not be restarted (squorli logs livekit)."
+      return 1
+    fi
+  else
+    nsay "  ok Öffentliche Adresse ${have:-?} -> $ip ($src) geschrieben; LiveKit läuft nicht und nimmt sie beim Start." \
+      "  ok Public address ${have:-?} -> $ip ($src) written; LiveKit is not running and takes it at its start."
+  fi
 }
 # The app server's service was named "app" until 28 September 2026; whoever still types it means "server".
 if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ]; then
@@ -916,6 +1072,87 @@ case "${1:-help}" in
           "squorli autoupdate [on [hours] [--stable] | off]   (hours: 1 to 24; --stable: set APP_IMAGE from latest to stable; without a word: the state)" >&2
         exit 1 ;;
     esac ;;
+  nodeip)
+    # The public address for voice and video (docs/features/dynamic-ip.md): check = find it now and apply it; on [minutes] = a
+    # job that does so every 1 to 60 minutes (a timer of systemd, or a file in /etc/cron.d); off; without a word the state.
+    case "${2:-status}" in
+      status)
+        minutes="$(nodeip_minutes)"
+        t "Angekündigte Adresse für Sprache und Video (LIVEKIT_NODE_IP): $(env_value LIVEKIT_NODE_IP)" "Announced address for voice and video (LIVEKIT_NODE_IP): $(env_value LIVEKIT_NODE_IP)"
+        if [ -z "$minutes" ]; then
+          t "Wechselnde Adresse (Job): aus" "Changing address (job): off"
+          t "Einschalten: squorli nodeip on   Jetzt prüfen: squorli nodeip check" "Switch on: squorli nodeip on   Check now: squorli nodeip check"
+        else
+          t "Wechselnde Adresse (Job): an, alle $minutes Minuten" "Changing address (job): on, every $minutes minutes"
+        fi
+        if [ -f "$here/nodeip.last" ]; then t "Letzte Prüfung: $(cat "$here/nodeip.last")" "Last check: $(cat "$here/nodeip.last")"; fi
+        if [ -f "$here/nodeip.log" ]; then
+          echo
+          t "Die letzten Änderungen ($here/nodeip.log):" "The last changes ($here/nodeip.log):"
+          tail -n 8 "$here/nodeip.log" | sed 's/^/  /'
+        fi ;;
+      check)
+        if [ "${3:-}" = --auto ]; then nodeip_check auto; else nodeip_check; fi ;;
+      on)
+        if [ "$(id -u)" != 0 ]; then t "Das geht nur als root (sudo squorli nodeip on)." "This needs root (sudo squorli nodeip on)." >&2; exit 1; fi
+        minutes="${3:-}"
+        if [ -z "$minutes" ]; then
+          echo
+          t "Ein Job prüft regelmäßig die öffentliche Adresse (Router per UPnP, sonst das Verzeichnis) und startet LiveKit neu, wenn sie sich geändert hat. Wer dann gerade spricht, ist ohnehin schon getrennt." \
+            "A job checks the public address regularly (the router by UPnP, else the directory) and restarts LiveKit when it changed. Whoever is talking then was cut off already."
+          read -r -p "$(t "? Alle wie viele Minuten prüfen (1-60)? [5] " "? Check every how many minutes (1-60)? [5] ")" minutes </dev/tty
+          minutes="${minutes:-5}"
+        fi
+        case "$minutes" in *[!0-9]*) minutes=0 ;; esac
+        if [ "${#minutes}" -gt 2 ] || [ "$minutes" -lt 1 ] || [ "$minutes" -gt 60 ]; then
+          t "'$minutes' ist kein Abstand in Minuten: eine ganze Zahl von 1 bis 60." "'$minutes' is no interval in minutes: a whole number from 1 to 60." >&2; exit 1
+        fi
+        minutes=$((10#$minutes))
+        if [ "$minutes" -ge 60 ]; then when='0 * * * *'; else when="*/$minutes * * * *"; fi
+        nodeip_off
+        env_write LIVEKIT_DYNAMIC_IP true
+        if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+          {
+            printf '# Written by squorli nodeip on; squorli nodeip off removes it.\n'
+            printf '[Unit]\nDescription=Squorli Server: the public address for voice and video\nAfter=docker.service network-online.target\nWants=network-online.target\n\n'
+            printf '[Service]\nType=oneshot\nExecStart=%s nodeip check --auto\n' "$here/squorli"
+          } > "$NODEIP_SERVICE"
+          {
+            printf '# Written by squorli nodeip on; squorli nodeip off removes it.\n'
+            printf '# minutes: %s\n' "$minutes"
+            printf '[Unit]\nDescription=Squorli Server: the public address for voice and video\n\n'
+            printf '[Timer]\nOnBootSec=1min\nOnUnitActiveSec=%smin\n\n' "$minutes"
+            printf '[Install]\nWantedBy=timers.target\n'
+          } > "$NODEIP_TIMER"
+          systemctl daemon-reload
+          systemctl enable --now squorli-nodeip.timer >/dev/null 2>&1
+        elif [ -d /etc/cron.d ]; then
+          {
+            printf '# Written by squorli nodeip on; squorli nodeip off removes it.\n'
+            printf '# minutes: %s\n' "$minutes"
+            printf 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
+            printf '%s root %s nodeip check --auto\n' "$when" "$here/squorli"
+          } > "$NODEIP_CRON"
+          chmod 644 "$NODEIP_CRON"
+        else
+          t "Hier gibt es weder systemd noch /etc/cron.d. Diese Zeile in die Crontab von root eintragen (crontab -e):" \
+            "There is neither systemd nor /etc/cron.d here. Put this line into root's crontab (crontab -e):" >&2
+          echo "  $when $here/squorli nodeip check --auto" >&2
+          exit 1
+        fi
+        t "  ok Die öffentliche Adresse wird alle $minutes Minuten geprüft." "  ok The public address is checked every $minutes minutes."
+        t "     Ausschalten: squorli nodeip off   Stand: squorli nodeip   Jetzt prüfen: squorli nodeip check" \
+          "     Switch off: squorli nodeip off   State: squorli nodeip   Check now: squorli nodeip check" ;;
+      off)
+        if [ "$(id -u)" != 0 ]; then t "Das geht nur als root (sudo squorli nodeip off)." "This needs root (sudo squorli nodeip off)." >&2; exit 1; fi
+        env_write LIVEKIT_DYNAMIC_IP ""
+        if [ -z "$(nodeip_minutes)" ]; then t "  ok Der Job war schon aus." "  ok The job was off already."
+        else nodeip_off; t "  ok Der Job ist aus. LIVEKIT_NODE_IP behält die letzte Adresse." "  ok The job is off. LIVEKIT_NODE_IP keeps the last address."; fi ;;
+      *)
+        t "squorli nodeip [check | on [Minuten] | off]   (Minuten: 1 bis 60; ohne Wort: der Stand)" \
+          "squorli nodeip [check | on [minutes] | off]   (minutes: 1 to 60; without a word: the state)" >&2
+        exit 1 ;;
+    esac ;;
   status)  dc ps ;;
   logs)    shift; dc logs --tail=200 -f "$@" ;;
   restart) shift; dc restart "$@" ;;
@@ -972,7 +1209,7 @@ case "${1:-help}" in
     else echo "Whether voice and video (UDP) arrive can only be checked from a browser: Verwaltung > Server > Check the connection."; fi
     exit $rc ;;
   help|-h|--help)
-    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] [--stable] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
+    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] [--stable] | off] | nodeip [check | on [minutes] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
     echo "services: server, postgres, livekit, caddy" ;;
   *) dc "$@" ;;
 esac
@@ -1073,6 +1310,7 @@ finish() {
     "  $HELPER logs server $(t "Logs verfolgen" "follow logs")" \
     "  $HELPER update      $(t "neue Images holen und neu starten, was sich geändert hat (sichert vorher)" "pull new images and restart what changed (backs up first)")" \
     "  $HELPER autoupdate  $(t "automatische Updates ein- und ausschalten (on, off)" "switch automatic updates on and off (on, off)")" \
+    "  $HELPER nodeip      $(t "die öffentliche Adresse für Sprache und Video: Stand, check, on, off" "the public address for voice and video: state, check, on, off")" \
     "  $HELPER backup      $(t "Datenbank, Dateien und .env nach $DIR/backups sichern" "back up database, files and .env to $DIR/backups")" \
     "  $HELPER restore <$(t "Ordner" "dir")>  $(t "eine Sicherung zurückspielen (ersetzt Datenbank und Dateien)" "restore a backup (replaces database and files)")" \
     "  $HELPER doctor      $(t "prüfen, was bei der Einrichtung am häufigsten schiefgeht (Domain, Proxy, LiveKit, Ports, Verzeichnis)" "check what goes wrong most often in a setup (domain, proxy, LiveKit, ports, directory)")" \
@@ -1112,8 +1350,11 @@ main() {
   download_files
   write_env
   write_helper
+  # A changing address: found before the start, so LiveKit announces the right one from its first start on
+  if [ "$NODE_DYN" = true ]; then "$DIR/squorli" nodeip check || true; fi
   start_stack
   verify
+  if [ "$NODE_DYN" = true ]; then "$DIR/squorli" nodeip on 5; else "$DIR/squorli" nodeip off >/dev/null 2>&1 || true; fi
   finish
 }
 

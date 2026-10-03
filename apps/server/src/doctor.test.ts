@@ -9,6 +9,9 @@ describe("mediaHost", () => {
     expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "ws://localhost:7880" })).toBe("chat.example.org");
     expect(mediaHost({ PUBLIC_DOMAIN: "localhost", livekitPublicUrl: "ws://127.0.0.1:7880" })).toBe("localhost");
     expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://media.example.org", LIVEKIT_NODE_IP: "203.0.113.7" })).toBe("203.0.113.7");
+    // A changing address: the job keeps LIVEKIT_NODE_IP current in .env, this process may hold an old one; the domain follows it
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://chat.example.org", LIVEKIT_NODE_IP: "203.0.113.7", LIVEKIT_DYNAMIC_IP: true })).toBe("chat.example.org");
+    expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "wss://media.example.org", LIVEKIT_NODE_IP: "203.0.113.7", LIVEKIT_DYNAMIC_IP: true })).toBe("media.example.org");
     expect(mediaHost({ PUBLIC_DOMAIN: "chat.example.org", livekitPublicUrl: "not a url" })).toBe("chat.example.org");
   });
 });

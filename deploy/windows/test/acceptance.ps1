@@ -17,7 +17,8 @@
   doctor, logs, backup, restore (its own backup and the one of a Linux installation in linux-backup\), stop, start,
   restart, update -Package (the same package; the next version, which leaves PostgreSQL and LiveKit running; one that
   asks for work by hand, which the run of the task leaves alone; one whose app server ends at its start: the way back),
-  update -Check, autoupdate (the task runs as SYSTEM), uninstall.ps1.
+  update -Check, autoupdate (the task runs as SYSTEM), nodeip (the task, a check that finds an address or says it found
+  none), uninstall.ps1.
 
   -Smoke runs the other part instead: an installation whose first sign-in becomes the owner, and the server's smoke test
   (apps/server/scripts/smoke.mjs) against it. It needs the repository with its packages installed and a node in the PATH,
@@ -383,6 +384,34 @@ function Test-AutoUpdate {
   $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate') -Quiet
   Check 'squorli autoupdate off removes the task' ($r.Code -eq 0 -and $task.Code -ne 0) "exit $($r.Code)"
   # Left on: the removal has to take the task along
+}
+
+function Test-NodeIp {
+  Step 'nodeip'
+  $r = Invoke-Squorli @('nodeip') -Quiet
+  Check 'squorli nodeip: off' ($r.Code -eq 0 -and $r.Text -match 'Changing address \(task\): off') "exit $($r.Code)"
+  $r = Invoke-Squorli @('nodeip', 'on', '61') -Quiet
+  $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliNodeIp', '/XML') -Quiet
+  Check 'an interval of 61 minutes is refused, no task is made' ($r.Code -eq 1 -and $task.Code -ne 0) "exit $($r.Code)"
+  $r = Invoke-Squorli @('nodeip', 'on', '7')
+  $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliNodeIp', '/XML') -Quiet
+  Check 'squorli nodeip on 7: a task of SYSTEM, every 7 minutes, that calls squorli.ps1 nodeip check -Auto' (
+    $r.Code -eq 0 -and $task.Code -eq 0 -and $task.Text -match '<UserId>S-1-5-18</UserId>' -and $task.Text -match '<Interval>PT7M</Interval>' -and
+    $task.Text -match 'squorli\.ps1(&quot;|") nodeip check -Auto') "exit $($r.Code)"
+  $env = Get-Content -LiteralPath (Join-Path $DataDir '.env') -Encoding UTF8
+  Check '.env says LIVEKIT_DYNAMIC_IP=true' (@($env | Where-Object { $_ -eq 'LIVEKIT_DYNAMIC_IP=true' }).Count -eq 1) ''
+  $r = Invoke-Squorli @('nodeip') -Quiet
+  Check 'squorli nodeip: on, every 7 minutes' ($r.Code -eq 0 -and $r.Text -match 'Changing address \(task\): on, every 7 minutes') "exit $($r.Code)"
+  # The machine may stand behind a router that answers by UPnP, or reach a directory, or neither: the check says which
+  $r = Invoke-Squorli @('nodeip', 'check')
+  Check 'squorli nodeip check: finds a public address or says it found none' (($r.Code -eq 0 -and $r.Text -match 'Public address') -or ($r.Code -eq 1 -and $r.Text -match 'No public IPv4 address')) "exit $($r.Code)"
+  Test-ServicesUp 'after the check'
+  $r = Invoke-Squorli @('nodeip', 'off') -Quiet
+  $task = Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliNodeIp') -Quiet
+  $env = Get-Content -LiteralPath (Join-Path $DataDir '.env') -Encoding UTF8
+  Check 'squorli nodeip off removes the task and empties LIVEKIT_DYNAMIC_IP' ($r.Code -eq 0 -and $task.Code -ne 0 -and @($env | Where-Object { $_ -eq 'LIVEKIT_DYNAMIC_IP=' }).Count -eq 1) "exit $($r.Code)"
+  $r = Invoke-Squorli @('nodeip', 'on', '5') -Quiet
+  Check 'left on for the removal' ($r.Code -eq 0) "exit $($r.Code)"
   $r = Invoke-Squorli @('autoupdate', 'on', '24') -Quiet
   Check 'squorli autoupdate on 24' ($r.Code -eq 0 -and $r.Text -match 'once a day at 04:17') "exit $($r.Code)"
 }
@@ -399,6 +428,7 @@ function Uninstall-Package {
   Check 'the PATH of the machine holds no entry of Squorli' (@(Get-MachinePath | Where-Object { $_ -like "$InstallDir*" }).Count -eq 0)
   Check 'no firewall rule of the group Squorli is left' (@(Get-NetFirewallRule -Group 'Squorli' -ErrorAction SilentlyContinue).Count -eq 0)
   Check 'no task SquorliAutoUpdate is left' ((Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate') -Quiet).Code -ne 0)
+  Check 'no task SquorliNodeIp is left' ((Invoke-Captured 'schtasks.exe' @('/Query', '/TN', 'SquorliNodeIp') -Quiet).Code -ne 0)
 }
 
 function Test-Smoke {
@@ -435,6 +465,7 @@ try {
     Test-ServiceControl
     Test-Update
     Test-AutoUpdate
+    Test-NodeIp
   }
 } catch {
   Write-Host ''

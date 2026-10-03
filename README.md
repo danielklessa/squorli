@@ -143,7 +143,7 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 | `LINK_PREVIEWS` | `true` (default): links in messages get a preview (title, description, picture; YouTube videos play in the chat). The server fetches the linked pages itself, from public hosts only, and serves the pictures from its data volume, so readers never contact the linked host. `false` turns previews and these outgoing requests off |
 | `LOG_LEVEL` | Log level of the app server: `fatal`, `error`, `warn`, `info` (default), `debug` |
 | `LOG_REQUESTS` | `false` (default): no line per request, so the log holds no visitor addresses; only requests that end in a server error are logged, without the address. `true` logs every request with the caller's IP, for troubleshooting only. What each container logs and how long: [docs/features/logging.md](docs/features/logging.md) |
-| `LIVEKIT_NODE_IP` | Public IP of the host; empty = LiveKit detects it via STUN |
+| `LIVEKIT_NODE_IP` | Public IP of the host; empty = LiveKit detects it via STUN. A home connection whose address changes: `squorli nodeip on` (the installer's command) keeps it current and restarts LiveKit, `LIVEKIT_DYNAMIC_IP=true` is its flag ([docs/features/dynamic-ip.md](docs/features/dynamic-ip.md)) |
 | `LIVEKIT_PUBLIC_URL` | Only if clients should not reach LiveKit via `https://PUBLIC_DOMAIN/rtc` |
 | `DIRECTORY_URL` | `https://directory.squorli.com` or your own directory; empty = no directory |
 | `DIRECTORY_PROOF_URL` | Only if the directory cannot reach `https://PUBLIC_DOMAIN/api/health` directly |

@@ -98,6 +98,11 @@ if ((Invoke-Program 'schtasks.exe' @('/Query', '/TN', 'SquorliAutoUpdate')) -eq 
   if ((Invoke-Program 'schtasks.exe' @('/Delete', '/TN', 'SquorliAutoUpdate', '/F')) -eq 0) { Ok (T 'Aufgabe der automatischen Updates entfernt' 'Task of the automatic updates removed') }
   else { Warn (T 'Die Aufgabe SquorliAutoUpdate ließ sich nicht entfernen (Aufgabenplanung).' 'The task SquorliAutoUpdate could not be removed (task scheduler).') }
 }
+# The task of the public address for voice and video (squorli nodeip on)
+if ((Invoke-Program 'schtasks.exe' @('/Query', '/TN', 'SquorliNodeIp')) -eq 0) {
+  if ((Invoke-Program 'schtasks.exe' @('/Delete', '/TN', 'SquorliNodeIp', '/F')) -eq 0) { Ok (T 'Aufgabe der öffentlichen Adresse entfernt' 'Task of the public address removed') }
+  else { Warn (T 'Die Aufgabe SquorliNodeIp ließ sich nicht entfernen (Aufgabenplanung).' 'The task SquorliNodeIp could not be removed (task scheduler).') }
+}
 
 Step 'Firewall'
 $rules = @(Get-NetFirewallRule -Group 'Squorli' -ErrorAction SilentlyContinue)

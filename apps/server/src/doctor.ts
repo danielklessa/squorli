@@ -64,9 +64,11 @@ export function classifyFailure(code: string): FailureKind {
  * Where the media ports are probed (tested; docs/features/limits.md): LIVEKIT_NODE_IP when the operator set it (the address
  * LiveKit announces), else the host of LIVEKIT_PUBLIC_URL when it names another machine than PUBLIC_DOMAIN, else
  * PUBLIC_DOMAIN. A media node on another host than the app server would otherwise be probed at the wrong address.
+ * With LIVEKIT_DYNAMIC_IP (docs/features/dynamic-ip.md) the value of LIVEKIT_NODE_IP is the one this process started
+ * with and may be stale, so the domain decides as if it were empty.
  */
-export function mediaHost(config: Pick<Config, "PUBLIC_DOMAIN" | "livekitPublicUrl" | "LIVEKIT_NODE_IP">): string {
-  if (config.LIVEKIT_NODE_IP) return config.LIVEKIT_NODE_IP;
+export function mediaHost(config: Pick<Config, "PUBLIC_DOMAIN" | "livekitPublicUrl" | "LIVEKIT_NODE_IP" | "LIVEKIT_DYNAMIC_IP">): string {
+  if (config.LIVEKIT_NODE_IP && !config.LIVEKIT_DYNAMIC_IP) return config.LIVEKIT_NODE_IP;
   try {
     const host = new URL(config.livekitPublicUrl).hostname.replace(/^\[|\]$/g, "");
     if (host && host !== "localhost" && host !== "127.0.0.1" && host.toLowerCase() !== config.PUBLIC_DOMAIN.toLowerCase()) return host;

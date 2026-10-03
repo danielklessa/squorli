@@ -43,6 +43,7 @@ param(
   [string]$Directory,
   [ValidateSet('key', 'code', 'first')][string]$Owner,
   [string]$OwnerPublicKey,
+  # The public IP for voice and video: an IPv4 address, "dynamic" (a task keeps it current: a home connection), empty = LiveKit finds it.
   [string]$NodeIp,
   [ValidateSet('yes', 'no')][string]$Firewall,
   [ValidateSet('yes', 'no')][string]$KeepAwake,
@@ -459,6 +460,7 @@ function Read-Settings {
   $dOwner = Env-Get $envFile 'OWNER_PUBLIC_KEY'
   $dCode = Env-Get $envFile 'OWNER_SETUP_CODE'
   $dNode = Env-Get $envFile 'LIVEKIT_NODE_IP'
+  $dDyn = (Env-Get $envFile 'LIVEKIT_DYNAMIC_IP') -eq 'true'
 
   while ($true) {
     $d = (Ask (T 'Domain, unter der der Server erreichbar ist (z. B. chat.example.org)' 'Domain the server is reached under (e.g. chat.example.org)') $dDomain $Domain).ToLowerInvariant()
@@ -586,15 +588,32 @@ function Read-Settings {
     if ($dCode) { $S.OwnerCode = $dCode } else { $S.OwnerCode = New-Secret 12 }
   }
 
-  if (-not $S.IsServer) {
+  # The address LiveKit announces for media (docs/features/dynamic-ip.md): a server with an address of its own finds it
+  # itself; behind a home router the address changes, and a task of "squorli nodeip" keeps it current; or a fixed one.
+  $naDefault = 1; $naGiven = 0
+  if ($dNode) { $naDefault = 3 }
+  if ($dDyn) { $naDefault = 2 }
+  if ($NodeIp -eq 'dynamic') { $naGiven = 2 } elseif ($NodeIp) { $naGiven = 3 }
+  if (-not $S.IsServer -and -not $Unattended) {
     Write-Host ''
-    Note (T 'Hinter einem Router: eine wechselnde öffentliche Adresse braucht DynDNS für die Domain; das nächste Feld dann leer lassen.' 'Behind a router: a changing public address needs dynamic DNS for the domain; leave the next field empty then.')
+    Note (T 'Hinter einem Router wechselt die öffentliche Adresse meist: die Domain braucht dann DynDNS, und Sprache und Video brauchen die Aufgabe (Antwort 2).' 'Behind a router the public address usually changes: the domain needs dynamic DNS then, and voice and video need the task (answer 2).')
   }
-  while ($true) {
-    $ip = Ask (T 'Öffentliche IP für Sprache und Video (leer = LiveKit ermittelt sie selbst)' 'Public IP for voice and video (empty = LiveKit detects it itself)') $dNode $NodeIp
-    if (-not $ip -or (Test-IPv4 $ip)) { $S.NodeIp = $ip; break }
-    if ($Unattended) { Die (T '-NodeIp ist keine IPv4-Adresse.' '-NodeIp is no IPv4 address.') }
-    Warn (T 'Bitte eine IPv4-Adresse angeben oder leer lassen.' 'Please give an IPv4 address or leave it empty.')
+  $na = Choose (T 'Öffentliche IP-Adresse für Sprache und Video?' 'Public IP address for voice and video?') $naDefault @(
+    (T 'LiveKit ermittelt sie selbst (ein Server mit eigener öffentlicher Adresse)' 'LiveKit detects it itself (a server with a public address of its own)'),
+    (T 'Sie wechselt (Heimanschluss hinter einem Router): eine Aufgabe prüft sie alle 5 Minuten und passt LiveKit an' 'It changes (a home connection behind a router): a task checks it every 5 minutes and adjusts LiveKit'),
+    (T 'Ich gebe eine feste Adresse ein' 'I enter a fixed address')) $naGiven
+  $S.NodeDyn = $false
+  switch ($na) {
+    1 { $S.NodeIp = '' }
+    2 { $S.NodeDyn = $true; $S.NodeIp = $dNode }
+    3 {
+      while ($true) {
+        $ip = Ask (T 'Öffentliche IPv4-Adresse' 'Public IPv4 address') $dNode $NodeIp
+        if (Test-IPv4 $ip) { $S.NodeIp = $ip; break }
+        if ($Unattended) { Die (T '-NodeIp ist keine IPv4-Adresse.' '-NodeIp is no IPv4 address.') }
+        Warn (T 'Bitte eine IPv4-Adresse angeben.' 'Please give an IPv4 address.')
+      }
+    }
   }
 }
 
@@ -610,6 +629,7 @@ function Read-Existing {
   $S.Owner = Env-Get $envFile 'OWNER_PUBLIC_KEY'
   $S.OwnerCode = ''
   $S.NodeIp = Env-Get $envFile 'LIVEKIT_NODE_IP'
+  $S.NodeDyn = (Env-Get $envFile 'LIVEKIT_DYNAMIC_IP') -eq 'true'
   if (-not $Language) { $l = Env-Get $envFile 'SQUORLI_LANG'; if ($l -eq 'de' -or $l -eq 'en') { $S.Lang = $l } }
 }
 
@@ -629,7 +649,7 @@ function Show-Summary {
   }
   if ($S.Owner) { $owner = $S.Owner } elseif ($S.OwnerCode) { $owner = T 'Serverkonto mit Einrichtungscode' 'server account with setup code' } else { $owner = T 'wer sich zuerst anmeldet' 'whoever signs in first' }
   if ($S.Directory) { $directory = $S.Directory } else { $directory = T 'keins' 'none' }
-  if ($S.NodeIp) { $node = $S.NodeIp } else { $node = T 'automatisch' 'automatic' }
+  if ($S.NodeDyn) { $node = T 'wechselnd (Aufgabe prüft alle 5 Minuten)' 'changing (a task checks every 5 minutes)' } elseif ($S.NodeIp) { $node = $S.NodeIp } else { $node = T 'automatisch' 'automatic' }
   if ($ServiceAccount -eq 'virtual') { $account = T 'je Dienst ein eigenes (NT SERVICE\<Name>)' 'one of its own per service (NT SERVICE\<name>)' } else { $account = 'LocalService' }
   $rows = [ordered]@{}
   $rows[(T 'Programme' 'Programs')] = $S.InstallDir
@@ -812,6 +832,7 @@ function Write-Env {
   Env-Set $envFile 'OWNER_PUBLIC_KEY' $S.Owner
   if ($S.Mode -ne 'update') { Env-Set $envFile 'OWNER_SETUP_CODE' $S.OwnerCode }
   Env-Set $envFile 'LIVEKIT_NODE_IP' $S.NodeIp
+  if ($S.NodeDyn) { Env-Set $envFile 'LIVEKIT_DYNAMIC_IP' 'true' } else { Env-Set $envFile 'LIVEKIT_DYNAMIC_IP' '' }
   Env-Set $envFile 'PORT' "$($S.Ports.AppPort)"
   foreach ($name in $PortInfo.Keys) { Env-Set $envFile $PortInfo[$name].Env "$($S.Ports[$name])" }
   Env-Set $envFile 'LIVEKIT_URL' "http://127.0.0.1:$($S.Ports.LiveKitHttpPort)"
@@ -1103,6 +1124,26 @@ function Test-Installation {
   }
 }
 
+# A changing public address (docs/features/dynamic-ip.md): the command finds it now and registers its task; an update keeps
+# what is there, and whoever chose another answer loses the task.
+function Set-NodeIpTask {
+  if ($S.Mode -eq 'update') { return }
+  $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $script = Join-Path $S.InstallDir 'squorli.ps1'
+  $common = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $script)
+  if ($S.NodeDyn) {
+    Step (T 'Öffentliche Adresse für Sprache und Video' 'Public address for voice and video')
+    $null = Invoke-Program $ps ($common + @('nodeip', 'check', '-DataDir', $S.DataDir)) @(0, 1)
+    $null = Invoke-Program $ps ($common + @('nodeip', 'on', '5', '-DataDir', $S.DataDir)) @(0, 1)
+    $S.Changes.Add((T "Aufgabe `"SquorliNodeIp`" der Aufgabenplanung (alle 5 Minuten; squorli nodeip off entfernt sie)" "Task `"SquorliNodeIp`" of the task scheduler (every 5 minutes; squorli nodeip off removes it)"))
+  } else {
+    # Another answer than "it changes": a task from before goes (Invoke-Program throws when schtasks finds none)
+    $exists = $true
+    try { $null = Invoke-Program 'schtasks.exe' @('/Query', '/TN', 'SquorliNodeIp') -Quiet } catch { $exists = $false }
+    if ($exists) { $null = Invoke-Program $ps ($common + @('nodeip', 'off', '-DataDir', $S.DataDir)) @(0, 1) -Quiet }
+  }
+}
+
 # A PC goes to sleep by itself, and a sleeping server answers nobody.
 function Set-KeepAwake {
   if ($S.IsServer) { return }
@@ -1178,6 +1219,7 @@ function Show-Finish {
     Write-Host "  squorli restore <$(T 'Ordner' 'dir')>  $(T 'eine Sicherung zurückspielen (ersetzt Datenbank und Dateien)' 'restore a backup (replaces database and files)')"
     Write-Host "  squorli doctor      $(T 'prüfen, was bei der Einrichtung am häufigsten schiefgeht' 'check what goes wrong most often in a setup')"
     Write-Host "  squorli autoupdate  $(T 'automatische Updates ein- und ausschalten (on, off)' 'switch automatic updates on and off (on, off)')"
+    Write-Host "  squorli nodeip      $(T 'die öffentliche Adresse für Sprache und Video: Stand, check, on, off' 'the public address for voice and video: state, check, on, off')"
   } else {
     Write-Host (T 'Dienste ansehen: Get-Service Squorli*   Logs: ' 'Show the services: Get-Service Squorli*   Logs: ') -NoNewline; Write-Host (Join-Path $S.DataDir 'logs')
   }
@@ -1218,6 +1260,7 @@ function Main {
   if ($S.Mode -ne 'update') { Set-Firewall }
   Start-All
   Test-Installation
+  Set-NodeIpTask
   if ($S.Mode -ne 'update') { Set-KeepAwake }
   Add-ToPath
   Show-Finish

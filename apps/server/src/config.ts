@@ -51,6 +51,12 @@ const Env = z.object({
    */
   LIVEKIT_NODE_IP: z.string().min(1).optional(),
   /**
+   * The announced address changes (a home connection; docs/features/dynamic-ip.md): a job of the installation keeps
+   * LIVEKIT_NODE_IP current and restarts LiveKit, while this process keeps the value it started with. The setup check then
+   * probes PUBLIC_DOMAIN (its DNS record follows the address) instead of the value it has.
+   */
+  LIVEKIT_DYNAMIC_IP: z.enum(["true", "false", "1", "0", ""]).transform((v) => v === "true" || v === "1").optional(),
+  /**
    * Public key that becomes the owner on first sign-in. Empty = the first user
    * who signs in while no owner exists yet.
    */

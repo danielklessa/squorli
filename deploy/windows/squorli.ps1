@@ -17,6 +17,8 @@
     squorli update [-Version x.y.z]    the newest release from GitHub; -Package <file or address> takes that ZIP
     squorli update -Check              only looks for a newer release: exit code 10 when there is one, 0 when not
     squorli autoupdate [on|off]        a task that looks for a new version every 1 to 24 hours and installs it
+    squorli nodeip [check|on|off]      the public address for voice and video when it changes (a home connection): check
+                                       finds and applies it, on [minutes] = a task that does so every 1 to 60 minutes
     squorli doctor                     the setup check (docs/features/doctor.md)
 
   Services: server, postgres, livekit, caddy ("app" means server).
@@ -1026,6 +1028,281 @@ function Invoke-AutoUpdate([string[]]$words) {
   }
 }
 
+# ---- The public address for voice and video when it changes (docs/features/dynamic-ip.md): a task asks the router by
+# UPnP, else an address on the web that answers with the caller's IP, and when it differs from LIVEKIT_NODE_IP it writes
+# the new one into .env and config\livekit.yaml and restarts LiveKit (with the services that need it: Windows stops them
+# along). IPv4 only: the media ports are forwarded for IPv4. The same command exists in the helper of deploy/install.sh.
+$NodeIpTaskName = 'SquorliNodeIp'
+# .env: the first active KEY= line, else the first "#KEY=" line, else appended; the file keeps its rights (written in place)
+function Env-Write([string]$key, [string]$value) {
+  $lines = @($S.EnvLines)
+  $active = @($lines | Where-Object { $_.StartsWith("$key=") }).Count -gt 0
+  $out = New-Object Collections.Generic.List[string]
+  $done = $false
+  foreach ($line in $lines) {
+    if ($line.StartsWith("$key=")) { if (-not $done) { $out.Add("$key=$value"); $done = $true }; continue }
+    if (-not $active -and -not $done -and ($line.StartsWith("#$key=") -or $line.StartsWith("# $key="))) { $out.Add("$key=$value"); $done = $true; continue }
+    $out.Add($line)
+  }
+  if (-not $done) { $out.Add("$key=$value") }
+  [IO.File]::WriteAllText($S.EnvFile, (($out -join "`n") + "`n"), $Utf8)
+  $S.EnvLines = @($out)
+}
+# An IPv4 address that the internet can reach: no private, loopback, link-local, carrier-grade NAT or multicast range
+function Test-PublicIPv4([string]$value) {
+  if ($value -notmatch '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') { return $false }
+  $p = @($value.Split('.') | ForEach-Object { [int]$_ })
+  if (@($p | Where-Object { $_ -gt 255 }).Count -gt 0) { return $false }
+  if ($p[0] -eq 0 -or $p[0] -eq 10 -or $p[0] -eq 127 -or $p[0] -ge 224) { return $false }
+  if ($p[0] -eq 172 -and $p[1] -ge 16 -and $p[1] -le 31) { return $false }
+  if ($p[0] -eq 192 -and $p[1] -eq 168) { return $false }
+  if ($p[0] -eq 169 -and $p[1] -eq 254) { return $false }
+  if ($p[0] -eq 100 -and $p[1] -ge 64 -and $p[1] -le 127) { return $false }
+  return $true
+}
+function Get-Http([string]$url, [int]$timeout = 3) {
+  try {
+    $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec $timeout
+    return $Utf8.GetString($r.RawContentStream.ToArray())
+  } catch { return '' }
+}
+# The router's public address by UPnP: GetExternalIPAddress of its WANIPConnection or WANPPPConnection service. The
+# description comes from a multicast search (SSDP), or lies at the addresses common routers use (AVM 49000, miniupnpd
+# 5000, others) when LIVEKIT_ROUTER_IP names the router or the search found nothing. Nothing when no router answers.
+function Get-RouterIp {
+  $locations = New-Object Collections.Generic.List[string]
+  $given = Env-Get 'LIVEKIT_ROUTER_IP'
+  if (-not $given) {
+    try {
+      $udp = New-Object Net.Sockets.UdpClient
+      $udp.Client.ReceiveTimeout = 1500
+      $search = "M-SEARCH * HTTP/1.1`r`nHOST: 239.255.255.250:1900`r`nMAN: `"ssdp:discover`"`r`nMX: 1`r`nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1`r`n`r`n"
+      $bytes = [Text.Encoding]::ASCII.GetBytes($search)
+      $null = $udp.Send($bytes, $bytes.Length, '239.255.255.250', 1900)
+      $end = (Get-Date).AddSeconds(2.5)
+      while ((Get-Date) -lt $end) {
+        $from = New-Object Net.IPEndPoint ([Net.IPAddress]::Any), 0
+        try { $answer = [Text.Encoding]::ASCII.GetString($udp.Receive([ref]$from)) } catch { break }
+        if ($answer -match '(?im)^LOCATION:\s*(\S+)' -and -not $locations.Contains($Matches[1])) { $locations.Add($Matches[1]) }
+      }
+      $udp.Close()
+    } catch { }
+  }
+  $gateway = $given
+  if (-not $gateway) {
+    try { $gateway = "$(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Sort-Object RouteMetric, InterfaceMetric | Select-Object -First 1 -ExpandProperty NextHop)" } catch { $gateway = '' }
+  }
+  if ($gateway) {
+    foreach ($url in @("http://${gateway}:49000/igddesc.xml", "http://${gateway}:5000/rootDesc.xml", "http://${gateway}:1900/igd.xml", "http://${gateway}:49152/rootDesc.xml", "http://${gateway}:49153/rootDesc.xml", "http://${gateway}:8000/rootDesc.xml")) {
+      if (-not $locations.Contains($url)) { $locations.Add($url) }
+    }
+  }
+  foreach ($location in $locations) {
+    $description = (Get-Http $location) -replace '[\r\n]', ''
+    if (-not $description) { continue }
+    $service = ''; $path = ''
+    foreach ($block in $description -split '<service>') {
+      if ($block -match 'urn:schemas-upnp-org:service:(WANIPConnection|WANPPPConnection):[12]' ) {
+        $service = $Matches[1]
+        if ($block -match '<controlURL>([^<]*)</controlURL>') { $path = $Matches[1].Trim(); break }
+      }
+    }
+    if (-not $service -or -not $path) { continue }
+    $base = ([Uri]$location).GetLeftPart([UriPartial]::Authority)
+    if ($path -match '^https?://') { $control = $path } elseif ($path.StartsWith('/')) { $control = "$base$path" } else { $control = "$base/$path" }
+    $body = "<?xml version=`"1.0`"?><s:Envelope xmlns:s=`"http://schemas.xmlsoap.org/soap/envelope/`" s:encodingStyle=`"http://schemas.xmlsoap.org/soap/encoding/`"><s:Body><u:GetExternalIPAddress xmlns:u=`"urn:schemas-upnp-org:service:${service}:1`"/></s:Body></s:Envelope>"
+    try {
+      $r = Invoke-WebRequest -Uri $control -Method Post -Body $body -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPAction = "`"urn:schemas-upnp-org:service:${service}:1#GetExternalIPAddress`"" } -UseBasicParsing -TimeoutSec 3
+      $text = [Text.Encoding]::ASCII.GetString($r.RawContentStream.ToArray())
+      if ($text -match '<NewExternalIPAddress>([^<]*)</NewExternalIPAddress>') { return $Matches[1].Trim() }
+    } catch { }
+  }
+  return ''
+}
+# The address an address on the web sees: LIVEKIT_NODE_IP_URL of .env, else the directory's GET /api/ip (the one of
+# DIRECTORY_URL, then the public one). Over IPv4 on purpose, which only curl.exe (part of Windows) can be told.
+function Get-WebIp {
+  $urls = @()
+  $url = Env-Get 'LIVEKIT_NODE_IP_URL'
+  if ($url) { $urls += $url }
+  else {
+    $directory = (Env-Get 'DIRECTORY_URL').TrimEnd('/')
+    if ($directory) { $urls += "$directory/api/ip" }
+    if ($directory -ne 'https://directory.squorli.com') { $urls += 'https://directory.squorli.com/api/ip' }
+  }
+  $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+  if (-not (Test-Path -LiteralPath $curl)) { return '' }
+  foreach ($url in $urls) {
+    $r = Invoke-Tool $curl @('-4', '-s', '--max-time', '10', $url)
+    $ip = "$($r.Text)".Split("`n")[0].Trim()
+    if ($r.Code -eq 0 -and (Test-PublicIPv4 $ip)) { return $ip }
+  }
+  return ''
+}
+# node_ip in config\livekit.yaml, which LiveKit reads at its start
+function Set-LiveKitNodeIp([string]$ip) {
+  $yaml = Join-Path $S.DataDir 'config\livekit.yaml'
+  if (-not (Test-Path -LiteralPath $yaml)) { return $false }
+  $text = [IO.File]::ReadAllText($yaml, $Utf8)
+  $re = New-Object Text.RegularExpressions.Regex '(?m)^(\s*node_ip:\s*)"[^"]*"'
+  if (-not $re.IsMatch($text)) { return $false }
+  [IO.File]::WriteAllText($yaml, $re.Replace($text, ('${1}"' + $ip + '"'), 1), $Utf8)
+  return $true
+}
+function Write-NodeIpLog([string]$text) {
+  $log = Join-Path $S.Logs 'nodeip.log'
+  try {
+    $null = New-Item -ItemType Directory -Force -Path $S.Logs
+    if ((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).Length -gt 1MB) {
+      $kept = @(Get-Content -LiteralPath $log -Tail 2000 -Encoding UTF8)
+      [IO.File]::WriteAllText($log, (($kept -join "`r`n") + "`r`n"), $Utf8)
+    }
+    [IO.File]::AppendAllText($log, "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $text`r`n", $Utf8)
+  } catch { }
+}
+# One check: finds the address, and when it is new writes it and restarts LiveKit. $auto = the task's run: one line in
+# logs\nodeip.log for a change or a failure, the time of every run in logs\nodeip.last. Exit 1 when no address was found.
+function Invoke-NodeIpCheck([bool]$auto) {
+  $say = { param($text, $failed) if ($auto) { Write-NodeIpLog $text } elseif ($failed) { Bad $text } else { Ok $text } }
+  $ip = Get-RouterIp; $source = ''
+  if ($ip) {
+    if (Test-PublicIPv4 $ip) { $source = T 'Router' 'router' }
+    else {
+      if (-not $auto) { Warn (T "Der Router nennt $ip, keine öffentliche Adresse (DS-Lite oder CGNAT: dann kommt von außen nichts an; oder ein zweiter Router davor)." "The router says $ip, no public address (DS-Lite or CGNAT: nothing arrives from outside then; or a second router in front).") }
+      $ip = ''
+    }
+  }
+  if (-not $ip) { $ip = Get-WebIp; if ($ip) { $source = 'Web' } }
+  $last = Join-Path $S.Logs 'nodeip.last'
+  try { $null = New-Item -ItemType Directory -Force -Path $S.Logs } catch { }
+  if (-not $ip) {
+    & $say (T 'Keine öffentliche IPv4-Adresse gefunden (Router per UPnP, Verzeichnis). LIVEKIT_NODE_IP bleibt, wie es ist.' 'No public IPv4 address found (router by UPnP, directory). LIVEKIT_NODE_IP stays as it is.') $true
+    try { [IO.File]::WriteAllText($last, "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') -`r`n", $Utf8) } catch { }
+    exit 1
+  }
+  try { [IO.File]::WriteAllText($last, "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $ip $source`r`n", $Utf8) } catch { }
+  $have = Env-Get 'LIVEKIT_NODE_IP'
+  if ($ip -eq $have) {
+    if (-not $auto) { Ok (T "Öffentliche Adresse $ip ($source), unverändert." "Public address $ip ($source), unchanged.") }
+    return
+  }
+  if (-not $have) { $have = '?' }
+  Env-Write 'LIVEKIT_NODE_IP' $ip
+  if (-not (Set-LiveKitNodeIp $ip)) {
+    & $say (T "Öffentliche Adresse $have -> $ip ($source) in .env geschrieben, aber config\livekit.yaml hat keine Zeile node_ip: das Setup erneut ausführen." "Public address $have -> $ip ($source) written into .env, but config\livekit.yaml has no line node_ip: run the setup again.") $true
+    exit 1
+  }
+  if (Test-Running 'livekit') {
+    $stopped = @(Stop-Services @('livekit'))
+    Start-Services (@('livekit') + $stopped)
+    & $say (T "Öffentliche Adresse $have -> $ip ($source): LiveKit neu gestartet." "Public address $have -> $ip ($source): LiveKit restarted.") $false
+  } else {
+    & $say (T "Öffentliche Adresse $have -> $ip ($source) geschrieben; LiveKit läuft nicht und nimmt sie beim Start." "Public address $have -> $ip ($source) written; LiveKit is not running and takes it at its start.") $false
+  }
+}
+function New-NodeIpTaskXml([int]$minutes) {
+  $arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $S.InstallDir 'squorli.ps1')`" nodeip check -Auto"
+  if ($DataDir) { $arguments += " -DataDir `"$($S.DataDir)`"" }
+  $command = [Security.SecurityElement]::Escape((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'))
+  $arguments = [Security.SecurityElement]::Escape($arguments)
+  return @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Squorli Server: keeps the public address for voice and video current (squorli nodeip). Interval in minutes: $minutes</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+      <Repetition><Interval>PT${minutes}M</Interval><Duration>P1D</Duration><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>$(Get-AutoPrincipal)</Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>$command</Command>
+      <Arguments>$arguments</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"@
+}
+# The minutes of the task that is registered; nothing when there is none.
+function Get-NodeIpTask {
+  $r = Invoke-Tool 'schtasks.exe' @('/Query', '/TN', $NodeIpTaskName, '/XML')
+  if ($r.Code -ne 0 -or $r.Text -notmatch '<Task') { return $null }
+  if ($r.Text -match '<Interval>PT(\d+)M</Interval>') { return @{ Minutes = [int]$Matches[1] } }
+  return @{ Minutes = 5 }
+}
+function Register-NodeIpTask([int]$minutes) {
+  $file = Join-Path $S.DataDir 'nodeip-task.xml'
+  [IO.File]::WriteAllText($file, (New-NodeIpTaskXml $minutes), [Text.Encoding]::Unicode)
+  try {
+    $r = Invoke-Tool 'schtasks.exe' @('/Create', '/TN', $NodeIpTaskName, '/XML', $file, '/F')
+    if ($r.Code -ne 0) { Die (T "Die Aufgabe ließ sich nicht anlegen (schtasks: $($r.Code)): $($r.Text)" "The task could not be created (schtasks: $($r.Code)): $($r.Text)") }
+  } finally { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+}
+function Invoke-NodeIp([string[]]$words) {
+  $what = 'status'
+  if ($words.Count -gt 0) { $what = $words[0].ToLowerInvariant() }
+  switch ($what) {
+    'status' {
+      $task = Get-NodeIpTask
+      Write-Host (T "Angekündigte Adresse für Sprache und Video (LIVEKIT_NODE_IP): $(Env-Get 'LIVEKIT_NODE_IP')" "Announced address for voice and video (LIVEKIT_NODE_IP): $(Env-Get 'LIVEKIT_NODE_IP')")
+      if ($null -eq $task) {
+        Write-Host (T 'Wechselnde Adresse (Aufgabe): aus' 'Changing address (task): off')
+        Note (T 'Einschalten: squorli nodeip on   Jetzt prüfen: squorli nodeip check' 'Switch on: squorli nodeip on   Check now: squorli nodeip check')
+      } else {
+        Write-Host (T "Wechselnde Adresse (Aufgabe): an, alle $($task.Minutes) Minuten" "Changing address (task): on, every $($task.Minutes) minutes")
+        Note (T "Aufgabe `"$NodeIpTaskName`" der Aufgabenplanung; ausschalten: squorli nodeip off" "Task `"$NodeIpTaskName`" of the task scheduler; switch off: squorli nodeip off")
+      }
+      $last = Join-Path $S.Logs 'nodeip.last'
+      if (Test-Path -LiteralPath $last) { Write-Host (T "Letzte Prüfung: $((Get-Content -LiteralPath $last -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -First 1))" "Last check: $((Get-Content -LiteralPath $last -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -First 1))") }
+      $log = Join-Path $S.Logs 'nodeip.log'
+      if (Test-Path -LiteralPath $log) {
+        Write-Host ''
+        Write-Host "$(T 'Die letzten Änderungen' 'The last changes') ($log):" -ForegroundColor DarkGray
+        Get-Content -LiteralPath $log -Tail 8 -Encoding UTF8 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+      }
+    }
+    'check' { Invoke-NodeIpCheck $Auto }
+    'on' {
+      $n = 5
+      if ($words.Count -gt 1) {
+        if (-not [int]::TryParse($words[1], [ref]$n) -or $n -lt 1 -or $n -gt 60) { Die (T "'$($words[1])' ist kein Abstand in Minuten: eine ganze Zahl von 1 bis 60." "'$($words[1])' is no interval in minutes: a whole number from 1 to 60.") }
+      } else {
+        Write-Host ''
+        Note (T 'Eine Aufgabe prüft regelmäßig die öffentliche Adresse (Router per UPnP, sonst das Verzeichnis) und startet LiveKit neu, wenn sie sich geändert hat. Wer dann gerade spricht, ist ohnehin schon getrennt.' 'A task checks the public address regularly (the router by UPnP, else the directory) and restarts LiveKit when it changed. Whoever is talking then was cut off already.')
+      }
+      Env-Write 'LIVEKIT_DYNAMIC_IP' 'true'
+      Register-NodeIpTask $n
+      Ok (T "Die öffentliche Adresse wird alle $n Minuten geprüft." "The public address is checked every $n minutes.")
+      Note (T 'Ausschalten: squorli nodeip off   Stand: squorli nodeip   Jetzt prüfen: squorli nodeip check' 'Switch off: squorli nodeip off   State: squorli nodeip   Check now: squorli nodeip check')
+    }
+    'off' {
+      Env-Write 'LIVEKIT_DYNAMIC_IP' ''
+      if ($null -eq (Get-NodeIpTask)) { Ok (T 'Die Aufgabe war schon aus.' 'The task was off already.'); return }
+      $r = Invoke-Tool 'schtasks.exe' @('/Delete', '/TN', $NodeIpTaskName, '/F')
+      if ($r.Code -ne 0) { Die (T "Die Aufgabe ließ sich nicht entfernen (schtasks: $($r.Code)): $($r.Text)" "The task could not be removed (schtasks: $($r.Code)): $($r.Text)") }
+      Ok (T 'Die Aufgabe ist aus. LIVEKIT_NODE_IP behält die letzte Adresse.' 'The task is off. LIVEKIT_NODE_IP keeps the last address.')
+    }
+    default {
+      Write-Host (T 'squorli nodeip [check | on [Minuten] | off]   (Minuten: 1 bis 60; ohne Wort: der Stand)' 'squorli nodeip [check | on [minutes] | off]   (minutes: 1 to 60; without a word: the state)')
+      exit 1
+    }
+  }
+}
+
 # ---- The setup check (docs/features/doctor.md): the services, DNS from this machine, then the app server's own report (it
 # reaches its public address, LiveKit and the directory; a directory repeats the address checks from outside).
 function Invoke-Doctor {
@@ -1071,7 +1348,7 @@ function Invoke-Doctor {
 }
 
 function Show-Help {
-  Write-Host 'squorli status | logs [service] [-Follow] | restart [service] | stop [service] | start [service] | backup [dir] | restore <dir> [-Yes] | update [-Version x.y.z] [-Check] | autoupdate [on [hours] | off] | doctor'
+  Write-Host 'squorli status | logs [service] [-Follow] | restart [service] | stop [service] | start [service] | backup [dir] | restore <dir> [-Yes] | update [-Version x.y.z] [-Check] | autoupdate [on [hours] | off] | nodeip [check | on [minutes] | off] | doctor'
   Write-Host 'services: server, postgres, livekit, caddy'
 }
 
@@ -1096,7 +1373,7 @@ function Main {
   $words = @($words | Where-Object { $_ -notmatch '^--?[A-Za-z]+$' })
   $first = ''
   if ($words.Count -gt 0) { $first = $words[0] }
-  $known = @('status', 'ps', 'logs', 'restart', 'stop', 'down', 'start', 'up', 'backup', 'restore', 'update', 'autoupdate', 'doctor')
+  $known = @('status', 'ps', 'logs', 'restart', 'stop', 'down', 'start', 'up', 'backup', 'restore', 'update', 'autoupdate', 'nodeip', 'doctor')
   if ($known -notcontains $name) {
     Write-Host (T "Den Befehl '$Command' gibt es nicht." "There is no command '$Command'.") -ForegroundColor Red
     Show-Help
@@ -1129,6 +1406,7 @@ function Main {
       'restore' { Invoke-Restore $first }
       'update' { Invoke-Update }
       'autoupdate' { Invoke-AutoUpdate $words }
+      'nodeip' { Invoke-NodeIp $words }
       'doctor' { Invoke-Doctor }
     }
   } catch {
@@ -1136,6 +1414,7 @@ function Main {
     Write-Host "x $($_.Exception.Message)" -ForegroundColor Red
     Note "$(T 'Zeile' 'line') $($_.InvocationInfo.ScriptLineNumber)"
     Write-AutoLog "x $($_.Exception.Message)"
+    if ($name -eq 'nodeip' -and $Auto) { Write-NodeIpLog "x $($_.Exception.Message)" }
     exit 1
   }
 }
