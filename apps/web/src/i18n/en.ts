@@ -257,7 +257,6 @@ export const en: Messages = {
   "login.prefixToDirectory": "Switch to a Squorli account (@)",
   "login.usernameHintLocal": "Your username on this server, e.g. ~daniel. Not your display name.",
   "login.noDirectoryForAt": "This server does not use a directory. There are only server accounts (~name) here.",
-  "login.localOff": "This server does not take server accounts. Sign in with your Squorli account (@name).",
   "login.createTitle": "Create an account",
   "login.createChoice": "Kind of the new account",
   "login.createDirectoryTab": "Squorli account",

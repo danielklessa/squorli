@@ -21,6 +21,16 @@ export function loginPrefix(value: string): LoginKind | null {
   return s.startsWith("@") ? "directory" : s.startsWith("~") ? "local" : null;
 }
 
+/**
+ * Why a sign-in of this kind cannot go ahead on this server, or null. Only the directory's can be missing (a server without a
+ * directory has no `@name`). **A server account is never refused here, whatever the switch for new server accounts says**
+ * (3 October 2026): the switch decides who may REGISTER, the server lets an existing account in either way, and the owner's
+ * account may be one (registered with the setup code while server accounts are off), which must always work.
+ */
+export function signInUnavailable(kind: LoginKind, hasDirectory: boolean): "noDirectoryForAt" | null {
+  return kind === "directory" && !hasDirectory ? "noDirectoryForAt" : null;
+}
+
 export type CreateTab = "directory" | "local";
 /** Tabs of "create an account": the directory's first when the server has one, the server account's where it allows them. */
 export function createTabs(directory: boolean, localAccounts: boolean): CreateTab[] {

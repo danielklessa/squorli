@@ -258,7 +258,6 @@ export const de = {
   "login.prefixToDirectory": "Zum Squorli-Konto (@) wechseln",
   "login.usernameHintLocal": "Dein Benutzername auf diesem Server, z. B. ~daniel. Nicht dein Anzeigename.",
   "login.noDirectoryForAt": "Dieser Server nutzt kein Verzeichnis. Hier gibt es nur Serverkonten (~name).",
-  "login.localOff": "Dieser Server nimmt keine Serverkonten. Melde dich mit deinem Squorli-Konto (@name) an.",
   "login.createTitle": "Konto erstellen",
   "login.createChoice": "Art des neuen Kontos",
   "login.createDirectoryTab": "Squorli-Konto",

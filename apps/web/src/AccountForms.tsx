@@ -2,7 +2,7 @@ import { BACKUP_MIN_PASSWORD, DIRECTORY_HANDLE_PREFIX, LOCAL_HANDLE_PREFIX, Loca
 import { useState, type ReactNode } from "react";
 import { DevicePicker } from "./DevicePicker";
 import { locale, t } from "./i18n";
-import { createTabs, loginPrefix, type CreateTab, type LoginKind } from "./loginView";
+import { createTabs, loginPrefix, signInUnavailable, type CreateTab, type LoginKind } from "./loginView";
 import { PasswordInput } from "./PasswordInput";
 import { platform } from "./platform";
 import { safeHref } from "./safeHref";
@@ -52,7 +52,7 @@ export function SignInForm({ hasDirectory, localAccounts, busy, onDirectory, onL
   const [limit, setLimit] = useState<{ devices: DeviceInfo[]; ticket: string | null } | null>(null);
   const both = hasDirectory && localAccounts;
   // What the typed prefix asks for, and whether this server offers it.
-  const unavailable = kind === "directory" ? (!hasDirectory ? t("login.noDirectoryForAt") : null) : (!localAccounts && hasDirectory ? t("login.localOff") : null);
+  const unavailable = signInUnavailable(kind, hasDirectory) ? t("login.noDirectoryForAt") : null;
   const prefix = kind === "directory" ? DIRECTORY_HANDLE_PREFIX : LOCAL_HANDLE_PREFIX;
 
   function type(value: string) {

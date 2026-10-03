@@ -35,3 +35,16 @@ describe("a server's login with server accounts", () => {
     expect(createTabs(false, true)).toEqual(["local"]);
   });
 });
+
+describe("signing in with a server account", () => {
+  it("is never refused because new server accounts are off: the owner's account may be one (3 October 2026)", async () => {
+    const { signInUnavailable } = await import("./loginView");
+    expect(signInUnavailable("local", true)).toBeNull();
+    expect(signInUnavailable("local", false)).toBeNull();
+  });
+  it("is refused for a directory name only where there is no directory", async () => {
+    const { signInUnavailable } = await import("./loginView");
+    expect(signInUnavailable("directory", true)).toBeNull();
+    expect(signInUnavailable("directory", false)).toBe("noDirectoryForAt");
+  });
+});
