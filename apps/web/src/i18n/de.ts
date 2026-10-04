@@ -1337,6 +1337,7 @@ export const de = {
   "dir.not_found": "Unbekanntes Handle.",
   "dir.bad_handle": "Ungültiges Handle.",
   "dir.handle_taken": "Dieses Handle ist schon vergeben.",
+  "dir.handle_reserved": "Dieses Handle ist reserviert (Namen des Betreibers, von Rollen und Platzhaltern). Bitte ein anderes wählen.",
   "dir.key_registered": "Dieser Schlüssel hat bereits das Handle @{handle}.",
   "dir.rate_limited": "Zu viele Versuche, bitte kurz warten.",
   "dir.bad_request": "Ungültiges Handle: {detail}.",

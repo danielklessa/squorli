@@ -181,6 +181,15 @@ function New-Secret([int]$bytes = 32) {
   try { $rng.GetBytes($buffer) } finally { $rng.Dispose() }
   return -join ($buffer | ForEach-Object { $_.ToString('x2') })
 }
+# 80 % of the free space of the drive that holds $folder, in MB; $null when the drive cannot be asked (security audit S13, 4 October 2026).
+function Get-DefaultQuotaMb([string]$folder) {
+  try {
+    $root = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($folder))
+    if (-not $root) { return $null }
+    $free = ([IO.DriveInfo]::new($root)).AvailableFreeSpace
+    return [long][Math]::Floor($free * 0.8 / 1MB)
+  } catch { return $null }
+}
 function Test-IPv4([string]$value) {
   if ($value -notmatch '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') { return $false }
   foreach ($part in $value.Split('.')) { if ([int]$part -gt 255) { return $false } }
@@ -660,6 +669,7 @@ function Show-Summary {
   $rows['Directory'] = $directory
   $rows[(T 'Besitzer' 'Owner')] = $owner
   $rows['LiveKit IP'] = $node
+  $rows[(T 'Speicher für Dateien' 'Storage for files')] = $S.QuotaText
   $rows[(T 'Dienstkonto' 'Service account')] = $account
   $rows[(T 'Offene Ports' 'Open ports')] = (Get-OpenPorts) -join ' '
   foreach ($key in $rows.Keys) { Write-Host ("  {0,-18} {1}" -f $key, $rows[$key]) }
@@ -851,6 +861,9 @@ function Write-Env {
   if (-not $key -or $key -eq 'devkey') { Env-Set $envFile 'LIVEKIT_API_KEY' 'squorli' }
   $secret = Env-Get $envFile 'LIVEKIT_API_SECRET'
   if ($secret.Length -lt 32 -or $secret -eq 'change-me-to-at-least-32-random-characters') { Env-Set $envFile 'LIVEKIT_API_SECRET' (New-Secret) }
+  # Storage quota (docs/features/limits.md; security audit S13, 4 October 2026): a fresh installation gets 80 % of the free space
+  # of the data folder's drive; a value the operator set stays.
+  if (-not (Env-Get $envFile 'STORAGE_QUOTA_MB') -and $S.QuotaMb) { Env-Set $envFile 'STORAGE_QUOTA_MB' "$($S.QuotaMb)" }
   # What squorli doctor shows the app server instead of a session (a proxy on this machine arrives from 127.0.0.1 too)
   if ((Env-Get $envFile 'DOCTOR_TOKEN').Length -lt 32) { Env-Set $envFile 'DOCTOR_TOKEN' (New-Secret) }
 
@@ -1247,6 +1260,15 @@ function Main {
       $old = Ask (T 'Bisheriges POSTGRES_PASSWORD (leer = abbrechen)' 'Previous POSTGRES_PASSWORD (empty = abort)')
       if (-not $old) { Stop-Log; exit 1 }
       $S.OldDbPassword = $old
+    }
+    # The storage quota (security audit S13, 4 October 2026): kept when the .env already has one, else 80 % of the free space
+    # of the data folder's drive (Write-Env sets it); never touched by an update.
+    $S.QuotaMb = Env-Get $S.EnvFile 'STORAGE_QUOTA_MB'
+    if ($S.QuotaMb) { $S.QuotaText = "$($S.QuotaMb) MB $(T '(aus der .env)' '(from .env)')" }
+    else {
+      $S.QuotaMb = Get-DefaultQuotaMb $S.DataDir
+      if ($S.QuotaMb) { $S.QuotaText = "$($S.QuotaMb) MB " } else { $S.QuotaText = '' }
+      $S.QuotaText += T '(80 % des freien Platzes; STORAGE_QUOTA_MB in der .env)' '(80 % of the free space; STORAGE_QUOTA_MB in .env)'
     }
     Show-Summary
   }

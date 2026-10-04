@@ -1,9 +1,9 @@
-import { Permission, UpdateSettingsRequest, type StatusApiKeyResponse } from "@squorli/protocol";
+import { Permission, UpdateSettingsRequest, sniffAvatarMime, type StatusApiKeyResponse } from "@squorli/protocol";
 import { and, eq, isNotNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, open, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireMember } from "../auth/session";
@@ -30,6 +30,21 @@ function newStatusApiKey(): string { return randomBytes(32).toString("base64url"
 /** Server icon: raster images only (SVG could contain scripts and would be served same-origin), at most 2 MB. */
 const ICON_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const ICON_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * The icon's type by its first bytes (security audit S13, 4 October 2026), like the avatar: PNG, JPEG and WebP as the
+ * protocol's sniffer sees them, GIF by its header. What is stored and served is this type, never the one the upload declared;
+ * null = not an image the server keeps.
+ */
+function sniffIconMime(head: Uint8Array): string | null {
+  const gif = head.length >= 6 && head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x38 && (head[4] === 0x37 || head[4] === 0x39) && head[5] === 0x61;
+  return gif ? "image/gif" : sniffAvatarMime(head);
+}
+/** The first `n` bytes of a file (fewer when it is shorter). */
+async function readHead(path: string, n: number): Promise<Uint8Array> {
+  const fh = await open(path);
+  try { const buf = new Uint8Array(n); const { bytesRead } = await fh.read(buf, 0, n, 0); return buf.subarray(0, bytesRead); } finally { await fh.close(); }
+}
 
 export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: Hub, config: Config, directory: DirectoryClient, voice: { presence: VoicePresence; lk: LivekitAdmin; onRadioChange: () => void }, suspensions: Suspensions, meter: StorageMeter) {
   /** Directory (M6d): name, listing, description, open join and icon live at the directory; re-register after a change. */
@@ -145,14 +160,18 @@ export async function registerSettingsRoutes(app: FastifyInstance, db: Db, hub: 
       const tooLarge = err instanceof Error && (err.message === "too_large" || (err as { code?: string }).code === "FST_REQ_FILE_TOO_LARGE");
       return reply.code(tooLarge ? 413 : 500).send({ error: tooLarge ? "too_large" : "upload_failed", maxMb: 2 });
     }
+    // The bytes decide the type (S13): a file that only claims to be an image is refused, a declared type that does not match
+    // the bytes is corrected to what they are.
+    const mime = sniffIconMime(await readHead(tmp, 16));
+    if (!mime) { await rm(tmp, { force: true }); return reply.code(400).send({ error: "bad_type", allowed: [...ICON_TYPES] }); }
     // The storage quota (docs/features/limits.md): the icon it replaces gives its bytes back.
     const [size, before] = await Promise.all([stat(tmp).then((st) => st.size), stat(iconPath).then((st) => st.size).catch(() => 0)]);
     if (!(await meter.room(size - before))) { await rm(tmp, { force: true }); return reply.code(413).send({ error: "storage_full" }); }
     await replaceFile(tmp, iconPath);
     meter.invalidate();
-    await db.update(serverSettings).set({ iconMime: part.mimetype, iconUpdatedAt: new Date() }).where(eq(serverSettings.id, SETTINGS_ID));
+    await db.update(serverSettings).set({ iconMime: mime, iconUpdatedAt: new Date() }).where(eq(serverSettings.id, SETTINGS_ID));
     await broadcastStructure(db, hub, ["settings"]);
-    req.log.info({ by: m.userId, type: part.mimetype }, "Server-Icon gesetzt");
+    req.log.info({ by: m.userId, type: mime }, "Server-Icon gesetzt");
     reregister();
     return { ok: true, iconUrl: (await loadSettings(db)).iconUrl };
   });

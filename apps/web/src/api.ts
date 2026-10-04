@@ -566,7 +566,7 @@ export function explainLocalError(err: unknown): string {
 export function explainDirectoryError(err: unknown): string {
   if (err instanceof ApiError) {
     switch (err.code) {
-      case "auth_invalid": case "no_backup": case "no_account": case "not_found": case "bad_handle": case "handle_taken": case "rate_limited":
+      case "auth_invalid": case "no_backup": case "no_account": case "not_found": case "bad_handle": case "handle_taken": case "handle_reserved": case "rate_limited":
       case "signature_invalid": case "challenge_invalid": case "totp_required": case "totp_invalid": case "totp_reused": case "server_unknown": case "totp_unavailable":
       case "founder": case "server_refused": case "email_unavailable": case "no_email": case "mail_failed": case "totp_disabled":
       case "email_required": case "email_code_invalid": case "email_taken": case "avatar_too_large": case "avatar_invalid":

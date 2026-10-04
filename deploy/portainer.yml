@@ -20,9 +20,13 @@ services:
     image: ${APP_IMAGE:-ghcr.io/danielklessa/squorli-server:latest}
     restart: unless-stopped
     # No privileges beyond a plain process (security audit, 2 October 2026): the service binds a high port and writes only to its
-    # own volume or mapped folder, so it needs no capability and no setuid; a hole in it gets less to work with.
+    # own volume or mapped folder, so it needs no capability and no setuid; a hole in it gets less to work with. Since 4 October
+    # 2026 (audit measure 3.10) its filesystem is read-only but for that volume and a private /tmp: nothing of the program
+    # itself can be changed from inside the container.
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
     logging: *logging
     environment:
       NODE_ENV: production
@@ -62,6 +66,9 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # The image starts as root and hands over to postgres by itself (that needs its capabilities); no-new-privileges only
+    # keeps a process of it from gaining more (audit measure 3.10, 4 October 2026).
+    security_opt: ["no-new-privileges:true"]
     logging: *logging
     environment:
       POSTGRES_DB: chat
@@ -78,6 +85,12 @@ services:
   livekit:
     image: livekit/livekit-server:v1.13.7  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
     restart: unless-stopped
+    # LiveKit runs as root in its image but needs no capability (high ports) and writes nothing: no privileges, nothing
+    # writable but a private /tmp (audit measure 3.10, 4 October 2026).
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
     logging: *logging
     # Media ports from the stack variables; the flags override tcp_port/udp_port of LIVEKIT_CONFIG below.
     command: --rtc.tcp_port ${LIVEKIT_TCP_PORT:-7881} --udp-port ${LIVEKIT_UDP_PORT:-7882}

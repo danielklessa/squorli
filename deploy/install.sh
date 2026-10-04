@@ -108,6 +108,13 @@ env_set() {
 }
 
 secret() { if command -v openssl >/dev/null 2>&1; then openssl rand -hex 32; else head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; fi; }
+# default_quota_mb DIR: 80 % of the space free on DIR's filesystem, in MB (security audit S13, 4 October 2026: a server
+# without a storage quota lets one member fill the disk); empty when df cannot tell.
+default_quota_mb() {
+  local kb; kb="$(df -Pk "$1" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ {print $4}')"
+  [ -n "$kb" ] || return 0
+  printf '%s' "$(( kb * 8 / 10 / 1024 ))"
+}
 is_ipv4() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 # probe URL CODE: waits up to 30 s until URL answers with the HTTP status CODE
 probe() {
@@ -526,6 +533,7 @@ summary() {
     "HTTPS" "$how" "Directory" "${DIRECTORY:-$(t "keins" "none")}" "$(t "Besitzer" "Owner")" "${OWNER:-$([ -n "$OWNER_CODE" ] && t "Serverkonto mit Einrichtungscode" "server account with setup code" || t "wer sich zuerst anmeldet" "whoever signs in first")}" \
     "LiveKit IP" "$([ "$NODE_DYN" = true ] && t "wechselnd (Job prüft alle 5 Minuten)" "changing (a job checks every 5 minutes)" || printf '%s' "${NODE_IP:-$(t "automatisch" "automatic")}")" "Image" "$IMAGE"
   printf '  %-18s %s\n' "$(t "Offene Ports" "Open ports")" "$([ "$SETUP" = bundled ] && printf '80/tcp 443/tcp ')$LK_TCP_PORT/tcp $LK_UDP_PORT/udp"
+  printf '  %-18s %s\n' "$(t "Speicher für Dateien" "Storage for files")" "$QUOTA_TEXT"
   confirm "$(t "So installieren?" "Install like this?")" y || exit 0
 }
 
@@ -599,6 +607,8 @@ write_env() {
     case ",$v," in *",$PROXY_IP,"*) ;; *) v="$v,$PROXY_IP" ;; esac
     env_set "$envf" TRUSTED_PROXIES "$v"
   fi
+  # Storage quota (docs/features/limits.md): a fresh installation gets 80 % of the free space; a value the operator set stays.
+  if [ -z "$(env_get "$envf" STORAGE_QUOTA_MB)" ] && [ -n "$QUOTA_MB" ]; then env_set "$envf" STORAGE_QUOTA_MB "$QUOTA_MB"; fi
   umask 022
   ok "$envf ($(t "nur für root lesbar" "readable by root only"))"
 }
@@ -1344,6 +1354,10 @@ main() {
   fi
 
   configure
+  # The storage quota (security audit S13): kept when the .env already has one, else 80 % of the free space (write_env sets it).
+  QUOTA_MB=""; [ ! -f "$DIR/.env" ] || QUOTA_MB="$(env_get "$DIR/.env" STORAGE_QUOTA_MB)"
+  if [ -n "$QUOTA_MB" ]; then QUOTA_TEXT="$QUOTA_MB MB ($(t "aus der .env" "from .env"))"
+  else QUOTA_MB="$(default_quota_mb "$DIR")"; QUOTA_TEXT="$([ -n "$QUOTA_MB" ] && printf '%s MB ' "$QUOTA_MB")$(t "(80 % des freien Platzes; STORAGE_QUOTA_MB in der .env)" "(80 % of the free space; STORAGE_QUOTA_MB in .env)")"; fi
   summary
   firewall
   compose_args

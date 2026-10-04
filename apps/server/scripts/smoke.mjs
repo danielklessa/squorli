@@ -617,6 +617,14 @@ check("server icon: upload, iconUrl, served as png, in health with server name",
   && iconRes.headers.get("content-type")?.startsWith("image/png") && hIcon.iconUrl === stIcon.settings.iconUrl && hIcon.serverName === "Rauchtest-Server", `${si1} ${ri1.error ?? ""}`);
 const fdSvg = new FormData(); fdSvg.append("file", new Blob(["<svg/>"], { type: "image/svg+xml" }), "x.svg");
 const [si2, ri2] = await api("PUT", "/api/settings/icon", fdSvg, owner.token);
+// S13: the bytes decide, not the declared type: text declared as png is refused, a GIF declared as png is stored as a gif
+const fdFake = new FormData(); fdFake.append("file", new Blob(["<script>alert(1)</script>"], { type: "image/png" }), "icon.png");
+const [siFake, riFake] = await api("PUT", "/api/settings/icon", fdFake, owner.token);
+const GIF1 = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+const fdGif = new FormData(); fdGif.append("file", new Blob([GIF1], { type: "image/png" }), "icon.png");
+const [siGif] = await api("PUT", "/api/settings/icon", fdGif, owner.token);
+const gifRes = await api("GET", "/api/server-icon", undefined, undefined, true);
+check("server icon: the bytes decide the type (text as png refused, a gif declared png served as gif)", siFake === 400 && riFake.error === "bad_type" && siGif === 200 && gifRes.status === 200 && gifRes.headers.get("content-type")?.startsWith("image/gif"), `${siFake} ${riFake.error ?? ""} ${siGif} ${gifRes.headers.get("content-type")}`);
 const [si3] = await api("PUT", "/api/settings/icon", pngForm(), B.token);
 const [si4] = await api("DELETE", "/api/settings/icon", undefined, owner.token);
 const [, stIcon2] = await api("GET", "/api/state", undefined, owner.token);

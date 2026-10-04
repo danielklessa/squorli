@@ -1336,6 +1336,7 @@ export const en: Messages = {
   "dir.not_found": "Unknown handle.",
   "dir.bad_handle": "Invalid handle.",
   "dir.handle_taken": "This handle is already taken.",
+  "dir.handle_reserved": "This handle is reserved (names of the operator, of roles and placeholders). Please choose another.",
   "dir.key_registered": "This key already has the handle @{handle}.",
   "dir.rate_limited": "Too many attempts, please wait a moment.",
   "dir.bad_request": "Invalid handle: {detail}.",
