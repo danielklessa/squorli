@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-  Builds the Squorli Server package for Windows (x64): squorli-server-<version>-windows-x64.zip and its .sha256 file.
+  Builds the Squorli Server package for Windows (x64): squorli-server-<version>-windows-x64.zip and its .sha256 file
+  (the release workflow signs that file with the release key; the package carries the public key).
 
 .DESCRIPTION
   Builds the web client and the server like the Dockerfile does, downloads the programs named in versions.json (Node.js,
@@ -285,6 +286,15 @@ foreach ($script in @('install.ps1', 'uninstall.ps1', 'squorli.ps1', 'squorli.cm
   }
   Copy-Item -LiteralPath $source -Destination $stage
 }
+# The release key's public half and the check of a signature: squorli update of this installation verifies the .sha256 file
+# of the next release with them (deploy/AGENTS.md "Signed releases"). The key is an Ed25519 public key in PEM form.
+foreach ($file in @('squorli-server-releases.pub', 'verify-signature.mjs')) {
+  $source = Join-Path $PSScriptRoot $file
+  if (-not (Test-Path -LiteralPath $source)) { throw "$file is missing in $PSScriptRoot" }
+  Copy-Item -LiteralPath $source -Destination $stage
+}
+$pem = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'squorli-server-releases.pub'))
+if ($pem -notmatch '(?s)^-----BEGIN PUBLIC KEY-----\s*MCowBQYDK2VwAyEA[A-Za-z0-9+/=\s]+-----END PUBLIC KEY-----\s*$') { throw 'squorli-server-releases.pub is no Ed25519 public key in PEM form' }
 # What an operator with a reverse proxy of their own needs (external mode); the Compose overlays stay out.
 $proxies = Join-Path $stage 'proxies'
 New-Item -ItemType Directory -Force -Path $proxies | Out-Null

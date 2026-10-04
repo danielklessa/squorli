@@ -1,7 +1,8 @@
 # test:  typecheck + vitest + build on every push and pull request
 # image: production image (Dockerfile, target "app") into the GitHub Container Registry
-#        on the default branch (tags <branch>, sha-<short-sha>, latest) and on git tags (<tag>, latest).
-#        Use it on the servers via APP_IMAGE in .env, see deploy/compose.yml.
+#        on the default branch (tags <branch>, sha-<short-sha>, latest) and on git tags (<tag>, latest), with GitHub's
+#        build provenance attestation. The signature of a release's image is made by server-release.yml.
+#        Use it on the servers via APP_IMAGE in .env (stable or a version), see deploy/compose.yml.
 # windows: typecheck + vitest + server and web build on Windows, then the package for Windows (deploy/windows/), its
 #        acceptance test and the package as an artifact of the run (windows-package.yml; GitHub only).
 # proxies: the reference proxy configurations against the real stack (GitHub only).
@@ -77,6 +78,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Build provenance (below)
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -96,13 +100,25 @@ jobs:
             type=ref,event=tag
             type=sha
             type=raw,value=latest
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           target: app
           push: true
+          # Buildx' own provenance would turn the image into an index around manifest and attestation; stable-image.yml
+          # and the installations count on one manifest with one digest. The provenance comes from GitHub instead (below).
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Build provenance (security audit S9, deploy/AGENTS.md "Signed releases"): which workflow built this digest from which
+      # commit, as a Sigstore attestation kept by GitHub and pushed next to the image. Anyone checks it with
+      # `gh attestation verify oci://ghcr.io/danielklessa/squorli-server:<tag> --owner danielklessa`. The signature that
+      # installations check is another thing: server-release.yml signs a release's image after the owner's approval.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/danielklessa/squorli-server
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

@@ -14,7 +14,7 @@
     squorli start [service]
     squorli backup [folder]            database, files and .env into <folder>\<time> (default: the data folder's backups)
     squorli restore <folder> [-Yes]    replaces database and files by a backup, also by one made on Linux
-    squorli update [-Version x.y.z]    the newest release from GitHub; -Package <file or address> takes that ZIP
+    squorli update [-Version x.y.z]    the newest release from GitHub (signature and SHA-256 checked); -Package <file or address> takes that ZIP
     squorli update -Check              only looks for a newer release: exit code 10 when there is one, 0 when not
     squorli autoupdate [on|off]        a task that looks for a new version every 1 to 24 hours and installs it
     squorli nodeip [check|on|off]      the public address for voice and video when it changes (a home connection): check
@@ -32,7 +32,8 @@ param(
   [Alias('f')][switch]$Follow,
   [Alias('y')][switch]$Yes,
   [string]$Version = '',
-  # update: a package's ZIP (a file or an address) in place of the release on GitHub; its .sha256 file lies next to it.
+  # update: a package's ZIP (a file or an address) in place of the release on GitHub; its .sha256 file lies next to it,
+  # and the signature of that file (.sha256.sig) when there is one; an address must have it.
   [string]$Package = '',
   # update: look for a newer release and change nothing.
   [switch]$Check,
@@ -656,6 +657,24 @@ function Get-File([string]$url, [string]$path) {
   catch { Die (T "Der Download ist fehlgeschlagen: $url ($($_.Exception.Message))" "The download failed: $url ($($_.Exception.Message))") }
 }
 
+# The .sha256 file of a release is signed by the release key (Ed25519; deploy/windows/AGENTS.md "Signed releases"). The public
+# key, the check (verify-signature.mjs) and the node.exe that runs it are this installation's own, installed with the package
+# before: never the new package's, which is what is being checked. Returns Ok and, when not ok, Why.
+function Test-Signature([string]$file, [string]$signature) {
+  $node = Join-Path $S.InstallDir 'node\node.exe'
+  $script = Join-Path $S.InstallDir 'verify-signature.mjs'
+  $key = Join-Path $S.InstallDir 'squorli-server-releases.pub'
+  foreach ($need in @($node, $script, $key)) {
+    if (-not (Test-Path -LiteralPath $need -PathType Leaf)) { return @{ Ok = $false; Why = (T "$need fehlt" "$need is missing") } }
+  }
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { $lines = @(& $node @($script, $key, $file, $signature) 2>&1 | ForEach-Object { "$_" }) } finally { $ErrorActionPreference = $old }
+  $code = $LASTEXITCODE
+  $global:LASTEXITCODE = 0
+  return @{ Ok = ($code -eq 0); Why = (@($lines | Where-Object { $_.Trim() }) -join ' ') }
+}
+
 # Hands over to the setup of the new package: programs, templates and service files of that version, the settings and
 # secrets of this installation. Returns its exit code.
 function Invoke-Setup([string]$package, [string]$account) {
@@ -799,8 +818,20 @@ function Invoke-UpdateSteps([string]$work) {
     $zipFile = Join-Path $work 'package.zip'
     Get-File $zipUrl $zipFile
     Get-File "$zipUrl.sha256" "$zipFile.sha256"
+    Get-File "$zipUrl.sha256.sig" "$zipFile.sha256.sig"
   }
   if (-not (Test-Path -LiteralPath "$zipFile.sha256")) { Die (T "Neben dem Paket fehlt die Datei mit der Prüfsumme: $zipFile.sha256" "The file with the checksum is missing next to the package: $zipFile.sha256") }
+  # Who made the checksum file: a package from an address carries the release key's signature (fetched above, a download
+  # that fails ends the run); a file somebody put here may come without one, which is said aloud.
+  if (Test-Path -LiteralPath "$zipFile.sha256.sig") {
+    $signed = Test-Signature "$zipFile.sha256" "$zipFile.sha256.sig"
+    if (-not $signed.Ok) {
+      Die (T "Die Signatur der Prüfsummendatei ist nicht die des Release-Schlüssels ($($signed.Why)). Das Paket stammt nicht aus einem Release von Squorli Server oder wurde verändert. Nichts wurde verändert." "The checksum file's signature is not the release key's ($($signed.Why)). The package is not from a release of Squorli Server or was changed. Nothing was changed.")
+    }
+    Ok (T 'Signatur der Prüfsummendatei geprüft (Release-Schlüssel)' 'Signature of the checksum file checked (release key)')
+  } else {
+    Warn (T "Neben dem Paket liegt keine Signatur ($zipFile.sha256.sig): Nur die Prüfsumme wird geprüft, nicht, wer das Paket gebaut hat." "No signature lies next to the package ($zipFile.sha256.sig): only the checksum is checked, not who built the package.")
+  }
   $expected = "$(([IO.File]::ReadAllText("$zipFile.sha256")).Trim().Split(' ')[0])".ToLowerInvariant()
   $actual = Get-Sha256 $zipFile
   if ($expected -notmatch '^[0-9a-f]{64}$' -or $expected -ne $actual) {

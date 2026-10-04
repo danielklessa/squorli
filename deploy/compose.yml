@@ -4,7 +4,8 @@
 # --env-file ../.env is mandatory: otherwise the ${...} placeholders here are only filled from deploy/.env (empty).
 # Media ports (UDP 7882, TCP 7881; LIVEKIT_UDP_PORT/LIVEKIT_TCP_PORT in .env) go directly to LiveKit in BOTH modes, never
 # through an HTTP proxy. LiveKit announces them to the clients itself, so host and container use the same number.
-# Image: build locally, or set APP_IMAGE=ghcr.io/danielklessa/squorli-server:latest (GitHub Container Registry).
+# Image: build locally, or set APP_IMAGE=ghcr.io/danielklessa/squorli-server:stable (GitHub Container Registry; the newest
+# published release, signed; :latest follows the development).
 # For the published image, pull with the selected profile, then up -d --no-build. See README.md.
 
 name: squorli

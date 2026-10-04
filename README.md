@@ -48,7 +48,7 @@ Running the installer again on an existing installation updates it (new image an
 
 ## Windows without Docker
 
-For a Windows machine there is a package that needs no Docker: the app server with its own Node.js, PostgreSQL, LiveKit and Caddy as Windows services. It is a ZIP of about 115 MB, attached to every [release of Squorli Server](https://github.com/danielklessa/squorli/releases) as `squorli-server-<version>-windows-x64.zip` with a `.sha256` file.
+For a Windows machine there is a package that needs no Docker: the app server with its own Node.js, PostgreSQL, LiveKit and Caddy as Windows services. It is a ZIP of about 115 MB, attached to every [release of Squorli Server](https://github.com/danielklessa/squorli/releases) as `squorli-server-<version>-windows-x64.zip` with a `.sha256` file and that file's signature `.sha256.sig` ([Signed releases](#signed-releases)).
 
 **Requirements:** Windows 10 from 22H2, Windows 11 (Home too) or Windows Server 2019, 2022 or 2025, 64 bit (x64); an administrator; 2 GB of free disk space; domain, ports and bandwidth as [above](#requirements). Windows PowerShell 5.1 is part of Windows. The setup installs Microsoft's Visual C++ runtime when it is missing (after asking). A PC works as a server, with limits you should know: Windows Update restarts it, a PC in standby answers nobody (the setup offers to switch standby off), and the upload of a home connection is small for video; behind a router you forward the ports and need dynamic DNS when the public address changes.
 
@@ -76,7 +76,7 @@ Afterwards, in a newly opened window as administrator:
 | `squorli restart [service]`, `stop`, `start` | with the services that depend on the one named |
 | `squorli backup [folder]` | database, files and `.env` into `C:\ProgramData\Squorli\backups\<time>` |
 | `squorli restore <folder>` | puts a backup back (asks first); also one a Linux installation wrote, which is how a server moves from Linux to Windows |
-| `squorli update` | the newest release from GitHub: checks the SHA-256, backs up, installs. Only the services whose programs changed are stopped: with a new version of Squorli alone, PostgreSQL and LiveKit keep running. When the new version does not start, the program files of before come back. Migrations of the database are not undone by that: the backup is what brings the old state back |
+| `squorli update` | the newest release from GitHub: checks the signature of its checksum file and the SHA-256, backs up, installs. Only the services whose programs changed are stopped: with a new version of Squorli alone, PostgreSQL and LiveKit keep running. When the new version does not start, the program files of before come back. Migrations of the database are not undone by that: the backup is what brings the old state back |
 | `squorli update -Check` | only looks for a newer release: exit code 10 when there is one, 0 when not |
 | `squorli autoupdate [on [hours] \| off]` | a task that looks for a new version every 1 to 24 hours and installs it ([Automatic updates](#automatic-updates)); without a word: the state and the last runs |
 | `squorli doctor` | the setup check, as on Linux |
@@ -89,7 +89,7 @@ With a web server on the machine already (IIS holds 80 and 443 on many Windows S
 
 ## Quick start with the published image
 
-The public image is **`ghcr.io/danielklessa/squorli-server:latest`** (tags and digests: [container package](https://github.com/danielklessa/squorli/pkgs/container/squorli-server)). You still need a checkout of this repository for the Compose files and the mounted LiveKit and Caddy configuration; no local build is required.
+The public image is **`ghcr.io/danielklessa/squorli-server:stable`**, the newest published release, signed ([Signed releases](#signed-releases); `:latest` follows the development and is not signed; tags and digests: [container package](https://github.com/danielklessa/squorli/pkgs/container/squorli-server)). You still need a checkout of this repository for the Compose files and the mounted LiveKit and Caddy configuration; no local build is required.
 
 ```bash
 git clone https://github.com/danielklessa/squorli.git
@@ -105,7 +105,7 @@ Fill in `.env`. Required values:
 | `POSTGRES_PASSWORD` | any secret |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | key name plus a secret with 32+ characters, e.g. `openssl rand -hex 32` |
 | `PROXY_MODE` | `bundled` (Caddy in the stack handles TLS on 443) or `external` (your own reverse proxy, see below) |
-| `APP_IMAGE` | `ghcr.io/danielklessa/squorli-server:latest`; pin a version tag or digest for production |
+| `APP_IMAGE` | `ghcr.io/danielklessa/squorli-server:stable` (the newest published release, signed); pin a version tag or digest for production; `latest` follows the development |
 
 Then start the stack from `deploy/`. `--env-file ../.env` is required: otherwise Compose only substitutes the placeholders in `compose.yml` from a `.env` inside `deploy/`, and password and LiveKit keys would remain empty.
 
@@ -182,7 +182,7 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 `deploy/portainer.yml` is a self-contained stack for Portainer (web editor or git repository, path `deploy/portainer.yml`): external mode with a reverse proxy on another host, no `env_file`, no build, no bind mounts. The LiveKit config is inlined via `LIVEKIT_CONFIG` (keep it in step with `deploy/livekit/livekit.yaml`).
 
 1. Stacks > Add stack > paste `deploy/portainer.yml`.
-2. Enter the environment variables: `PUBLIC_DOMAIN`, `POSTGRES_PASSWORD`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (required); `APP_IMAGE` optional (default `ghcr.io/danielklessa/squorli-server:latest`; pin a tag or digest for production); optionally `LIVEKIT_NODE_IP`, `DIRECTORY_URL`, `TRUSTED_PROXIES`, `PROXY_BIND_IP` (default `0.0.0.0`, then restrict via firewall), `LOCAL_ACCOUNTS`, `SERVER_NAME`, `OWNER_PUBLIC_KEY`, `MAX_UPLOAD_MB`, `LIVEKIT_PUBLIC_URL`, `DIRECTORY_PROOF_URL`, `APP_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`. Meaning as in [Configuration](#configuration).
+2. Enter the environment variables: `PUBLIC_DOMAIN`, `POSTGRES_PASSWORD`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (required); `APP_IMAGE` optional (default `ghcr.io/danielklessa/squorli-server:stable`; pin a tag or digest for production); optionally `LIVEKIT_NODE_IP`, `DIRECTORY_URL`, `TRUSTED_PROXIES`, `PROXY_BIND_IP` (default `0.0.0.0`, then restrict via firewall), `LOCAL_ACCOUNTS`, `SERVER_NAME`, `OWNER_PUBLIC_KEY`, `MAX_UPLOAD_MB`, `LIVEKIT_PUBLIC_URL`, `DIRECTORY_PROOF_URL`, `APP_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`. Meaning as in [Configuration](#configuration).
 3. Set up the proxy and firewall as in [Reverse proxy](#reverse-proxy).
 4. Check `https://PUBLIC_DOMAIN/api/health` and `https://PUBLIC_DOMAIN/rtc/validate` (401).
 
@@ -192,7 +192,7 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 2. Review the release notes.
 3. Repeat `pull` and `up -d --no-build` with the same profile and overlays (after the interactive installer: `squorli update`, which backs up first). On Windows: `squorli update`, which backs up first.
 
-`latest` is mutable and follows the development; `stable` names the newest published version. For reproducible deployments set `APP_IMAGE` to a version tag or `ghcr.io/danielklessa/squorli-server@sha256:<digest>` and keep the repository checkout aligned with that release. Startup runs database migrations; an image rollback does not reverse them.
+`stable` names the newest published version and is signed; `latest` is mutable, follows the development and is not signed. For reproducible deployments set `APP_IMAGE` to a version tag or `ghcr.io/danielklessa/squorli-server@sha256:<digest>` and keep the repository checkout aligned with that release. Startup runs database migrations; an image rollback does not reverse them.
 
 ### Automatic updates
 
@@ -205,6 +205,23 @@ Before you switch it on:
 - Every update makes a backup first; the backups stay and take space.
 - Linux: the job follows the image tag in `APP_IMAGE`. `stable` names the newest published version, and `squorli autoupdate on` offers to enter it (`--stable` without the question); `latest` changes with every change in development; a fixed version never changes by itself. New images of PostgreSQL and Caddy come along (their tags move), and an update that fails is not taken back. Windows: when a new version does not start, the program files of before come back.
 - An installation from before these commands gets them on Linux by running the installer again ("Update"), on Windows with its next `squorli update`.
+
+### Signed releases
+
+Since 4 October 2026 (security audit S9) every release is signed, and the installer's command checks the signatures before it starts anything new ([docs/features/release-signing.md](docs/features/release-signing.md)):
+
+- **The image** of a release (`:v<version>`, and `:stable`, which is the same manifest) is signed with [cosign](https://github.com/sigstore/cosign), keyless: the signature's certificate names the release workflow of this repository at the tag, issued through GitHub's OIDC, with an entry in Sigstore's transparency log. `squorli update` and the installer check exactly that (cosign in its own container, pinned by digest) and refuse an image without it; `IMAGE_VERIFY=off` in `.env` switches the check off for a host without a way to the Sigstore services. The development images (`latest`, a branch, a commit) are not signed and are started without a check, with a line that says so. By hand:
+
+  ```bash
+  docker run --rm ghcr.io/sigstore/cosign/cosign:v3.1.3 verify \
+    --certificate-identity-regexp '^https://github\.com/danielklessa/squorli/\.github/workflows/server-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+    ghcr.io/danielklessa/squorli-server:stable
+  ```
+
+  Every image the CI pushes also carries GitHub's build provenance attestation (which workflow built it from which commit): `gh attestation verify oci://ghcr.io/danielklessa/squorli-server:stable --owner danielklessa`.
+- **The package for Windows:** its `.sha256` file is signed with the release key (Ed25519), whose public half ships in the package as `squorli-server-releases.pub`. `squorli update` on Windows fetches zip, `.sha256` and `.sha256.sig`, checks the signature with the installed key first and the hash second. The first installation trusts the downloaded package; from then on every update is checked. By hand, with openssl: `openssl pkeyutl -verify -pubin -inkey squorli-server-releases.pub -rawin -in <zip>.sha256 -sigfile <zip>.sha256.sig`.
+- Portainer stacks and Compose by hand pull without a check: verify by hand as above, or pin a digest.
 
 ## Building from source
 

@@ -1,9 +1,17 @@
 # Server release: for a tag `v<version>` a DRAFT GitHub release whose text is apps/server/release-notes/<version>.md (written
 # with the `server-release` skill) plus a standing text about updating. The image itself is built by ci.yml (job `image` on
 # tags `v*`: ghcr.io/<repo>:v<version> and latest). The package for Windows is built and tested here (windows-package.yml)
-# and attached to the release with its .sha256 file: `squorli update` of an installation on Windows asks for exactly these
-# two names under the tag. Publishing the draft is a person's step, after this workflow has ended. Tags `desktop-v*` belong
-# to the desktop app (desktop-release.yml); the two never overlap.
+# and attached to the release with its .sha256 file and that file's signature: `squorli update` of an installation on
+# Windows asks for exactly these three names under the tag. Publishing the draft is a person's step, after this workflow
+# has ended. Tags `desktop-v*` belong to the desktop app (desktop-release.yml); the two never overlap.
+#
+# Signed releases (4 October 2026, security audit S9, deploy/AGENTS.md "Signed releases"): the job `sign` runs in the
+# GitHub environment `signing`, which only the repository owner may approve and which alone holds the secret
+#   SERVER_SIGNING_KEY   the Ed25519 private key (PEM) whose public half is deploy/windows/squorli-server-releases.pub;
+#                        it signs the .sha256 file of the package for Windows.
+# The image is signed keyless with cosign: the certificate names this workflow at the tag, and `squorli update` on Linux
+# verifies exactly that identity (deploy/install.sh, SIGNER_IDENTITY). By hand for an existing tag ("Run workflow"): choose
+# the TAG under "Use workflow from", not a branch, or the certificate would name the branch and every check refuse it.
 name: Server release
 
 on:
@@ -21,6 +29,8 @@ permissions:
 
 env:
   TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  # The image's name, not the repository's (ci.yml): every installation pulls this name, and GHCR does not redirect.
+  IMAGE: ghcr.io/danielklessa/squorli-server
 
 jobs:
   release:
@@ -39,8 +49,8 @@ jobs:
         run: |
           version="${TAG#v}"
           notes="apps/server/release-notes/$version.md"
-          image="ghcr.io/danielklessa/squorli-server:$TAG" # the image's name, not the repository's (ci.yml)
-          footer="Image: \`$image\` (also \`:latest\`). Update an installation made with the install script: \`squorli backup\`, then \`squorli update\`; with Compose by hand: set \`APP_IMAGE=$image\` in \`.env\`, then \`docker compose pull\` and \`up -d\`. Windows without Docker: the package \`squorli-server-$version-windows-x64.zip\` below, with its \`.sha256\` file; update an installation with \`squorli update\` in a window opened as administrator (it backs up first). Database migrations run by themselves at the start and cannot be undone: back up first. Guide: https://squorli.com/en/docs/install/"
+          image="$IMAGE:$TAG"
+          footer="Image: \`$image\` (also \`:latest\`; \`:stable\` moves here once this release is published). The image is signed (cosign, keyless): \`squorli update\` checks the signature before it starts the new version, and so does the installer; by hand see the README, \"Signed releases\". Update an installation made with the install script: \`squorli backup\`, then \`squorli update\`; with Compose by hand: set \`APP_IMAGE=$image\` in \`.env\`, then \`docker compose pull\` and \`up -d\`. Windows without Docker: the package \`squorli-server-$version-windows-x64.zip\` below, with its \`.sha256\` file and that file's signature \`.sha256.sig\` by the release key; update an installation with \`squorli update\` in a window opened as administrator (it checks the signature and backs up first). Database migrations run by themselves at the start and cannot be undone: back up first. Guide: https://squorli.com/en/docs/install/"
           if [ -f "$notes" ]; then { cat "$notes"; echo; echo "---"; echo; echo "$footer"; } > body.md; else echo "$footer" > body.md; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             # A run repeated for the same tag brings the notes up to date, but never rewrites a release a person has published.
@@ -56,14 +66,69 @@ jobs:
     with:
       ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-  attach:
+  # Signs and attaches. Waits for the owner's approval (Settings > Environments > signing > Required reviewers); until then
+  # the draft stands without the package and the image without a signature, and no installation takes either.
+  sign:
     needs: [release, windows]
     runs-on: ubuntu-latest
+    environment: signing
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          sparse-checkout: deploy/windows
       - uses: actions/download-artifact@v4
         with:
           name: squorli-server-windows-x64
           path: package
+      - name: Sign the checksum file of the package for Windows
+        env:
+          SERVER_SIGNING_KEY: ${{ secrets.SERVER_SIGNING_KEY }}
+        run: |
+          version="${TAG#v}"
+          zip="squorli-server-$version-windows-x64.zip"
+          cd package
+          if [ ! -f "$zip" ] || [ ! -f "$zip.sha256" ]; then echo "::error::The build gave no $zip with its .sha256 file"; ls -la; exit 1; fi
+          sha256sum -c "$zip.sha256"
+          if [ -z "$SERVER_SIGNING_KEY" ]; then echo "::error::SERVER_SIGNING_KEY is not set in the environment signing"; exit 1; fi
+          umask 077
+          printf '%s\n' "$SERVER_SIGNING_KEY" > "$RUNNER_TEMP/release-key.pem"
+          openssl pkeyutl -sign -inkey "$RUNNER_TEMP/release-key.pem" -rawin -in "$zip.sha256" -out "$zip.sha256.sig"
+          rm -f "$RUNNER_TEMP/release-key.pem"
+          # The key must be the one the package carries, or no installation could ever take this update.
+          pub="../deploy/windows/squorli-server-releases.pub"
+          openssl pkeyutl -verify -pubin -inkey "$pub" -rawin -in "$zip.sha256" -sigfile "$zip.sha256.sig"
+          node ../deploy/windows/verify-signature.mjs "$pub" "$zip.sha256" "$zip.sha256.sig"
+          ls -la "$zip.sha256" "$zip.sha256.sig"
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v3.1.3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sign the image of this tag
+        run: |
+          # ci.yml builds the image of the tag in a run of its own, usually long before this job may start; wait for it.
+          digest=""
+          for _ in $(seq 1 60); do
+            digest="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{.Manifest.Digest}}' 2>/dev/null || true)"
+            case "$digest" in sha256:*) break ;; *) digest=""; sleep 30 ;; esac
+          done
+          if [ -z "$digest" ]; then echo "::error::No image $IMAGE:$TAG after 30 minutes (ci.yml, job image)"; exit 1; fi
+          echo "Signing $IMAGE@$digest ($TAG)"
+          cosign sign --yes "$IMAGE@$digest"
+          # What every installation checks (deploy/install.sh): the certificate names this workflow at a tag v<version>.
+          cosign verify \
+            --certificate-identity-regexp '^https://github\.com/danielklessa/squorli/\.github/workflows/server-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE@$digest" > /dev/null
+          echo "Signature of $IMAGE@$digest verified."
       - name: Attach the package to the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -72,13 +137,11 @@ jobs:
           version="${TAG#v}"
           zip="squorli-server-$version-windows-x64.zip"
           cd package
-          if [ ! -f "$zip" ] || [ ! -f "$zip.sha256" ]; then echo "::error::The build gave no $zip with its .sha256 file"; ls -la; exit 1; fi
-          sha256sum -c "$zip.sha256"
           if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = "true" ]; then
-            gh release upload "$TAG" "$zip" "$zip.sha256" --clobber
+            gh release upload "$TAG" "$zip" "$zip.sha256" "$zip.sha256.sig" --clobber
           elif gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx "$zip"; then
             # Installations check the package against the hash of the release: a published package is never replaced.
             echo "::notice::Release $TAG is published and carries $zip already; left as it is."
           else
-            gh release upload "$TAG" "$zip" "$zip.sha256"
+            gh release upload "$TAG" "$zip" "$zip.sha256" "$zip.sha256.sig"
           fi

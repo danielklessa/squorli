@@ -157,6 +157,11 @@ function Expand-Package {
   Check 'tar.exe unpacks it without an error into one folder' ($r.Code -eq 0 -and $top.Count -eq 1) "exit $($r.Code)"
   $script:Zip = $zip
   $script:Unpacked = $top[0].FullName
+  # A package out of a release has the release key's signature next to its .sha256 file; the artifact of a build has none.
+  if (Test-Path -LiteralPath "$zip.sha256.sig") {
+    $r = Invoke-Captured (Join-Path $script:Unpacked 'node\node.exe') @((Join-Path $script:Unpacked 'verify-signature.mjs'), (Join-Path $script:Unpacked 'squorli-server-releases.pub'), $sumFile, "$zip.sha256.sig") -Quiet
+    Check 'the .sha256 file carries the signature of the release key the package holds' ($r.Code -eq 0) $r.Text
+  }
   $script:Version = ([IO.File]::ReadAllText((Join-Path $script:Unpacked 'manifest.json'), $Utf8) | ConvertFrom-Json).version
   Write-Host "        version $($script:Version), unpacked to $($script:Unpacked)"
 }
@@ -311,11 +316,27 @@ function Test-Update {
 
   Step 'update to the next version: only what changed is stopped'
   $next = New-TestPackage '98.0.0'
+  # The signature of the checksum file (deploy/windows/AGENTS.md "Signed releases"): one by another key is refused before
+  # anything is unpacked; one by a key this test makes passes once the installed public key is that key. The package made
+  # here carries the real public key, so the update puts it back.
+  $keyFile = Join-Path $InstallDir 'squorli-server-releases.pub'
+  $realKey = [IO.File]::ReadAllText($keyFile)
+  $signer = Join-Path $script:Work 'sign-test.cjs'
+  [IO.File]::WriteAllText($signer, "const c = require('crypto'), fs = require('fs'); const [pub, file, sig] = process.argv.slice(2); const k = c.generateKeyPairSync('ed25519'); fs.writeFileSync(pub, k.publicKey.export({ type: 'spki', format: 'pem' })); fs.writeFileSync(sig, c.sign(null, fs.readFileSync(file), k.privateKey));`n", $Utf8)
+  $testKey = Join-Path $script:Work 'test-key.pub'
+  $r = Invoke-Node @($signer, $testKey, "$next.sha256", "$next.sha256.sig")
+  Check 'the test made a key of its own and signed the checksum file of version 98.0.0' ($r.Code -eq 0 -and (Test-Path -LiteralPath $testKey) -and (Get-Item -LiteralPath "$next.sha256.sig").Length -eq 64) "exit $($r.Code)"
+  $r = Invoke-Squorli @('update', '-Package', $next) -Quiet
+  $health = Get-Health
+  Check "a checksum file signed by another key is refused (code 1), version $($script:Version) keeps running" ($r.Code -eq 1 -and $r.Text -match 'signature is not the release key' -and $null -ne $health -and $health.version -eq $script:Version) "exit $($r.Code)"
+  Copy-Item -LiteralPath $testKey -Destination $keyFile -Force
   $before = @{}
   foreach ($service in (Get-Services)) { $before[$service.Name] = $service.ProcessId }
   $r = Invoke-Squorli @('update', '-Package', $next)
   $health = Get-Health
   Check 'squorli update -Package (version 98.0.0): code 0, version 98.0.0 answers' ($r.Code -eq 0 -and $null -ne $health -and $health.version -eq '98.0.0') "exit $($r.Code)"
+  Check 'the update checked the signature of the checksum file against the installed key' ($r.Text -match 'Signature of the checksum file checked') ''
+  Check 'the update put the release key of the package back' (([IO.File]::ReadAllText($keyFile)) -eq $realKey) ''
   $after = @{}
   foreach ($service in (Get-Services)) { $after[$service.Name] = $service.ProcessId }
   $said = ($ServiceNames | ForEach-Object { "$_ $($before[$_]) -> $($after[$_])" }) -join '; '

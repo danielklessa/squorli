@@ -19,7 +19,13 @@ set -Eeuo pipefail
 
 REF="${SQUORLI_REF:-main}"
 RAW_BASE="${SQUORLI_RAW_BASE:-https://raw.githubusercontent.com/danielklessa/squorli/$REF}"
-DEFAULT_IMAGE="ghcr.io/danielklessa/squorli-server:latest"
+DEFAULT_IMAGE="ghcr.io/danielklessa/squorli-server:stable"
+# The published images are signed (security audit S9, deploy/AGENTS.md "Signed images"): cosign, keyless, the certificate
+# names the release workflow of the repository at a tag v<version>. The check runs cosign in its own container, pinned by
+# digest; the same three values go into the helper. Renovate keeps the digest current (squorli-renovate).
+COSIGN_IMAGE="ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
+SIGNER_IDENTITY='^https://github\.com/danielklessa/squorli/\.github/workflows/server-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+SIGNER_ISSUER="https://token.actions.githubusercontent.com"
 DEFAULT_DIRECTORY="https://directory.squorli.com"
 DEFAULT_TRUSTED="172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1"
 DEPLOY_FILES=(deploy/compose.yml deploy/caddy/Caddyfile deploy/livekit/livekit.yaml deploy/proxies/nginx.ports.yml
@@ -218,6 +224,36 @@ ensure_docker() {
   docker info >/dev/null 2>&1 || die "$(t "Der Docker-Dienst antwortet nicht (systemctl start docker?)." "The Docker daemon does not answer (systemctl start docker?).")"
   docker compose version >/dev/null 2>&1 || die "$(t "Das Compose-Plugin fehlt (Paket docker-compose-plugin)." "The Compose plugin is missing (package docker-compose-plugin).")"
   ok "$(docker --version | head -n1); $(docker compose version | head -n1)"
+}
+
+# Is $1 an image a release signed? stable, a version tag or a digest are; latest, a branch, a commit or a local build are not.
+signed_ref() { case "$1" in *@sha256:*|*:stable|*:v[0-9]*) return 0 ;; *) return 1 ;; esac; }
+# Checks the signature of the pulled image $1 with cosign in its own container (COSIGN_IMAGE), before anything of the
+# image runs. $2 is IMAGE_VERIFY of .env: empty or on = check, off = say so and go on. Returns 1 when the image carries no
+# valid signature of the release workflow; the caller then leaves the running server as it is.
+verify_image() {
+  local ref="$1" switch="${2:-on}" repo digest said
+  if [ "$switch" = off ]; then
+    printf '%s\n' "$(t "  !  Signatur des Images nicht geprüft: IMAGE_VERIFY=off in .env." "  !  Image signature not checked: IMAGE_VERIFY=off in .env.")"
+    return 0
+  fi
+  if ! signed_ref "$ref"; then
+    printf '%s\n' "$(t "  !  $ref ist ein Entwicklungs-Image ohne Signatur, nicht geprüft (signiert sind stable und die Versionen v1.2.3)." "  !  $ref is a development image without a signature, not checked (stable and the versions v1.2.3 are signed).")"
+    return 0
+  fi
+  repo="${ref%%@*}"; repo="${repo%:*}"
+  digest="$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null | grep -F "$repo@" | head -n1 || true)"
+  if [ -z "$digest" ]; then
+    printf '%s\n' "$(t "  x  $ref trägt keinen Digest einer Registry (lokal gebaut?): Die Signatur lässt sich nicht prüfen." "  x  $ref carries no digest of a registry (built locally?): the signature cannot be checked.")"
+    return 1
+  fi
+  if said="$(docker run --rm "$COSIGN_IMAGE" verify --certificate-identity-regexp "$SIGNER_IDENTITY" --certificate-oidc-issuer "$SIGNER_ISSUER" "$digest" 2>&1 >/dev/null)"; then
+    printf '%s\n' "$(t "  ok Signatur geprüft: $digest (cosign; signiert vom Release-Workflow bei GitHub)" "  ok Signature checked: $digest (cosign; signed by the release workflow on GitHub)")"
+    return 0
+  fi
+  printf '%s\n' "$said" | grep -v '^$' | tail -n 4 | sed 's/^/     /'
+  printf '%s\n' "$(t "  x  Die Signatur von $ref fehlt oder ist ungültig: Das Image wurde nicht gestartet. Ohne Prüfung (nur wenn klar ist, warum): IMAGE_VERIFY=off in .env." "  x  The signature of $ref is missing or invalid: the image was not started. Without the check (only when it is clear why): IMAGE_VERIFY=off in .env.")"
+  return 1
 }
 
 # Sets DIR, MODE (fresh|update|reconfigure), OLD_SETUP
@@ -629,6 +665,9 @@ write_helper() {
     printf '# setup: %s\n' "$SETUP"
     printf '# lang: %s\n' "$L"
     printf 'ARGS=(%s)\n' "${CARGS[*]}"
+    # The signature check as the installer has it (above): the constants, then the functions word for word
+    printf 'COSIGN_IMAGE=%q\nSIGNER_IDENTITY=%q\nSIGNER_ISSUER=%q\n' "$COSIGN_IMAGE" "$SIGNER_IDENTITY" "$SIGNER_ISSUER"
+    declare -f signed_ref verify_image
     cat <<'EOF'
 set -euo pipefail
 here="$(dirname "$(readlink -f "$0")")"
@@ -638,6 +677,7 @@ lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${
 t() { if [ "$lang" = de ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 
 app_image() { sed -n 's/^APP_IMAGE=//p' ../.env | tail -n1 | tr -d "'\"" || true; }
+image_verify() { sed -n 's/^IMAGE_VERIFY=//p' ../.env | tail -n1 | tr -d "'\"" || true; }
 # The image a service's container should run: the one it was made from; for the server the one .env names now, which
 # may be another since (latest became stable).
 wanted_ref() {
@@ -927,6 +967,15 @@ case "${1:-help}" in
       exit 0
     fi
     say "Neue Images für: $changed" "New images for: $changed"
+    # A new server image is checked before anything of it runs (by_hand below asks the image's node). The other services'
+    # images (PostgreSQL, LiveKit, Caddy) are their makers' and are pinned by digest in compose.yml.
+    case " $changed " in *" server "*)
+      if ! verify_image "$(app_image)" "$(image_verify)"; then
+        say "x Update nicht begonnen: Die Signatur des neuen Server-Images ist nicht in Ordnung. Es läuft weiter, was lief." \
+          "x Update not begun: the signature of the new server image is not in order. What ran keeps running."
+        exit 1
+      fi ;;
+    esac
     hand=0
     case " $changed " in *" server "*) if by_hand; then hand=1; fi ;; esac
     if [ "$hand" = 1 ]; then
@@ -1240,6 +1289,9 @@ start_stack() {
     (cd "$DIR/deploy" && docker compose --env-file ../.env -f compose.yml --profile bundled rm -sf caddy) || true
   fi
   dc pull
+  # The server's image is checked before its first start; a fresh .env has APP_IMAGE already (write_env), an update keeps its own.
+  local pulled; pulled="$(env_get "$DIR/.env" APP_IMAGE)"; pulled="${pulled:-$DEFAULT_IMAGE}"
+  verify_image "$pulled" "$(env_get "$DIR/.env" IMAGE_VERIFY)" || die "$(t "Das Image wurde nicht gestartet: Signatur nicht in Ordnung (siehe oben). Die Installation lässt sich nach der Klärung erneut ausführen." "The image was not started: its signature is not in order (see above). Run the installer again once that is cleared up.")"
   # An installation from before 28 September 2026 runs the app server as the service "app", which compose.yml no longer
   # knows: its container goes before the new one starts, or it would keep the port the new one needs; after the pull, so a pull that
   # fails leaves the old server running. The data volume stays.
