@@ -401,3 +401,24 @@ describe("devices", () => {
     expect([DEVICE_MAX, DEVICE_PAGE_MAX, DEVICE_IDLE_MS]).toEqual([10, 5, 90 * 86_400_000]);
   });
 });
+
+describe("direct message reports: the stored ciphertext as proof (security audit D10, measure 3.8)", () => {
+  const key = (c: string) => c.repeat(64);
+  const base = { publicKey: key("a"), challengeId: "6f1c2a4e-1b2c-4d3e-8f90-123456789abc", signature: "b".repeat(128) };
+  const msg = (n: number, from: string) => ({ id: `6f1c2a4e-1b2c-4d3e-8f90-${String(n).padStart(12, "0")}`, from, sentAt: "2026-09-26T10:00:00.000Z", text: `Nachricht ${n}` });
+  it("carries iv and ciphertext inside the signed payload when the client sends them, and nothing when it does not", () => {
+    const proof = { iv: "ab".repeat(12), ciphertext: "QUJD" };
+    const sent = { kind: "dm" as const, reason: "spam" as const, peer: key("c"), message: { ...msg(2, key("c")), ...proof }, context: [msg(1, key("a"))] };
+    const parsed = DmReportRequest.parse({ ...base, ...sent });
+    expect(parsed.message.iv).toBe(proof.iv);
+    expect(parsed.context[0]?.iv).toBeUndefined();
+    expect(directoryDmReportPayload(parsed)).toBe(directoryDmReportPayload(sent));
+    expect(directoryDmReportPayload(parsed)).toContain('"ciphertext":"QUJD"');
+    const without = { ...sent, message: msg(2, key("c")) };
+    expect(directoryDmReportPayload(without)).not.toContain("ciphertext");
+    expect(directoryDmReportPayload(without)).toBe(directoryDmReportPayload(DmReportRequest.parse({ ...base, ...without })));
+    // One of the two alone counts as none (the payload names both or neither); a malformed iv is refused.
+    expect(directoryDmReportPayload({ ...sent, message: { ...msg(2, key("c")), iv: proof.iv } })).not.toContain("iv");
+    expect(DmReportRequest.safeParse({ ...base, ...sent, message: { ...msg(2, key("c")), iv: "zz", ciphertext: "QUJD" } }).success).toBe(false);
+  });
+});

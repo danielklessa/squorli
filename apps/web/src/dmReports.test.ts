@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DM_REPORT_CONTEXT_MAX } from "@squorli/protocol";
 import { dmReportContent } from "./dmReports";
 import type { Dm } from "./store";
 
@@ -23,5 +24,14 @@ describe("dmReportContent", () => {
     expect(dmReportContent([dm(1, A), dm(2, B, null)], dm(2, B).id)).toBeNull();
     expect(dmReportContent([dm(1, A)], "6f1c2a4e-1b2c-4d3e-8f90-999999999999")).toBeNull();
     expect(dmReportContent([dm(1, B, "", { type: "preview.remove", id: "x", url: "y" })], dm(1, B).id)).toBeNull();
+  });
+  it("carries iv and ciphertext only when the directory can check them, and only for messages that have them", () => {
+    const proof = { iv: "ab".repeat(12), ciphertext: "QUJD" };
+    const list = [{ ...dm(1, A), ...proof }, dm(2, B), { ...dm(3, B), ...proof }];
+    const plain = dmReportContent(list, dm(3, B).id);
+    expect(Object.keys(plain!.message).sort()).toEqual(["from", "id", "sentAt", "text"]);
+    const withProof = dmReportContent(list, dm(3, B).id, DM_REPORT_CONTEXT_MAX, true);
+    expect(withProof?.message).toEqual({ id: dm(3, B).id, from: B, sentAt: dm(3, B).sentAt, text: "m3", ...proof });
+    expect(withProof?.context.map((m) => m.iv ?? null)).toEqual([proof.iv, null]);
   });
 });

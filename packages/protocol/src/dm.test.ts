@@ -1,6 +1,6 @@
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { describe, expect, it } from "vitest";
-import { DirectoryClientEvent, DirectoryServerEvent, DmSend, bytesToHex, deriveDmKey, dmPublicKeyOf, openDm, openDmBlob, sealDm, sealDmBlob, type DmPlaintext } from "./index";
+import { DM_MAX_CIPHERTEXT_CHARS, DM_PAD_BYTES, DM_PAD_MAX_BYTES, DirectoryClientEvent, DirectoryServerEvent, DmSend, base64ToBytes, bytesToHex, deriveDmKey, dmPad, dmPublicKeyOf, openDm, openDmBlob, sealDm, sealDmBlob, type DmPlaintext } from "./index";
 
 const seedA = "0a".repeat(32); const seedB = "0b".repeat(32); const seedC = "0c".repeat(32);
 const pubOf = (seed: string) => bytesToHex(ed25519.getPublicKey(Buffer.from(seed, "hex")));
@@ -70,5 +70,31 @@ describe("dm: link previews inside the plaintext", () => {
     await expect(openDmBlob(sealed, broken)).rejects.toThrow();
     // A fresh key every time: the same picture sent twice looks different to the store.
     expect((await sealDmBlob(bytes)).key).not.toBe(sealed.key);
+  });
+});
+
+describe("dm: padding (security audit D10, measure 3.8)", () => {
+  it("brings the plaintext to 1 KB steps so the directory cannot read the length, and a reader still opens it", async () => {
+    const k = await deriveDmKey(seedA, pubA, pubB);
+    const plainSize = (s: { ciphertext: string }) => base64ToBytes(s.ciphertext).length - 16;
+    const short = await sealDm(k, pubA, pubB, ID, { text: "x" });
+    const longer = await sealDm(k, pubA, pubB, ID, { text: "y".repeat(900) });
+    expect(plainSize(short)).toBe(DM_PAD_BYTES);
+    expect(plainSize(longer)).toBe(DM_PAD_BYTES);
+    expect(plainSize(await sealDm(k, pubA, pubB, ID, { text: "z".repeat(1100) }))).toBe(2 * DM_PAD_BYTES);
+    expect(await openDm(k, { ...longer, from: pubA, to: pubB, id: ID })).toEqual({ text: "y".repeat(900) });
+    // A control message is padded like text: the directory cannot tell them apart by size.
+    expect(plainSize(await sealDm(k, pubA, pubB, ID, { text: "", control: { type: "preview.remove", id: ID, url: "https://example.org/a" } }))).toBe(DM_PAD_BYTES);
+  });
+  it("adds nothing from the last step on, and the largest padded message fits the directory's limit", async () => {
+    const k = await deriveDmKey(seedA, pubA, pubB);
+    const plainSize = (s: { ciphertext: string }) => base64ToBytes(s.ciphertext).length - 16;
+    const over = { text: "w".repeat(DM_PAD_MAX_BYTES) };
+    expect(plainSize(await sealDm(k, pubA, pubB, ID, over))).toBe(JSON.stringify(over).length);
+    expect(dmPad(new Uint8Array(DM_PAD_MAX_BYTES)).length).toBe(DM_PAD_MAX_BYTES);
+    expect(dmPad(new Uint8Array(DM_PAD_MAX_BYTES - 1)).length).toBe(DM_PAD_MAX_BYTES);
+    const largest = await sealDm(k, pubA, pubB, ID, { text: "v".repeat(DM_PAD_MAX_BYTES - 20) });
+    expect(plainSize(largest)).toBe(DM_PAD_MAX_BYTES);
+    expect(largest.ciphertext.length).toBeLessThanOrEqual(DM_MAX_CIPHERTEXT_CHARS);
   });
 });

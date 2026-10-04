@@ -337,10 +337,20 @@ export const directoryDmBlobUrl = (directoryUrl: string, id: string) => `${direc
 // order (directoryDmReportPayload), so nothing can be swapped under the signature. Only offered with `features.reports`: the
 // directory keeps the copy encrypted at rest and needs its key for that. What the directory does with a report is its own business
 // (not described in the public repository); the reported person never learns who reported.
+// Proof (4 October 2026, security audit D10, measure 3.8): with `features.reportProof` the client also sends each message's `iv`
+// and `ciphertext` as it received them, inside the signed payload. The directory compares them with the row it stores under
+// that id (sender, pair, bytes) and tells its operator whether the message existed like that; what the plain text says stays
+// the reporter's word, since the directory has no key. Without the flag the client sends neither (an older directory would
+// strip the fields and the signature would no longer match).
 export const DM_REPORT_CONTEXT_MAX = 20;
 /** One message's text: at most what one encrypted message carries (DM_MAX_CIPHERTEXT_CHARS in friends.ts). */
 export const DM_REPORT_MESSAGE_TEXT_MAX = 16_000;
-export const DmReportMessage = z.object({ id: Uuid, from: PublicKey, sentAt: Iso, text: z.string().max(DM_REPORT_MESSAGE_TEXT_MAX) });
+export const DmReportMessage = z.object({
+  id: Uuid, from: PublicKey, sentAt: Iso, text: z.string().max(DM_REPORT_MESSAGE_TEXT_MAX),
+  /** The message as the directory delivered it (friends.ts `DmMessage`), both or neither; only with `features.reportProof`. */
+  iv: z.string().regex(/^[0-9a-f]{24}$/).optional(),
+  ciphertext: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(22_000).optional(),
+});
 export type DmReportMessage = z.infer<typeof DmReportMessage>;
 export const DmReportContent = z.object({
   kind: z.literal("dm"),
@@ -357,7 +367,7 @@ export const DmReportRequest = SignedActionRequest.extend(DmReportContent.shape)
 export type DmReportRequest = z.infer<typeof DmReportRequest>;
 /** What the reporter signs: the content with its fields in one fixed order, so the directory verifies exactly what it stores. */
 export function directoryDmReportPayload(r: DmReportContent): string {
-  const msg = (m: DmReportMessage) => ({ id: m.id, from: m.from, sentAt: m.sentAt, text: m.text });
+  const msg = (m: DmReportMessage) => ({ id: m.id, from: m.from, sentAt: m.sentAt, text: m.text, ...(m.iv !== undefined && m.ciphertext !== undefined ? { iv: m.iv, ciphertext: m.ciphertext } : {}) });
   return JSON.stringify({ kind: r.kind, reason: r.reason, text: r.text ?? "", peer: r.peer, message: msg(r.message), context: r.context.map(msg) });
 }
 export const DmReportResponse = z.object({ ok: z.literal(true), id: Uuid });
@@ -853,8 +863,8 @@ export const DirectoryHealth = z.object({
   service: z.literal("directory"),
   /** Host that registration signatures are bound to. */
   host: z.string(),
-  /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). `devices`: the directory enrols devices and lists them in the account's status. `deviceRevoke`: it signs devices out and enforces (action `device-revoke`, the refusals of a device). */
-  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false) }),
+  /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `reportProof`: a direct message's report may carry each message's `iv` and `ciphertext` for the directory to compare with what it stores (`DmReportMessage`). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). `devices`: the directory enrols devices and lists them in the account's status. `deviceRevoke`: it signs devices out and enforces (action `device-revoke`, the refusals of a device). */
+  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), reportProof: z.boolean().default(false), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false) }),
   time: Iso,
 });
 

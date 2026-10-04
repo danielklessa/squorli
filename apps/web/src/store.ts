@@ -44,7 +44,8 @@ export type { ChannelMessages, Connection, RawLogEntry, ServerConnState } from "
 
 /** Decrypted direct message (M7); text = null if it could not be opened (foreign key, corrupted). */
 /** `previews` = what the sender put into the message; `control` = the message is an instruction (dmPreviews.ts `visibleDms`), not text. */
-export type Dm = { id: string; seq: number; from: string; to: string; sentAt: string; text: string | null; previews?: DmPreview[]; control?: DmControl };
+/** `iv`/`ciphertext` = the message as the directory delivered it, kept for a report's proof (dmReports.ts; security audit D10, 4 October 2026). */
+export type Dm = { id: string; seq: number; from: string; to: string; sentAt: string; text: string | null; previews?: DmPreview[]; control?: DmControl; iv?: string; ciphertext?: string };
 export type DmThread = { list: Dm[]; hasMore: boolean; loaded: boolean; loading: boolean };
 
 export type State = {
@@ -102,6 +103,8 @@ export type State = {
   directoryLinkError: string | null;
   /** The directory takes reports of direct messages (`features.reports`, docs/features/reports.md): the flag on a friend's message. */
   dmReports: boolean;
+  /** The directory compares a reported message with the ciphertext it stores (`features.reportProof`): the report carries iv and ciphertext. */
+  dmReportProof: boolean;
   /**
    * What the account may report to the directory's operator (`reportKindsOf`): "account" = a directory account as it shows,
    * "server" = a chat server. Empty without a directory account, or at a directory from before them.
@@ -253,7 +256,7 @@ export class Store {
       identity: null, serverAccounts: handlesOf(loadServerAccounts()), homeHost: this.homeHost, activeHost: this.homeHost, servers: home ? { [home.state.host]: home.state } : {},
       signedIn: false, localHosts: [], clientLogin: { busy: false, error: null }, joinInvites: {},
       directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, devices: [], devicesKnown: false, deviceRevoke: false, devicesEnforced: false, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
-      directoryLink: "idle", directoryLinkError: null, dmReports: false, reportKinds: [], notices: [], suspendedUntil: null, suspendedReason: null, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
+      directoryLink: "idle", directoryLinkError: null, dmReports: false, dmReportProof: false, reportKinds: [], notices: [], suspendedUntil: null, suspendedReason: null, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
     };
     // The list of refused chat servers is good for an hour (refusedServers.ts).
     setInterval(() => { void this.refreshRefused(); }, REFUSED_LIST_MAX_AGE_MS);
@@ -1005,7 +1008,7 @@ export class Store {
     const run = ++this.linkRun;
     this.link?.close(); this.link = null;
     this.dmKeys.clear();
-    this.set({ directoryLink: "idle", directoryLinkError: null, dmReports: false, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null });
+    this.set({ directoryLink: "idle", directoryLinkError: null, dmReports: false, dmReportProof: false, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null });
     if (!id || !url || !this.state.directoryAccount) return;
     if (this.homeHost === null && !this.state.signedIn) return;
     // A suspended account gets no socket (docs/features/reports.md): nothing to try until the suspension is over.
@@ -1014,7 +1017,7 @@ export class Store {
     if (run !== this.linkRun || !health?.features.friends) return;
     if (this.isSuspended()) return;
     this.dmPreviewsAtDirectory = health.features.dmPreviews;
-    this.set({ dmReports: health.features.reports });
+    this.set({ dmReports: health.features.reports, dmReportProof: health.features.reportProof });
     const link = new DirectoryLink(url, id, (e) => this.handleDirectory(e), (status, error) => this.set({ directoryLink: status, directoryLinkError: error ?? null }), health.features.afk);
     link.setIdle(activity.idle);
     link.setGame(this.game);
@@ -1030,7 +1033,7 @@ export class Store {
   private async decrypt(m: DmMessage): Promise<Dm> {
     const me = this.state.identity?.publicKey;
     const peer = m.from === me ? m.to : m.from;
-    const base = { id: m.id, seq: m.seq, from: m.from, to: m.to, sentAt: m.sentAt };
+    const base = { id: m.id, seq: m.seq, from: m.from, to: m.to, sentAt: m.sentAt, iv: m.iv, ciphertext: m.ciphertext };
     try {
       const opened = await openDm(await this.dmKey(peer), m);
       return { ...base, text: opened.text, ...(opened.previews ? { previews: opened.previews } : {}), ...(opened.control ? { control: opened.control } : {}) };
@@ -1277,12 +1280,13 @@ export class Store {
   deleteDm(peer: string, id: string) { this.link?.send({ type: "dm.delete", peer, id }); }
   /**
    * Report a friend's direct message to the directory's operator (docs/features/reports.md, stage 4): the reported message
-   * in plain text and, with `withContext`, the messages before it (dmReports.ts). Throws with a readable message.
+   * in plain text and, with `withContext`, the messages before it (dmReports.ts); with `dmReportProof` each message's iv and
+   * ciphertext go along, so the directory can compare them with what it stores. Throws with a readable message.
    */
   async reportDm(peer: string, messageId: string, withContext: boolean, reason: ReportReason, text: string | undefined): Promise<void> {
     const id = this.state.identity, url = this.state.directoryUrl;
     if (!id || !url) throw new Error(t("dir.noLink"));
-    const content = dmReportContent(this.state.dms[peer]?.list ?? [], messageId, withContext ? DM_REPORT_CONTEXT_MAX : 0);
+    const content = dmReportContent(this.state.dms[peer]?.list ?? [], messageId, withContext ? DM_REPORT_CONTEXT_MAX : 0, this.state.dmReportProof);
     if (!content) throw new Error(t("report.dmUnreadable"));
     await api.directoryReportDm(url, id, { kind: "dm", reason, text, peer, message: content.message, context: content.context });
   }

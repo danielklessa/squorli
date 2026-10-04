@@ -13,6 +13,8 @@
  * Message: AES-GCM(key, random 12-byte IV, JSON { text }, AAD = "v1\n<from>\n<to>\n<id>"). The AAD binds sender,
  * recipient and message id so the directory cannot swap anything around; authenticity follows from the DH (only the two
  * key holders can produce a valid tag). No forward secrecy (deliberate; directory repo, docs/features/friends-dm.md).
+ * Since 4 October 2026 (security audit D10, measure 3.8) the plaintext is padded with spaces to 1 KB steps (`dmPad`), so the
+ * directory, which sees every ciphertext's size, no longer learns a message's length; a reader skips the spaces with the JSON.
  *
  * Link previews (21 September 2026): the SENDER makes the preview and puts it into the plaintext (`previews`), so whoever
  * reads a message never contacts the linked host and no server learns what the preview says. The picture is too large for
@@ -29,6 +31,9 @@ const utf8 = (s: string) => new TextEncoder().encode(s);
 const subtle = () => globalThis.crypto.subtle;
 
 export const DM_VERSION = "v1";
+/** Padding step of the plaintext, and the last step: 16 KB plus the tag still fits DM_MAX_CIPHERTEXT_CHARS (friends.ts) as base64. */
+export const DM_PAD_BYTES = 1024;
+export const DM_PAD_MAX_BYTES = 16_384;
 /** A picture in the directory's blob store, encrypted by the sender: AES-256-GCM with this key (hex) and IV (hex). */
 export const DmBlobRef = z.object({ blob: z.string().regex(/^[0-9a-f]{32}$/), key: z.string().regex(/^[0-9a-f]{64}$/), iv: z.string().regex(/^[0-9a-f]{24}$/), mime: z.enum(["image/webp", "image/jpeg", "image/png"]) });
 export type DmBlobRef = z.infer<typeof DmBlobRef>;
@@ -82,10 +87,23 @@ export async function deriveDmKey(mySeedHex: string, myPublicKeyHex: string, the
   return importDmKey(await deriveDmKeyBits(mySeedHex, myPublicKeyHex, theirPublicKeyHex));
 }
 
-/** Encrypt a message: fresh IV, plaintext as JSON. */
+/**
+ * Padding (4 October 2026, security audit D10, measure 3.8): the directory sees every ciphertext's size, so a message's length
+ * was readable to it. Spaces after the JSON (a parser skips them, so older clients read padded messages unchanged) bring the
+ * plaintext to the next multiple of DM_PAD_BYTES. From DM_PAD_MAX_BYTES on nothing is added: such a message is at the
+ * directory's limit anyway, and the sender's retry without previews decides about it.
+ */
+export function dmPad(plain: Uint8Array): Uint8Array {
+  if (plain.length >= DM_PAD_MAX_BYTES) return plain;
+  const padded = new Uint8Array(Math.ceil(plain.length / DM_PAD_BYTES) * DM_PAD_BYTES).fill(0x20);
+  padded.set(plain);
+  return padded;
+}
+
+/** Encrypt a message: fresh IV, plaintext as JSON, padded to the next step (`dmPad`). */
 export async function sealDm(key: CryptoKey, from: string, to: string, id: string, plaintext: DmPlaintext): Promise<{ iv: string; ciphertext: string }> {
   const iv = randomHex(12);
-  const ct = await subtle().encrypt({ name: "AES-GCM", iv: hexToBytes(iv), additionalData: utf8(dmAad(from, to, id)) }, key, utf8(JSON.stringify(plaintext)));
+  const ct = await subtle().encrypt({ name: "AES-GCM", iv: hexToBytes(iv), additionalData: utf8(dmAad(from, to, id)) }, key, dmPad(utf8(JSON.stringify(plaintext))) as BufferSource);
   return { iv, ciphertext: bytesToBase64(new Uint8Array(ct)) };
 }
 
