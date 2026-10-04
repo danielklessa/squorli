@@ -724,6 +724,7 @@ export const de = {
   "report.result.ban": "Gebannt",
   "report.result.dismiss": "Ohne Maßnahme geschlossen",
   "report.result.none": "Geschlossen",
+  "report.closedBySystem": "automatisch nach 180 Tagen offen",
   "report.logHeading": "Moderationslog",
   "report.logHint": "Wer wann was getan hat (fremde Nachricht gelöscht, Kick, Bann, Kanalsperre, Meldung geschlossen), ohne Nachrichteninhalte; 180 Tage.",
   "report.logEmpty": "Noch keine Einträge.",

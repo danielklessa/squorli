@@ -1,5 +1,5 @@
-import { Permission, REPORT_SNAPSHOT_CLOSED_DAYS, REPORT_SNAPSHOT_MAX_DAYS, hasPermission, type Report, type ReportAction, type ReportSnapshot } from "@squorli/protocol";
-import { and, desc, eq, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
+import { Permission, REPORT_CLOSED_BY_SYSTEM, REPORT_OPEN_MAX_DAYS, REPORT_ROW_CLOSED_DAYS, REPORT_SNAPSHOT_CLOSED_DAYS, REPORT_SNAPSHOT_MAX_DAYS, hasPermission, type Report, type ReportAction, type ReportSnapshot } from "@squorli/protocol";
+import { and, desc, eq, inArray, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, rm } from "node:fs/promises";
@@ -21,7 +21,8 @@ import { visibility } from "./visibility";
  * their message through the queue they get a `moderation.notice` without the reporter (decision 4). Moderators (MANAGE_REPORTS)
  * get `reports.count` on every change (a count only, decision 5: nothing while offline, the count at the next sign-in).
  * Retention (decision 3): the snapshot goes 30 days after closing, 90 days after the report at the latest; the row stays so
- * repeats about the same person can be counted.
+ * repeats about the same person can be counted, and goes a year after closing (4 October 2026, the Directory's rule); an
+ * open report nobody judged for 180 days is closed by the sweep as dismissed, closer "system".
  */
 type SnapshotRow = NonNullable<typeof reports.$inferSelect["snapshot"]>;
 type Closer = { userId: string; name: string };
@@ -171,9 +172,16 @@ export class ReportsService {
     return existsSync(p) ? p : null;
   }
 
-  /** Retention: purge the snapshots that are due (files and the JSON), keep the rows. */
-  async sweep(): Promise<number> {
+  /**
+   * Retention, hourly: an open report nobody judged for REPORT_OPEN_MAX_DAYS is closed as dismissed by "system" (its
+   * snapshot is gone since day 90, nothing is left to judge); the snapshots that are due go (files and the JSON) while the
+   * row stays; a closed row goes REPORT_ROW_CLOSED_DAYS after closing, with whatever files were left. Returns what went.
+   */
+  async sweep(): Promise<{ expired: number; purged: number; rows: number }> {
     const now = Date.now();
+    const expired = await this.db.update(reports)
+      .set({ status: "dismissed", closedAt: new Date(now), closedBy: null, closedByName: REPORT_CLOSED_BY_SYSTEM, action: "dismiss", note: null })
+      .where(and(eq(reports.status, "open"), lt(reports.createdAt, new Date(now - REPORT_OPEN_MAX_DAYS * 86_400_000)))).returning({ id: reports.id });
     const due = await this.db.select({ id: reports.id }).from(reports).where(and(isNotNull(reports.snapshot), or(
       lt(reports.createdAt, new Date(now - REPORT_SNAPSHOT_MAX_DAYS * 86_400_000)),
       and(isNotNull(reports.closedAt), lt(reports.closedAt, new Date(now - REPORT_SNAPSHOT_CLOSED_DAYS * 86_400_000))),
@@ -182,8 +190,16 @@ export class ReportsService {
       await rm(join(this.dir, r.id), { recursive: true, force: true });
       await this.db.update(reports).set({ snapshot: null }).where(eq(reports.id, r.id));
     }
+    const rows = await this.db.delete(reports)
+      .where(and(ne(reports.status, "open"), isNotNull(reports.closedAt), lt(reports.closedAt, new Date(now - REPORT_ROW_CLOSED_DAYS * 86_400_000)))).returning({ id: reports.id });
+    for (const r of rows) await rm(join(this.dir, r.id), { recursive: true, force: true });
+    if (expired.length) {
+      this.log.info({ expired: expired.length }, "Meldungen: offene nach 180 Tagen geschlossen");
+      await this.broadcastCount();
+    }
     if (due.length) this.log.info({ purged: due.length }, "Meldungen: Momentaufnahmen nach Ablauf entfernt");
-    return due.length;
+    if (rows.length) this.log.info({ rows: rows.length }, "Meldungen: Eintraege ein Jahr nach Abschluss entfernt");
+    return { expired: expired.length, purged: due.length, rows: rows.length };
   }
 
   private toWire(r: typeof reports.$inferSelect, existing: Set<string>, earlier: Map<string, number>): Report {

@@ -1,4 +1,4 @@
-import { DELETE_RECENT_HOURS, Permission, hasPermission, type DeleteRecentHours, type ModLogEntry, type Report } from "@squorli/protocol";
+import { REPORT_CLOSED_BY_SYSTEM, DELETE_RECENT_HOURS, Permission, hasPermission, type DeleteRecentHours, type ModLogEntry, type Report } from "@squorli/protocol";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, type ServerApi } from "./api";
 import { askConfirm, askInput, askSelect } from "./dialogs";
@@ -95,7 +95,7 @@ export function ReportsTab({ api, myPermissions, run, openCount }: { api: Server
               <button className="secondary small" onClick={() => void close(r, "dismiss")}><Icon name="x" /> {t("report.actionDismiss")}</button>
             </div>
           ) : (
-            <p className="muted small">{t(`report.result.${r.action ?? "none"}`)} · {r.closedByName ?? "?"} · {r.closedAt ? fmtDateTime(r.closedAt) : ""}{r.note ? ` · ${r.note}` : ""}</p>
+            <p className="muted small">{t(`report.result.${r.action ?? "none"}`)} · {r.closedByName === REPORT_CLOSED_BY_SYSTEM ? t("report.closedBySystem") : (r.closedByName ?? "?")} · {r.closedAt ? fmtDateTime(r.closedAt) : ""}{r.note ? ` · ${r.note}` : ""}</p>
           )}
         </article>
       ))}

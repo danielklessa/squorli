@@ -723,6 +723,7 @@ export const en: Messages = {
   "report.result.ban": "Banned",
   "report.result.dismiss": "Closed without action",
   "report.result.none": "Closed",
+  "report.closedBySystem": "automatically, after 180 days open",
   "report.logHeading": "Moderation log",
   "report.logHint": "Who did what and when (someone else's message deleted, kick, ban, channel block, report closed), without message contents; 180 days.",
   "report.logEmpty": "No entries yet.",

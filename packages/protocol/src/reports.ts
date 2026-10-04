@@ -75,6 +75,15 @@ export const CloseReportRequest = z.object({ action: ReportAction, hours: Delete
 /** Retention (decision 3): a closed report's snapshot goes 30 days after closing, an open one's after 90 days; the row stays. */
 export const REPORT_SNAPSHOT_CLOSED_DAYS = 30;
 export const REPORT_SNAPSHOT_MAX_DAYS = 90;
+/**
+ * Row retention (4 October 2026, the Directory's rule, after the privacy policy named what a server keeps): an open report
+ * nobody judged for REPORT_OPEN_MAX_DAYS is closed by the server as dismissed, with REPORT_CLOSED_BY_SYSTEM as the closer's
+ * name (its snapshot is gone since day 90, so nothing is left to judge); a closed row goes REPORT_ROW_CLOSED_DAYS after closing.
+ * The closer's name is a plain string so that older clients list such a report like any other.
+ */
+export const REPORT_OPEN_MAX_DAYS = 180;
+export const REPORT_ROW_CLOSED_DAYS = 365;
+export const REPORT_CLOSED_BY_SYSTEM = "system";
 /** The moderation log is kept 180 days (decision 2). */
 export const MOD_LOG_DAYS = 180;
 

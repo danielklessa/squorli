@@ -353,7 +353,8 @@ export const channelMutes = pgTable(
 /**
  * Reports (docs/features/reports.md, 26 September 2026): a member's report of a message or a member to the server's moderators.
  * `snapshot` = the message or member at that moment (protocol `ReportSnapshot`; attachment copies under DATA_DIR/reports/<id>/),
- * set null by the retention sweep (closed + 30 days, 90 at the latest) while the row stays, so repeats can be counted.
+ * set null by the retention sweep (closed + 30 days, 90 at the latest) while the row stays, so repeats can be counted; the row
+ * itself goes a year after closing, and an open report is closed by the sweep after 180 days (4 October 2026).
  * `message_id` carries no FK on purpose: the report outlives the message. The reporter's account deletion takes their
  * reports along (cascade); the reported person's leaves the snapshot (it is evidence about them) with the user reference null.
  */
