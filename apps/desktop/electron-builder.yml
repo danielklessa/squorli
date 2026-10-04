@@ -19,6 +19,12 @@ files:
 npmRebuild: false
 asar: true
 
+# Code signing (docs/features/desktop.md "Code signing", 4 October 2026): build/sign.cjs (win.signtoolOptions.sign below) hands
+# every Windows executable to ssign, the client for Certum's SimplySign cloud, when CERTUM_EMAIL and CERTUM_OTP are set (the
+# release workflow's `signing` environment); a `dist` without them stays unsigned, a release with SQUORLI_SIGN_REQUIRED=1
+# fails unsigned. electron-builder brings every executable there itself: the native helpers while it copies the extra
+# resources, Squorli.exe, elevate.exe, the uninstaller and the installer (6 signatures per build).
+
 extraResources:
   - from: ../web/dist
     to: renderer
@@ -48,6 +54,13 @@ win:
     - from: native/bin/win32-x64
       to: native
       filter: ["*.exe"]
+  signtoolOptions:
+    sign: ./build/sign.cjs
+    signingHashAlgorithms: [sha256]   # one pass per file: ssign makes no dual (sha1 + sha256) signatures
+  # electron-updater checks the downloaded installer's signature against `publisherName` (written into app-update.yml) before
+  # it installs; without the name it installs unchecked. The name must equal the certificate's subject, forever: a version
+  # shipped with a wrong name refuses every later update. Set with the first signed release (docs/features/desktop.md).
+  verifyUpdateCodeSignature: true
 nsis:
   oneClick: false
   perMachine: false

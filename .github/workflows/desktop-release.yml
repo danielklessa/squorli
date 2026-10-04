@@ -1,7 +1,15 @@
 # Desktop app (apps/desktop): builds the installers for a tag `desktop-v<version>` and collects them in a DRAFT release.
 # Publishing the draft is a person's step; the update feed on squorli.com follows separately (squorli-website,
 # `pnpm desktop:release`), which is the rollout switch. Server images use tags `v*` (ci.yml); the two never overlap.
-# Unsigned builds. Details: docs/features/desktop.md, apps/desktop/AGENTS.md.
+#
+# Signed builds (4 October 2026, docs/features/desktop.md "Code signing"): the build job runs in the GitHub environment
+# `signing`, which only the repository owner may approve and which alone holds the secrets:
+#   CERTUM_EMAIL, CERTUM_OTP      the SimplySign login of Certum's cloud code-signing certificate; ssign signs the Windows
+#                                 executables with it (apps/desktop/build/sign.cjs)
+#   GPG_PRIVATE_KEY, GPG_PASSPHRASE  the key "Squorli Desktop Releases <signing@squorli.com>" for the detached signatures of the
+#                                 Linux files (public half: https://squorli.com/squorli-desktop.asc)
+# A tag build fails when it cannot sign; a test build without the secrets is built unsigned.
+# Details: docs/features/desktop.md, apps/desktop/AGENTS.md.
 name: Desktop release
 
 on:
@@ -21,6 +29,8 @@ permissions:
 env:
   # Empty for a test build.
   TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || (github.ref_type == 'tag' && github.ref_name || '') }}
+  # The signing client, built from its reviewed source on crates.io at this exact version (apps/desktop/AGENTS.md).
+  SSIGN_VERSION: 0.1.7
 
 jobs:
   build:
@@ -29,6 +39,8 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Holds the signing secrets and waits for the owner's approval (Settings > Environments > signing > Required reviewers).
+    environment: signing
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,9 +64,52 @@ jobs:
       - run: pnpm --filter "@squorli/desktop..." build
       # Windows: the native audio capture helper (MSVC is part of the runner image); a no-op elsewhere.
       - run: pnpm --filter @squorli/desktop native
+      # Windows: ssign (the runner image has Rust); kept between runs by version.
+      - name: ssign from the cache
+        if: runner.os == 'Windows'
+        id: ssign
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/ssign.exe
+          key: ssign-${{ env.SSIGN_VERSION }}-${{ runner.os }}
+      - name: Build ssign
+        if: runner.os == 'Windows' && steps.ssign.outputs.cache-hit != 'true'
+        run: cargo install ssign --version ${{ env.SSIGN_VERSION }} --locked
       - run: pnpm --filter @squorli/desktop dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CERTUM_EMAIL: ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP: ${{ secrets.CERTUM_OTP }}
+          SQUORLI_SIGN_REQUIRED: ${{ env.TAG != '' && '1' || '0' }}
+      # Every Windows executable of a release carries a valid signature; the subject is printed (it is the publisherName).
+      - name: Check the Windows signatures
+        if: runner.os == 'Windows' && env.TAG != ''
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem apps/desktop/release/*.exe) + @(Get-Item apps/desktop/release/win-unpacked/Squorli.exe) + @(Get-ChildItem apps/desktop/release/win-unpacked/resources/native/*.exe -ErrorAction SilentlyContinue)
+          foreach ($f in $files) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            Write-Host ("{0}: {1} / {2}" -f $f.Name, $s.Status, $s.SignerCertificate.Subject)
+            if ($s.Status -ne 'Valid') { throw "$($f.Name) is not validly signed ($($s.Status))" }
+          }
+      # Linux: detached GPG signatures next to the AppImage and the deb.
+      - name: Sign the Linux files
+        if: runner.os == 'Linux'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            if [ -n "$TAG" ]; then echo "GPG_PRIVATE_KEY is not set: refusing to release unsigned Linux files"; exit 1; fi
+            echo "no GPG key in the environment: test build, Linux files stay unsigned"; exit 0
+          fi
+          export GNUPGHOME=$(mktemp -d)
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          for f in apps/desktop/release/*.AppImage apps/desktop/release/*.deb; do
+            printf '%s\n' "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign --output "$f.asc" "$f"
+            gpg --verify "$f.asc" "$f"
+          done
+          rm -rf "$GNUPGHOME"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}
@@ -64,6 +119,7 @@ jobs:
             apps/desktop/release/*.exe.blockmap
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
+            apps/desktop/release/*.asc
             apps/desktop/release/latest*.yml
 
   release:
@@ -90,7 +146,7 @@ jobs:
         run: |
           ls -la artifacts
           notes="apps/desktop/release-notes/${TAG#desktop-v}.md"
-          footer="Installers for Windows (Squorli-Setup-*.exe) and Linux (AppImage, deb). Unsigned: Windows SmartScreen warns on the first start. Download page: https://squorli.com/en/download/"
+          footer="Installers for Windows (Squorli-Setup-*.exe) and Linux (AppImage, deb). The Windows files are code-signed with a Certum certificate issued to Daniel Klessa (Open Source Developer); Windows SmartScreen may still warn while the certificate is new. The Linux files come with detached GPG signatures (*.asc) by the key \"Squorli Desktop Releases\" E62D 34CB F884 0496 931F B534 580D 3789 5466 FC24, published at https://squorli.com/squorli-desktop.asc. Download page: https://squorli.com/en/download/"
           # A version without a notes file gets the standing text alone, as every release did before.
           if [ -f "$notes" ]; then { cat "$notes"; echo; echo "---"; echo; echo "$footer"; } > body.md; else echo "$footer" > body.md; fi
           if gh release view "$TAG" >/dev/null 2>&1; then
