@@ -1,5 +1,5 @@
 import { join, sep } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { CONTENT_SECURITY_POLICY, contentTypeOf, resolveAppFile } from "./appFiles";
 import { appearanceState, normalizeAppearance, supportedMaterials } from "./appearance";
 import { attentionText, badgeFile, readAttentionCount } from "./attention";
@@ -158,6 +158,11 @@ describe("navigation", () => {
     for (const url of ["file:///etc/passwd", "ms-settings:privacy", "javascript:alert(1)", "", "C:\\Windows\\system32\\calc.exe"]) expect(isAllowedExternal(url), url).toBe(false);
   });
 });
+
+// `linkLookup` imports `electron` for `ipcMain`, and electron's index.js downloads the binary on the first import where the
+// install skipped it (ELECTRON_SKIP_BINARY_DOWNLOAD in CI): on a runner without a cache that took 13 s and timed the test out
+// (the tag pipeline of desktop-v0.12.0, 4 October 2026). The pure function needs none of it.
+vi.mock("electron", () => ({ ipcMain: { handle: () => {} } }));
 
 describe("link lookup for direct messages", () => {
   it("takes an http(s) address or a video id from the client and nothing else", async () => {
