@@ -1,0 +1,1 @@
+ALTER TABLE "sessions" ADD COLUMN "device_bound" boolean DEFAULT false NOT NULL;

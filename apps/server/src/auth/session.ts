@@ -1,6 +1,6 @@
-import { DEVICE_REFUSED } from "@squorli/protocol";
-import { and, eq } from "drizzle-orm";
-import { createHash } from "node:crypto";
+import { DEVICE_PROOF_REQUIRED, DEVICE_REFUSED, SESSION_PROOF_HEADER, SESSION_PROOF_MAX_SKEW_MS, deviceProofMessage, parseSessionProofHeader, sessionProofMessage, type SessionProof } from "@squorli/protocol";
+import { and, eq, lt, or, sql } from "drizzle-orm";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Actor } from "../authz";
 import type { Db } from "../db";
@@ -9,11 +9,53 @@ import { actorOf, refusesSuspended } from "../state";
 import { deviceAllowed } from "../users/devices";
 import { isSuspendedNow, refusedUntil, suspendedBody } from "../users/suspension";
 
-/** `deviceKey`: the key of the device that signed in (docs/features/devices.md), null for a session without one. */
-export type SessionUser = { userId: string; sessionId: string; publicKey: string; displayName: string | null; handle: string | null; handleCheckedAt: Date | null; avatarUrl: string | null; localHandle: string | null; localAvatarAt: Date | null; expiresAt: Date; suspendedUntil: Date | null; deviceKey: string | null };
+/**
+ * `deviceKey`: the key of the device that signed in (docs/features/devices.md), null for a session without one. `deviceBound`:
+ * the session works only with that device's fresh proof on every request and hello (`sessionProofProblem`, 4 October 2026).
+ */
+export type SessionUser = { userId: string; sessionId: string; publicKey: string; displayName: string | null; handle: string | null; handleCheckedAt: Date | null; avatarUrl: string | null; localHandle: string | null; localAvatarAt: Date | null; expiresAt: Date; suspendedUntil: Date | null; deviceKey: string | null; deviceBound: boolean };
 
-/** Write last_used_at at most every 5 minutes (device list, M6c); not on every request. */
-const TOUCH_INTERVAL_MS = 5 * 60_000;
+/** Write last_used_at at most every 5 minutes (device list, M6c); not on every request. The socket's pings touch it the same way. */
+export const TOUCH_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * The session policy (4 October 2026, security audit S10, measure 3.4), set once at the start from the configuration:
+ * `idleMs` = a session that was not used for this long is over before its TTL (SESSION_IDLE_DAYS, 0 = off); `domain` =
+ * PUBLIC_DOMAIN without a port, one of the two hosts a session proof may name (the other is the request's own host).
+ */
+let policy: { idleMs: number; domain: string | null } = { idleMs: 14 * 86_400_000, domain: null };
+const hostOnly = (host: string): string => host.toLowerCase().replace(/:\d+$/, "");
+export function setSessionPolicy(p: { idleDays: number; domain: string }): void {
+  policy = { idleMs: p.idleDays * 86_400_000, domain: hostOnly(p.domain) };
+}
+/** Whether a session with these marks is over for want of use (pure). */
+export const sessionIdle = (lastUsedAt: Date | null, createdAt: Date, now: number, idleMs = policy.idleMs): boolean => idleMs > 0 && now - (lastUsedAt ?? createdAt).getTime() > idleMs;
+
+/** DER prefix of an Ed25519 SubjectPublicKeyInfo; the raw 32 bytes follow it. Node's own verify: a check per request must be cheap. */
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+function deviceSignatureOk(deviceKey: string, signature: string, message: string): boolean {
+  try {
+    const key = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(deviceKey, "hex")]), format: "der", type: "spki" });
+    return cryptoVerify(null, Buffer.from(message, "utf8"), key, Buffer.from(signature, "hex"));
+  } catch {
+    return false;
+  }
+}
+/**
+ * What is wrong with a bound session's proof, or null when it is good: `missing`, `stale` (the client's clock is more than
+ * SESSION_PROOF_MAX_SKEW_MS off, or the proof is old), `domain` (neither PUBLIC_DOMAIN nor the host this request came in
+ * on), `signature`. `method`/`path`: of this request (`WS`, `/api/ws` for the hello), the path without its query.
+ */
+export function sessionProofProblem(proof: SessionProof | null, session: { publicKey: string; deviceKey: string | null }, method: string, path: string, requestHost: string, now = Date.now()): string | null {
+  if (!proof) return "missing";
+  if (!session.deviceKey) return "signature";
+  if (Math.abs(now - proof.at) > SESSION_PROOF_MAX_SKEW_MS) return "stale";
+  const domain = proof.domain.toLowerCase();
+  if (domain !== policy.domain && domain !== hostOnly(requestHost)) return "domain";
+  const message = deviceProofMessage(session.publicKey, sessionProofMessage(domain, proof.at, method, path));
+  return deviceSignatureOk(session.deviceKey, proof.signature, message) ? null : "signature";
+}
+const pathOf = (url: string): string => url.split("?")[0] ?? url;
 
 /**
  * What the database keeps of a session token: its SHA-256 (hex), never the token (security review, 25 September 2026,
@@ -31,7 +73,7 @@ export async function lookUpSession(db: Db, rawToken: string): Promise<{ session
   const token = tokenHash(rawToken);
   const [row] = await db
     .select({
-      userId: sessions.userId, sessionId: sessions.id, expiresAt: sessions.expiresAt, lastUsedAt: sessions.lastUsedAt, deviceKey: sessions.deviceKey,
+      userId: sessions.userId, sessionId: sessions.id, expiresAt: sessions.expiresAt, lastUsedAt: sessions.lastUsedAt, createdAt: sessions.createdAt, deviceKey: sessions.deviceKey, deviceBound: sessions.deviceBound,
       publicKey: users.publicKey, displayName: users.displayName, handle: users.handle, handleCheckedAt: users.handleCheckedAt, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil,
       devicesEnforced: users.devicesEnforced, deviceKeys: users.deviceKeys,
       localHandle: localAccounts.handle, localAvatarAt: localAccounts.avatarUpdatedAt, localEnforcedAt: localAccounts.devicesEnforcedAt,
@@ -44,6 +86,11 @@ export async function lookUpSession(db: Db, rawToken: string): Promise<{ session
     .where(eq(sessions.token, token))
     .limit(1);
   if (!row || row.expiresAt.getTime() < Date.now()) return { session: null, refused: false };
+  // Not used for SESSION_IDLE_DAYS (security audit S10): over, like one past its TTL; the row goes.
+  if (sessionIdle(row.lastUsedAt, row.createdAt, Date.now())) {
+    await db.delete(sessions).where(eq(sessions.token, token));
+    return { session: null, refused: false };
+  }
   const allowed = deviceAllowed({
     handle: row.handle, localHandle: row.localHandle, devicesEnforced: row.devicesEnforced, deviceKeys: row.deviceKeys,
     localEnforced: row.localEnforcedAt !== null, localDevice: row.localDeviceId === null ? null : row.localDeviceRevokedAt === null ? "active" : "revoked",
@@ -57,7 +104,18 @@ export async function lookUpSession(db: Db, rawToken: string): Promise<{ session
     // The device of a server account counts as used with its session (the sweep signs out what was not used for 90 days).
     if (row.localDeviceId) void db.update(localDevices).set({ lastSeenAt: new Date() }).where(eq(localDevices.id, row.localDeviceId)).catch(() => { /* display only */ });
   }
-  return { refused: false, session: { userId: row.userId, sessionId: row.sessionId, publicKey: row.publicKey, displayName: row.displayName, handle: row.handle, handleCheckedAt: row.handleCheckedAt, avatarUrl: row.avatarUrl, localHandle: row.localHandle, localAvatarAt: row.localAvatarAt, expiresAt: row.expiresAt, suspendedUntil: row.suspendedUntil, deviceKey: row.deviceKey } };
+  return { refused: false, session: { userId: row.userId, sessionId: row.sessionId, publicKey: row.publicKey, displayName: row.displayName, handle: row.handle, handleCheckedAt: row.handleCheckedAt, avatarUrl: row.avatarUrl, localHandle: row.localHandle, localAvatarAt: row.localAvatarAt, expiresAt: row.expiresAt, suspendedUntil: row.suspendedUntil, deviceKey: row.deviceKey, deviceBound: row.deviceBound } };
+}
+/** A session counts as used (the socket's pings, at most every TOUCH_INTERVAL_MS by the caller). */
+export async function touchSession(db: Db, sessionId: string): Promise<void> {
+  await db.update(sessions).set({ lastUsedAt: new Date() }).where(eq(sessions.id, sessionId));
+}
+/** Rows past their TTL or idle for longer than the policy allows go (hourly and at start); answers how many. */
+export async function sweepSessions(db: Db, now = new Date()): Promise<number> {
+  // The cutoff as text with a cast: a Date bound against an expression (not a column) is not mapped by the driver.
+  const idle = policy.idleMs > 0 ? sql`coalesce(${sessions.lastUsedAt}, ${sessions.createdAt}) < ${new Date(now.getTime() - policy.idleMs).toISOString()}::timestamptz` : undefined;
+  const gone = await db.delete(sessions).where(or(lt(sessions.expiresAt, now), idle)).returning({ id: sessions.id });
+  return gone.length;
 }
 /** Used by the WS handshake and by protected routes. Returns the user behind a session token. */
 export async function resolveSession(db: Db, rawToken: string): Promise<SessionUser | null> {
@@ -81,7 +139,8 @@ function bearer(req: FastifyRequest): string | null {
 /**
  * Bearer token from the Authorization header; sends a 401 itself if nothing valid is present, and 403 `account_suspended`
  * with the date for a directory account the directory's operator suspended (the session stays: it works again afterwards).
- * A session whose device is not let in any more answers 401 `device_refused` (once: its row is gone afterwards).
+ * A session whose device is not let in any more answers 401 `device_refused` (once: its row is gone afterwards). A bound
+ * session without the device's proof over this request answers 401 `device_proof_required` (`why`, `serverTime`).
  */
 export async function requireSession(db: Db, req: FastifyRequest, reply: FastifyReply): Promise<SessionUser | null> {
   const token = bearer(req);
@@ -89,6 +148,14 @@ export async function requireSession(db: Db, req: FastifyRequest, reply: Fastify
   if (!session) {
     await reply.code(401).send({ error: refused ? DEVICE_REFUSED : "unauthorized" });
     return null;
+  }
+  // A bound session (security audit S10): the device's fresh proof over this very request, or 401 with the reason and our clock.
+  if (session.deviceBound) {
+    const why = sessionProofProblem(parseSessionProofHeader(req.headers[SESSION_PROOF_HEADER]), session, req.method, pathOf(req.url), req.hostname);
+    if (why) {
+      await reply.code(401).send({ error: DEVICE_PROOF_REQUIRED, why, serverTime: new Date().toISOString() });
+      return null;
+    }
   }
   const until = await suspensionOf(db, session);
   if (until) {

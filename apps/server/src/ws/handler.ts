@@ -2,7 +2,7 @@ import { ClientEvent, PROTOCOL_VERSION, Permission, WS_CLOSE_ACCOUNT_SUSPENDED, 
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import { CLOSE_REGISTRATION_REQUIRED, hasAccount, lookUpSession, resolveSession, suspensionOf } from "../auth/session";
+import { CLOSE_REGISTRATION_REQUIRED, TOUCH_INTERVAL_MS, hasAccount, lookUpSession, resolveSession, sessionProofProblem, suspensionOf, touchSession } from "../auth/session";
 import { can } from "../authz";
 import type { Db } from "../db";
 import { channels, users } from "../db/schema";
@@ -61,6 +61,8 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
 
   app.get("/api/ws", { websocket: true }, (socket: WebSocket, req) => {
     let userId: string | null = null;
+    let sessionId: string | null = null;
+    let touchedAt = Date.now();
     const send = (e: ServerEvent) => hub.send(socket, e);
     const helloTimeout = setTimeout(() => socket.close(4001, "hello timeout"), 10_000);
     let lastTyping = 0;
@@ -126,7 +128,16 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
           send({ type: "error", code: "unauthorized", message: suspendedCloseReason(suspended.toISOString()) });
           return socket.close(WS_CLOSE_ACCOUNT_SUSPENDED, "account_suspended");
         }
+        // A bound session (security audit S10, auth/session.ts): the device's fresh proof over this hello, or no socket.
+        if (session.deviceBound) {
+          const why = sessionProofProblem(ev.data.deviceProof ?? null, session, "WS", "/api/ws", req.hostname);
+          if (why) {
+            send({ type: "error", code: "unauthorized", message: `device proof ${why}` });
+            return socket.close(4003, "unauthorized");
+          }
+        }
         userId = session.userId;
+        sessionId = session.sessionId;
         clearTimeout(helloTimeout);
         hub.add(userId, socket, session.sessionId);
         // A kick, ban or sign-out between the lookup above and hub.add would have missed this socket: look again now that it
@@ -178,6 +189,8 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
 
       switch (ev.data.type) {
         case "ping":
+          // An open socket is use (security audit S10: the idle timeout must not end a session that is connected all along).
+          if (sessionId && Date.now() - touchedAt > TOUCH_INTERVAL_MS) { touchedAt = Date.now(); void touchSession(db, sessionId).catch(() => { /* display only */ }); }
           return send({ type: "pong", t: ev.data.t });
         case "voice.join": {
           // The same checks as POST /api/rtc-token (livekit/routes.ts): the channel must be visible and enterable for this

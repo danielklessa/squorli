@@ -72,8 +72,8 @@ const directory = createServer((req, res) => {
 await new Promise((resolve, reject) => { directory.once("error", reject); directory.listen(DIRECTORY_PORT, "127.0.0.1", resolve); });
 
 // ---------- The chat server
-async function api(method, path, body, sessionToken) {
-  const headers = {};
+async function api(method, path, body, sessionToken, extraHeaders = {}) {
+  const headers = { ...extraHeaders };
   if (sessionToken) headers.authorization = `Bearer ${sessionToken}`;
   if (body !== undefined) headers["content-type"] = "application/json";
   const r = await fetch(BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -87,20 +87,20 @@ check("health says that the server knows devices", health.devices === true);
 
 async function newAccount(handle) { const key = await newKey(); accounts.set(key.publicKey, { handle, enforced: false, deviceKeys: [] }); return key; }
 /** The plain sign-in; `dev` = the device that signs along, `tamper` = its proof is over another message. */
-async function verify(key, dev = null, { tamper = false, invite } = {}) {
+async function verify(key, dev = null, { tamper = false, invite, bind = false } = {}) {
   const [, ch] = await api("POST", "/api/auth/challenge", { publicKey: key.publicKey });
   const message = `community-chat-login\n${DOMAIN}\n${ch.nonce}`;
   const proof = dev ? { deviceKey: dev.publicKey, deviceSignature: await signWith(dev, proofMessage(key.publicKey, tamper ? `${message}x` : message)) } : {};
-  const [status, body] = await api("POST", "/api/auth/verify", { challengeId: ch.challengeId, publicKey: key.publicKey, signature: await signWith(key, message), ...proof, ...(invite ? { invite } : {}) });
+  const [status, body] = await api("POST", "/api/auth/verify", { challengeId: ch.challengeId, publicKey: key.publicKey, signature: await signWith(key, message), ...proof, ...(invite ? { invite } : {}), ...(bind ? { bindDevice: true } : {}) });
   return { status, body, token: body.sessionToken, message };
 }
-function connectWs(sessionToken) {
+function connectWs(sessionToken, deviceProof = null) {
   const ws = new WebSocket(BASE.replace(/^http/, "ws") + "/api/ws");
   const events = [];
   let closed = null;
   ws.on("message", (m) => events.push(JSON.parse(m.toString())));
   ws.on("close", (code, reason) => { closed = { code, reason: reason.toString() }; });
-  ws.on("open", () => ws.send(JSON.stringify({ type: "hello", protocolVersion: PROTOCOL_VERSION, sessionToken })));
+  ws.on("open", () => ws.send(JSON.stringify({ type: "hello", protocolVersion: PROTOCOL_VERSION, sessionToken, ...(deviceProof ? { deviceProof } : {}) })));
   const until = async (pred, ms = 5000) => { for (let t = 0; t < ms; t += 50) { const v = pred(); if (v) return v; await sleep(50); } return null; };
   return { events, first: () => until(() => events.find((e) => e.type === "welcome" || e.type === "error")), closed: (ms) => until(() => closed, ms), isOpen: () => closed === null, close: () => { try { ws.close(); } catch { /* closed */ } } };
 }
@@ -272,6 +272,44 @@ const [sM3, rM3] = await fetchKey(manyHandle, many, await newKey(), { replaceDev
 check("naming a device that is not enrolled to make way -> 409 again", sM3 === 409 && rM3.error === "too_many_devices", `${sM3} ${rM3.error ?? ""}`);
 const [sM4] = await fetchKey(manyHandle, many, null);
 check("a key fetch without a device still hands the key out", sM4 === 200, `${sM4}`);
+
+// ---------- Bound sessions (4 October 2026, security audit S10, measure 3.4): a sign-in with `bindDevice` gets a session that
+// works only with the device's fresh proof over each request (header x-squorli-session-proof) and over the hello.
+const bound = await newAccount(`bound${stamp}`);
+const boundDevice = await newKey();
+const sessionProof = async (dev, account, method, path, { at = Date.now(), domain = DOMAIN, key = dev } = {}) => ({ domain, at, signature: await signWith(key, proofMessage(account.publicKey, `community-chat-session\n${domain}\n${at}\n${method}\n${path}`)) });
+const headerOf = (p) => ({ "x-squorli-session-proof": `${p.domain}:${p.at}:${p.signature}` });
+const bnd = await verify(bound, boundDevice, { bind: true });
+check("a sign-in with bindDevice next to the device's proof answers deviceBound true", bnd.status === 200 && bnd.body.deviceBound === true, `${bnd.status} ${bnd.body.error ?? ""} ${bnd.body.deviceBound}`);
+const unb = await verify(bound, boundDevice);
+check("a sign-in without bindDevice answers deviceBound false and its session works without a proof", unb.status === 200 && unb.body.deviceBound === false && (await me(unb.token))[0] === 200);
+const noDev = await verify(bound, null, { bind: true });
+check("bindDevice without a device binds nothing", noDev.status === 200 && noDev.body.deviceBound === false && (await me(noDev.token))[0] === 200);
+const [sNo, rNo] = await me(bnd.token);
+check("a bound session's request without the proof -> 401 device_proof_required (missing) with the server's time", sNo === 401 && rNo.error === "device_proof_required" && rNo.why === "missing" && Number.isFinite(Date.parse(rNo.serverTime)), `${sNo} ${rNo.error ?? ""} ${rNo.why ?? ""}`);
+const [sStale, rStale] = await api("GET", "/api/me", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/me", { at: Date.now() - 11 * 60_000 })));
+check("a proof older than ten minutes -> 401 stale", sStale === 401 && rStale.why === "stale", `${sStale} ${rStale.why ?? ""}`);
+const [sPath, rPath] = await api("GET", "/api/me", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/state")));
+check("a proof over another path -> 401 signature", sPath === 401 && rPath.why === "signature", `${sPath} ${rPath.why ?? ""}`);
+const [sKey, rKey] = await api("GET", "/api/me", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/me", { key: await newKey() })));
+check("a proof by another key -> 401 signature", sKey === 401 && rKey.why === "signature", `${sKey} ${rKey.why ?? ""}`);
+const [sDom, rDom] = await api("GET", "/api/me", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/me", { domain: "other.example" })));
+check("a proof for another host -> 401 domain", sDom === 401 && rDom.why === "domain", `${sDom} ${rDom.why ?? ""}`);
+const [sOk, rOk] = await api("GET", "/api/me", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/me")));
+check("with the device's fresh proof the request passes", sOk === 200 && rOk.publicKey === bound.publicKey, `${sOk} ${rOk.error ?? ""}`);
+const [sQ] = await api("GET", "/api/me?x=1", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/me")));
+check("the proof names the path without its query", sQ === 200, `${sQ}`);
+const wsNo = connectWs(bnd.token);
+const eNo = await wsNo.first();
+const cNo = await wsNo.closed();
+check("a hello without the proof -> error unauthorized 'device proof missing' and close 4003", eNo?.type === "error" && eNo.code === "unauthorized" && eNo.message === "device proof missing" && cNo?.code === 4003, JSON.stringify(eNo));
+const wsYes = connectWs(bnd.token, await sessionProof(boundDevice, bound, "WS", "/api/ws"));
+check("a hello with the proof -> welcome", (await wsYes.first())?.type === "welcome");
+wsYes.close();
+const wsBad = connectWs(bnd.token, await sessionProof(boundDevice, bound, "GET", "/api/ws"));
+check("a hello with a request's proof -> refused", (await wsBad.first())?.message === "device proof signature");
+const [sLst, rLst] = await api("GET", "/api/me/sessions", undefined, bnd.token, headerOf(await sessionProof(boundDevice, bound, "GET", "/api/me/sessions")));
+check("the session list still answers (the token itself is not in it)", sLst === 200 && Array.isArray(rLst.sessions ?? rLst), `${sLst}`);
 
 wsD1.close(); wsOld.close(); wsAgain.close();
 await new Promise((r) => directory.close(r));

@@ -30,6 +30,8 @@ const Env = z.object({
   LIVEKIT_API_SECRET: z.string().min(16),
   STATIC_DIR: z.string().optional(),
   SESSION_TTL_DAYS: z.coerce.number().default(30),
+  /** A session that was not used for this long ends before its TTL (4 October 2026, security audit S10); 0 = off. */
+  SESSION_IDLE_DAYS: z.coerce.number().min(0).default(14),
   /** Directory for attachments (Docker: volume). */
   DATA_DIR: z.string().default("./data"),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),

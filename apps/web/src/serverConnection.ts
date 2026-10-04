@@ -1,7 +1,7 @@
 import { DEVICE_REFUSED, PROTOCOL_VERSION, PrivacyPolicyUrl, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, sessionEndReasonOf, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
 import { ServerApi, explainLoginError, suspendedText, suspendedUntilOfError, type Health } from "./api";
 import type { VoteKickState } from "./voteKick";
-import type { Identity } from "./identity";
+import { deviceSignerOf, type Identity } from "./identity";
 import { t } from "./i18n";
 import { freshPlan, nextTry, planAfterUser, sessionRejected, type RetryPlan } from "./serverRetry";
 import { showNotice } from "./dialogs";
@@ -196,6 +196,8 @@ export class ServerConnection {
 
   constructor(host: string, base: string, private readonly identity: () => Identity | null, private readonly hooks: ConnectionHooks) {
     this.api = new ServerApi(base);
+    // A bound session (docs/features/devices.md, 4 October 2026): the identity's device proves every request and hello; asked each time, because the device's signer is loaded after the start and an identity may change.
+    this.api.setProver(() => { const id = this.identity(); const signer = id ? deviceSignerOf(id) : null; return id && signer ? { signer, accountPublicKey: id.publicKey } : null; });
     this.state = {
       host, base, me: null, userId: null, deviceList: false, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
       voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
@@ -445,7 +447,8 @@ export class ServerConnection {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     const ws = new WebSocket(`${base.replace(/^http/, "ws")}/api/ws`);
     this.ws = ws;
-    ws.onopen = () => this.send({ type: "hello", protocolVersion: PROTOCOL_VERSION, sessionToken: token });
+    // The hello carries the device's proof (a bound session needs it, any other server ignores it); signed after the open, which takes a moment, so a socket that was dropped meanwhile says nothing.
+    ws.onopen = () => { void this.api.helloProof().catch(() => null).then((deviceProof) => { if (this.ws === ws) this.send({ type: "hello", protocolVersion: PROTOCOL_VERSION, sessionToken: token, ...(deviceProof ? { deviceProof } : {}) }); }); };
     ws.onmessage = (m) => {
       this.lastHeard = Date.now();
       this.pushLog({ dir: "in", at: Date.now(), text: String(m.data).slice(0, 2000) });

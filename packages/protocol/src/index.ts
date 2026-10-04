@@ -48,11 +48,15 @@ export const VerifyRequest = z.object({
   invite: InviteCode.optional(),
   /** The device's proof over `challengeMessage` (directory.ts "Devices"); a server from before it drops the fields. */
   ...DeviceProofFields,
+  /** With a device: the session is bound to it (below, "Sessions bound to the device"); a server from before drops the field. */
+  bindDevice: z.boolean().optional(),
 });
 export const VerifyResponse = z.object({
   sessionToken: z.string(),
   userId: Uuid,
   expiresAt: Iso,
+  /** The session is bound to the device that signed in: every request and every hello need the device's proof. Default for servers from before. */
+  deviceBound: z.boolean().default(false),
   /**
    * A member from before server accounts whose key has neither a directory handle nor a server account (docs/features/local-accounts.md):
    * the session works for GET /api/me and POST /api/local/claim only until they register. Default for servers from before it.
@@ -92,6 +96,34 @@ export type SessionEndReason = typeof SESSION_END_REASONS[number];
 export function sessionEndReasonOf(reason: unknown): SessionEndReason {
   return (SESSION_END_REASONS as readonly string[]).includes(reason as string) ? (reason as SessionEndReason) : "session_revoked";
 }
+
+/**
+ * Sessions bound to the device (4 October 2026, security audit S10, docs/features/devices.md): a sign-in that names its
+ * device may ask for a bound session (`bindDevice`); from then on every request with that session and every WebSocket
+ * hello carry a fresh proof by the device key, so a copied token is worth nothing without the device. The proof is the
+ * device's signature over `deviceProofMessage(accountKey, sessionProofMessage(domain, at, method, path))`: `domain` = the
+ * host the client reaches the server at (no port), `at` = the client's clock in ms (good for SESSION_PROOF_MAX_SKEW_MS
+ * either way), `method` and `path` of the request (`WS` and `/api/ws` for the hello), so a captured proof opens nothing
+ * else. A request without a good proof answers 401 `device_proof_required` with `why` and the server's `serverTime`; for a
+ * `stale` one the client learns its clock's offset and tries once more. On the socket the hello gets `error` `unauthorized`
+ * with "device proof <why>" and the close 4003. A session without the binding (an older client, or no device) is as before.
+ */
+export const SESSION_PROOF_HEADER = "x-squorli-session-proof";
+export const SESSION_PROOF_MAX_SKEW_MS = 10 * 60_000;
+export const DEVICE_PROOF_REQUIRED = "device_proof_required";
+export function sessionProofMessage(domain: string, at: number, method: string, path: string): string {
+  return `community-chat-session\n${domain}\n${at}\n${method.toUpperCase()}\n${path}`;
+}
+/** The header's value: `<domain>:<at>:<signature>` (the domain has no port, so no colon of its own). */
+export const sessionProofHeader = (domain: string, at: number, signature: string): string => `${domain}:${at}:${signature}`;
+export type SessionProof = { domain: string; at: number; signature: string };
+export function parseSessionProofHeader(value: unknown): SessionProof | null {
+  if (typeof value !== "string") return null;
+  const m = /^([a-z0-9.-]{1,253}):(\d{1,16}):([0-9a-f]{128})$/i.exec(value);
+  return m ? { domain: m[1]!.toLowerCase(), at: Number(m[2]), signature: m[3]!.toLowerCase() } : null;
+}
+/** The hello's proof (the same signature, over method `WS` and path `/api/ws`). */
+export const SessionProofSchema = z.object({ domain: z.string().min(1).max(253), at: z.number().int().nonnegative(), signature: Signature });
 
 /** What the client signs. The domain binding prevents reuse on other servers. */
 /** The same text as `chatLoginMessage` of directory.ts (the directory checks it as the proof of a sign-in). */
@@ -702,7 +734,7 @@ export const RtcTokenResponse = z.object({
  */
 export const VoiceMember = z.object({ userId: Uuid, displayName: z.string(), micMuted: z.boolean().default(false), deafened: z.boolean().default(false), cameraOn: z.boolean().default(false), screenOn: z.boolean().default(false), viewVideo: z.boolean().optional() });
 
-export const ClientHello = z.object({ type: z.literal("hello"), protocolVersion: z.number().int(), sessionToken: z.string() });
+export const ClientHello = z.object({ type: z.literal("hello"), protocolVersion: z.number().int(), sessionToken: z.string(), deviceProof: SessionProofSchema.optional() });
 export const ClientPing = z.object({ type: z.literal("ping"), t: z.number() });
 /** Channel state is intent, not media state: "I want to be listed as a member". */
 /** The mute state travels with the join so nobody shows as unmuted for a moment; a server from before it drops the fields unread. */

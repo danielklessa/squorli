@@ -10,16 +10,21 @@ import {
   localClaimMessage,
   NoticeReadResponse, RefusedServersResponse, directoryRefusedServersUrl, directoryReportPayload, reportKindsOf, suspendedUntilOf, type AccountNotice, type DirectoryReportContent,
   DeviceRevokeResponse, DevicesResponse, type DeviceRevokeTarget, type DirectoryAction,
+  DEVICE_PROOF_REQUIRED, SESSION_PROOF_HEADER, deviceProofMessage, sessionProofHeader, sessionProofMessage, type SessionProof,
 } from "@squorli/protocol";
 import { z } from "zod";
 import { toBase64, type AvatarImage } from "./avatarImage";
 import { type Identity, type NewDevice, enrolFields, identityFromPrivateKey, sign, signBoth } from "./identity";
+import type { DeviceSigner } from "./deviceKey";
 import { fmtDateTime, t } from "./i18n";
 import { connectedHost } from "./serverHost";
 
 /** How long /api/health and /api/me may take before a server counts as not answering (docs/features/offline.md). */
 export const HEALTH_TIMEOUT_MS = 10_000;
 export const ME_TIMEOUT_MS = 15_000;
+
+/** `bindDevice: true` next to a device's proof: the session is to be bound to the device (docs/features/devices.md, 4 October 2026). */
+const bindOf = (signed: { deviceKey?: string }): { bindDevice?: true } => (signed.deviceKey ? { bindDevice: true } : {});
 
 export class ApiError extends Error {
   constructor(method: string, path: string, readonly status: number, readonly code: string | null, readonly body: Record<string, unknown>) {
@@ -38,8 +43,15 @@ export type ChannelPatch = {
   sticky?: boolean; stickyPersist?: boolean; stickyHideVoice?: boolean; userLimit?: number | null; slowmodeSeconds?: number; defaultNotify?: ChannelNotification; allowRadio?: boolean; allowVideo?: boolean; allowVoteKick?: boolean;
 };
 
+/** Who proves a bound session (docs/features/devices.md, 4 October 2026): the device's signer and the account it belongs to. */
+export type SessionProver = { signer: DeviceSigner; accountPublicKey: string };
+
 export class ServerApi {
   private token: string | null = null;
+  /** Asked before every request with the token: the device that proves this session, or null (no device, nothing to prove). */
+  private prover: (() => SessionProver | null) | null = null;
+  /** What to add to this clock to get the server's (learnt from a 401 `device_proof_required` with `why: stale`). */
+  private clockOffset = 0;
   /** Called when the server rejects a set token with a 401 (expired, or signed out from another device, M6c), with the answer's code (`device_refused`: docs/features/devices.md). */
   onUnauthorized: ((code: string | null) => void) | null = null;
   constructor(readonly base: string) {}
@@ -52,6 +64,19 @@ export class ServerApi {
   }
   setToken(t: string | null) { this.token = t; }
   getToken() { return this.token; }
+  /** The device that proves the session on every request and hello (a bound session, docs/features/devices.md); the server ignores the proof on one that is not bound. */
+  setProver(p: (() => SessionProver | null) | null) { this.prover = p; }
+  get clockOffsetMs(): number { return this.clockOffset; }
+  /** The device's proof over one request (null without a device): `deviceProofMessage(account, sessionProofMessage(host, at, method, path))`, the path without its query. */
+  async sessionProof(method: string, path: string): Promise<SessionProof | null> {
+    const p = this.prover?.() ?? null;
+    if (!p) return null;
+    const domain = this.bindHost, at = Date.now() + this.clockOffset;
+    const signature = await p.signer.sign(deviceProofMessage(p.accountPublicKey, sessionProofMessage(domain, at, method, path.split("?")[0] ?? path)));
+    return { domain, at, signature };
+  }
+  /** The hello's proof (serverConnection.ts). */
+  helloProof(): Promise<SessionProof | null> { return this.sessionProof("WS", "/api/ws"); }
   /** Resolve a relative server URL (attachments, server icon) against this server. */
   abs(url: string): string { return this.base && url.startsWith("/") ? `${this.base}${url}` : url; }
 
@@ -60,17 +85,27 @@ export class ServerApi {
    * minutes; the requests that decide whether a server answers at all give up after this long (a `TimeoutError`, not an
    * `ApiError`, so the session is kept and tried again).
    */
-  private async request<T>(method: string, path: string, body?: unknown, opts: { auth?: boolean; form?: FormData; timeoutMs?: number } = {}): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown, opts: { auth?: boolean; form?: FormData; timeoutMs?: number; retried?: boolean } = {}): Promise<T> {
     const headers: Record<string, string> = {};
     const init: RequestInit = { method, headers };
     if (opts.timeoutMs) init.signal = AbortSignal.timeout(opts.timeoutMs);
     if (opts.form) init.body = opts.form;
     else if (body !== undefined) { headers["content-type"] = "application/json"; init.body = JSON.stringify(body); }
     const withAuth = opts.auth !== false && !!this.token;
-    if (withAuth) headers.authorization = `Bearer ${this.token}`;
+    if (withAuth) {
+      headers.authorization = `Bearer ${this.token}`;
+      // A bound session's proof (docs/features/devices.md): the device signs this very request; a server from before, or a session that is not bound, ignores the header.
+      const proof = await this.sessionProof(method, path);
+      if (proof) headers[SESSION_PROOF_HEADER] = sessionProofHeader(proof.domain, proof.at, proof.signature);
+    }
     const res = await fetch(`${this.base}${path}`, init);
     if (!res.ok) {
       const b = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      // The server found the proof stale: this clock is off. Learn the server's and try once more; anything else about the proof ends the session like any 401.
+      if (res.status === 401 && withAuth && !opts.retried && b.error === DEVICE_PROOF_REQUIRED && b.why === "stale" && typeof b.serverTime === "string" && Number.isFinite(Date.parse(b.serverTime))) {
+        this.clockOffset = Date.parse(b.serverTime) - Date.now();
+        return this.request<T>(method, path, body, { ...opts, retried: true });
+      }
       if (res.status === 401 && withAuth) this.onUnauthorized?.(typeof b.error === "string" ? b.error : null);
       throw new ApiError(method, path, res.status, typeof b.error === "string" ? b.error : null, b);
     }
@@ -81,10 +116,11 @@ export class ServerApi {
   /** Sign in: the signature is bound to `domain` (the server's PUBLIC_DOMAIN; own server = the hostname in the address bar). */
   async login(id: Identity, domain: string, invite?: string): Promise<VerifyResponse> {
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
-    // The device signs along (docs/features/devices.md); a server from before devices drops its two fields.
+    // The device signs along (docs/features/devices.md); a server from before devices drops its two fields. With a device the
+    // session is to be bound to it (`bindDevice`): every request and hello then carry the device's proof (`sessionProof`).
     const signed = await signBoth(id, challengeMessage(domain, challenge.nonce));
     return VerifyResponse.parse(await this.request("POST", "/api/auth/verify",
-      { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, ...(invite ? { invite } : {}) }, { auth: false }));
+      { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, ...bindOf(signed), ...(invite ? { invite } : {}) }, { auth: false }));
   }
   getHealth() { return this.request<Health>("GET", "/api/health", undefined, { auth: false, timeoutMs: HEALTH_TIMEOUT_MS }); }
 
@@ -101,7 +137,7 @@ export class ServerApi {
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
     const signed = await signBoth(id, localRegisterMessage(domain, challenge.nonce, handle, backup.ciphertext));
     return VerifyResponse.parse(await this.request("POST", "/api/local/register",
-      { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, handle, backup, ...(invite ? { invite } : {}), ...(ownerCode ? { ownerCode } : {}) }, { auth: false }));
+      { challengeId: challenge.challengeId, publicKey: id.publicKey, ...signed, ...bindOf(signed), handle, backup, ...(invite ? { invite } : {}), ...(ownerCode ? { ownerCode } : {}) }, { auth: false }));
   }
   /**
    * The keys of a password, derived with the account's stored salt and iterations and bound to the host this client reaches the
@@ -146,7 +182,7 @@ export class ServerApi {
     const { signature: newSignature, ...device } = await signBoth(fresh, message);
     await this.request("POST", "/api/local/claim", {
       handle, backup, challengeId: challenge.challengeId, newPublicKey: fresh.publicKey,
-      signature: await sign(old, message), newSignature, ...device,
+      signature: await sign(old, message), newSignature, ...device, ...bindOf(device),
     });
   }
   /** A new password: the same key, encrypted anew; the old password proves the change. */

@@ -120,7 +120,7 @@ export async function registerLocalAccountRoutes(
       if (isUniqueViolation(err)) return reply.code(409).send({ error: "handle_taken" });
       throw err;
     }
-    const res = await admit(db, config, hub, directory, req, reply, user, invite, false, null, ownerCode, deviceKey);
+    const res = await admit(db, config, hub, directory, req, reply, user, invite, false, null, ownerCode, deviceKey, body.data.bindDevice === true);
     if (!res) {
       // Refused (invite, ban): no account stays behind that would hold the handle.
       await db.delete(localAccounts).where(eq(localAccounts.userId, user.id));
@@ -165,10 +165,10 @@ export async function registerLocalAccountRoutes(
       if (isUniqueViolation(err)) return reply.code(409).send({ error: "handle_taken" });
       throw err;
     }
-    // The session that stays is that device's from now on.
+    // The session that stays is that device's from now on, bound to it when the client asked (auth/session.ts).
     if (deviceKey) {
       await devices.enrolLocal(s.userId, { deviceKey, label: labelFromUserAgent(req.headers["user-agent"]), origin: originOf(req), by: "claim" }, { strict: false, reactivate: true });
-      await db.update(sessions).set({ deviceKey }).where(eq(sessions.id, s.sessionId));
+      await db.update(sessions).set({ deviceKey, deviceBound: body.data.bindDevice === true }).where(eq(sessions.id, s.sessionId));
     }
     presence.rename(s.userId, { displayName: s.displayName, publicKey: newPublicKey, handle: null, localHandle: handle });
     await broadcastStructure(db, hub, ["members"]);

@@ -90,6 +90,8 @@ export const sessions = pgTable("sessions", {
   lastUsedAt: ts("last_used_at"),
   /** The key of the device that signed in (docs/features/devices.md); null = a session from before devices, or of a client from before them. */
   deviceKey: text("device_key"),
+  /** Bound to that device (4 October 2026, security audit S10): every request and every hello need its fresh proof (auth/session.ts). */
+  deviceBound: boolean("device_bound").notNull().default(false),
 });
 
 /** Exactly one row (id = "server"). One deployment = one server. */

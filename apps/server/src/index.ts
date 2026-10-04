@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebSocket } from "ws";
 import { registerAuthRoutes } from "./auth/routes";
+import { setSessionPolicy, sweepSessions } from "./auth/session";
 import { bootstrap } from "./bootstrap";
 import { loadConfig, configWarnings } from "./config";
 import { webAppManifest } from "./webManifest";
@@ -85,6 +86,8 @@ async function main() {
   loadDotEnv();
   const config = loadConfig();
   for (const w of configWarnings(config)) console.warn(`WARNUNG: ${w}`);
+  // Sessions (auth/session.ts): the idle timeout and the host a bound session's proof may name (security audit S10).
+  setSessionPolicy({ idleDays: config.SESSION_IDLE_DAYS, domain: config.PUBLIC_DOMAIN });
 
   const app = Fastify({
     // No line per request and no addresses unless LOG_REQUESTS; query secrets never reach the log (logRedact.ts).
@@ -220,6 +223,12 @@ async function main() {
   deviceSweep.unref();
   app.addHook("onClose", async () => clearInterval(deviceSweep));
   void devices.sweep().catch((err) => app.log.warn({ err }, "Geraete: Fristen"));
+  // Sessions past their TTL or idle for SESSION_IDLE_DAYS go (auth/session.ts; a lookup refuses them anyway, this keeps the table small).
+  const sessionSweep = () => { if (!closing) void sweepSessions(db).then((n) => { if (n) app.log.info({ n }, "Sitzungen: abgelaufene entfernt"); }).catch((err) => app.log.warn({ err }, "Sitzungen: Fristen")); };
+  const sessionSweepTimer = setInterval(sessionSweep, 3_600_000);
+  sessionSweepTimer.unref();
+  app.addHook("onClose", async () => clearInterval(sessionSweepTimer));
+  sessionSweep();
 
   // AFK channel: absent members of a voice channel are moved there (voice/afk.ts), right when they turn absent (below) and
   // every few seconds, because a video that kept its channel's members from being moved ends without any event here.

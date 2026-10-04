@@ -60,6 +60,8 @@ export const LocalRegisterRequest = z.object({
   ownerCode: z.string().trim().min(1).max(128).optional(),
   /** The account's first device (directory.ts "Devices"): proof over `localRegisterMessage`; with it the account is enforced from birth. */
   ...DeviceProofFields,
+  /** The session is bound to the device (index.ts "Sessions bound to the device"). */
+  bindDevice: z.boolean().optional(),
 });
 export type LocalRegisterRequest = z.infer<typeof LocalRegisterRequest>;
 
@@ -85,6 +87,8 @@ export const LocalClaimRequest = z.object({
   newSignature: Signature,
   /** The new account's first device: proof over `deviceProofMessage(newPublicKey, localClaimMessage(...))`; the session kept is that device's from then on. */
   ...DeviceProofFields,
+  /** The session kept is bound to the device from now on (index.ts "Sessions bound to the device"). */
+  bindDevice: z.boolean().optional(),
 });
 export type LocalClaimRequest = z.infer<typeof LocalClaimRequest>;
 

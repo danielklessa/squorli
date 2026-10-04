@@ -75,7 +75,7 @@ export async function isFirstEver(db: Db, config: Config, publicKey: string, own
 export async function admit(
   db: Db, config: Config, hub: Hub, directory: DirectoryClient, req: FastifyRequest, reply: FastifyReply,
   user: { id: string; publicKey: string; displayName: string | null }, invite: string | undefined, registrationRequired = false,
-  proof: LoginProof | null = null, ownerCode?: string, deviceKey: string | null = null,
+  proof: LoginProof | null = null, ownerCode?: string, deviceKey: string | null = null, bindDevice = false,
 ): Promise<VerifyResponse | null> {
   const [ban] = await db.select().from(bans).where(eq(bans.userId, user.id)).limit(1);
   if (ban) { await reply.code(403).send({ error: "banned", reason: ban.reason }); return null; }
@@ -119,11 +119,13 @@ export async function admit(
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + config.SESSION_TTL_DAYS * 86_400_000);
   // Device label for the session list (M6c); the client cannot set it, only the browser reveals it.
-  // The device that signed in (docs/features/devices.md): the session counts only while that device is let in.
-  await db.insert(sessions).values({ token: tokenHash(token), userId: user.id, expiresAt, label: labelFromUserAgent(req.headers["user-agent"]), lastUsedAt: new Date(), deviceKey });
+  // The device that signed in (docs/features/devices.md): the session counts only while that device is let in. Bound to it
+  // when the client asked (security audit S10): then every request and hello need the device's fresh proof (auth/session.ts).
+  const deviceBound = deviceKey !== null && bindDevice;
+  await db.insert(sessions).values({ token: tokenHash(token), userId: user.id, expiresAt, label: labelFromUserAgent(req.headers["user-agent"]), lastUsedAt: new Date(), deviceKey, deviceBound });
 
   if (!member) await broadcastStructure(db, hub, ["members", "settings"]);
-  return { sessionToken: token, userId: user.id, expiresAt: expiresAt.toISOString(), registrationRequired };
+  return { sessionToken: token, userId: user.id, expiresAt: expiresAt.toISOString(), registrationRequired, deviceBound };
 }
 
 export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: Config, hub: Hub, directory: DirectoryClient, presence: VoicePresence, devices: Devices, meter: StorageMeter, lk: Pick<LivekitAdmin, "removeParticipant">) {
@@ -163,7 +165,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
     if (!handle && !local) {
       // A member from before server accounts keeps their key, messages and roles: they sign in, but must register first.
       if (member) {
-        const res = await admit(db, config, hub, directory, req, reply, user, invite, true, proof, undefined, deviceKey);
+        const res = await admit(db, config, hub, directory, req, reply, user, invite, true, proof, undefined, deviceKey, body.data.bindDevice === true);
         if (res) req.log.info({ userId: user.id }, "Mitglied ohne Konto: Registrierung verlangt");
         return res ?? undefined;
       }
@@ -194,7 +196,7 @@ export async function registerAuthRoutes(app: FastifyInstance, db: Db, config: C
       return reply.code(403).send({ error: DEVICE_REFUSED });
     }
     if (local && deviceKey) await devices.enrolLocal(user.id, { deviceKey, label: labelFromUserAgent(req.headers["user-agent"]), origin: originOf(req), by: "legacy" }, { strict: false });
-    const res = await admit(db, config, hub, directory, req, reply, { id: user.id, publicKey, displayName: profile?.displayName ?? user.displayName }, invite, false, proof, undefined, deviceKey);
+    const res = await admit(db, config, hub, directory, req, reply, { id: user.id, publicKey, displayName: profile?.displayName ?? user.displayName }, invite, false, proof, undefined, deviceKey, body.data.bindDevice === true);
     return res ?? undefined;
   });
 

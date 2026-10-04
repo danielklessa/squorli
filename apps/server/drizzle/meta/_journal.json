@@ -281,6 +281,13 @@
       "when": 1790924940095,
       "tag": "0039_nifty_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791116710322,
+      "tag": "0040_tense_thunderbird",
+      "breakpoints": true
     }
   ]
 }
