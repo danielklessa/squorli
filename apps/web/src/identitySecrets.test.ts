@@ -2,6 +2,7 @@ import * as ed from "@noble/ed25519";
 import { AccountSettings, bytesToHex, createBackup, deriveBackupKeys, deriveDmKey, deriveDmKeyBits, deriveSettingsKey, deriveSettingsKeyBits, deviceEnrolMessage, deviceProofMessage, openBackup, openDm, openSettings, sealDm, sealSettings } from "@squorli/protocol";
 import { beforeEach, describe, expect, it } from "vitest";
 import { memoryVault } from "./deviceKey";
+import { t } from "./i18n";
 import { backupOf, deviceSignerOf, dmKeyOf, dropDevice, enrolFields, forgetIdentity, forgetServerAccount, identityFromPrivateKey, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, setDeviceVault, setKeyVault, setSecretStore, settingsKeyOf, sign, signBoth, storeIdentity, storeServerAccount, storedIdentity, type KeyVault } from "./identity";
 
 // Node has no localStorage: a small one per test.
@@ -212,13 +213,13 @@ describe("the account key in the platform's vault", () => {
     const { vault } = fakeVault();
     setSecretStore(fakeStore().store); setKeyVault(vault);
     const gone = { publicKey: "ab".repeat(32), privateKey: null, device: null };
-    await expect(sign(gone, login)).rejects.toThrow("Schlüssel");
-    await expect(dmKeyOf(gone, "cd".repeat(32))).rejects.toThrow("Schlüssel");
-    await expect(settingsKeyOf(gone)).rejects.toThrow("Schlüssel");
-    await expect(backupOf(gone, "hunter2hunter2")).rejects.toThrow("Schlüssel");
+    await expect(sign(gone, login)).rejects.toThrow(t("err.keyGone"));
+    await expect(dmKeyOf(gone, "cd".repeat(32))).rejects.toThrow(t("err.keyGone"));
+    await expect(settingsKeyOf(gone)).rejects.toThrow(t("err.keyGone"));
+    await expect(backupOf(gone, "hunter2hunter2")).rejects.toThrow(t("err.keyGone"));
     // A message the vault does not sign is the same to the page.
     const id = await newIdentity();
-    await expect(sign(id, "squorli-device\nx\ny")).rejects.toThrow("Schlüssel");
+    await expect(sign(id, "squorli-device\nx\ny")).rejects.toThrow(t("err.keyGone"));
     setKeyVault(null);
   });
 });
