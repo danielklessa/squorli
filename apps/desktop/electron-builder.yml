@@ -57,14 +57,15 @@ win:
   signtoolOptions:
     sign: ./build/sign.cjs
     signingHashAlgorithms: [sha256]   # one pass per file: ssign makes no dual (sha1 + sha256) signatures
-  # electron-updater checks the downloaded installer's signature against `publisherName` (written into app-update.yml) before
-  # it installs; without the name it installs unchecked. The name must equal the certificate's subject, forever: a version
-  # shipped with a wrong name refuses every later update. The value is the subject as `Get-AuthenticodeSignature` prints it,
-  # read from the first signed test build (4 October 2026); a renewed certificate with another subject = add it here, never
-  # replace (electron-updater accepts any name of the list). Details: docs/features/desktop.md "Code signing".
+    # electron-updater checks the downloaded installer's signature against `publisherName` (written into app-update.yml) before
+    # it installs; without the name it installs unchecked. The name must equal the certificate's subject, forever: a version
+    # shipped with a wrong name refuses every later update. The value is the subject as `Get-AuthenticodeSignature` prints it,
+    # read from the first signed test build (4 October 2026); a renewed certificate with another subject = add it here, never
+    # replace (electron-updater accepts any name of the list). Since electron-builder 26 the option lives here, not under
+    # `win` directly (the schema check of the first tag build failed on that). Details: docs/features/desktop.md "Code signing".
+    publisherName:
+      - "CN=Open Source Developer Daniel Klessa, O=Open Source Developer, S=Niedersachsen, C=DE"
   verifyUpdateCodeSignature: true
-  publisherName:
-    - "CN=Open Source Developer Daniel Klessa, O=Open Source Developer, S=Niedersachsen, C=DE"
 nsis:
   oneClick: false
   perMachine: false
