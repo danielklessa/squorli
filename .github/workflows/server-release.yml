@@ -104,7 +104,9 @@ jobs:
           openssl pkeyutl -verify -pubin -inkey "$pub" -rawin -in "$zip.sha256" -sigfile "$zip.sha256.sig"
           node ../deploy/windows/verify-signature.mjs "$pub" "$zip.sha256" "$zip.sha256.sig"
           ls -la "$zip.sha256" "$zip.sha256.sig"
-      - uses: sigstore/cosign-installer@v3
+      # v4 of the action: v3 cannot install cosign 3 (it looks for a detached .sig that cosign 3 releases no longer carry).
+      # The same cosign version as the installations' container (deploy/install.sh, COSIGN_IMAGE).
+      - uses: sigstore/cosign-installer@v4
         with:
           cosign-release: v3.1.3
       - uses: docker/login-action@v3
