@@ -502,7 +502,10 @@ export class VoiceClient {
       .on(RoomEvent.TrackSubscribed, (track, _pub, p) => { this.attachRemote(track, p.identity); if (track.kind === Track.Kind.Video) this.log(`video von ${p.identity.slice(0, 8)}: ${track.source}`); this.refreshTiles(); })
       // LiveKit emits TrackUnsubscribed before clearing publication.track, so exclude the ended track explicitly;
       // otherwise the tile survives with a stopped track and the viewers keep a black frame.
-      .on(RoomEvent.TrackUnsubscribed, (track, _pub, p) => { if (track.kind === Track.Kind.Audio) { track.detach().forEach((el) => el.remove()); this.dropShareRoute(track); this.remoteAudio.delete(track); this.dropMeter(p.identity); this.applyShareAudio(); } this.refreshTiles(track); })
+      // The meter belongs to the microphone track: a share's audio ending must leave it alone, or the volume boost above
+      // 100 % hanging on it goes with it and that voice falls silent (the element behind the boost stays at 0; user's
+      // report of 5 October 2026, docs/features/voice-video.md).
+      .on(RoomEvent.TrackUnsubscribed, (track, _pub, p) => { if (track.kind === Track.Kind.Audio) { track.detach().forEach((el) => el.remove()); this.dropShareRoute(track); this.remoteAudio.delete(track); if (track.source === Track.Source.Microphone) this.dropMeter(p.identity); this.applyShareAudio(); } this.refreshTiles(track); })
       .on(RoomEvent.TrackUnpublished, (pub, p) => {
         this.log(`${p.identity.slice(0, 8)} beendet ${pub.source}`);
         // The choice ends with the feed: a share started again has to be turned on again.
