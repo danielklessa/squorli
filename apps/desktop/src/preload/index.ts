@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { BRIDGE_GLOBAL, INFO_ARGUMENT, IPC, type ControlEvent, type CustomProgram, type DesktopBridge, type DesktopInfo, type DetectedGame, type GameWatchSettings, type HotkeyRequest, type HotkeyStatus, type RunningGame, type AppearanceState, type ScreenAudioEvent, type ScreenPick, type ScreenPickRequest, type ScreenPickUpdate, type SystemActivityEvent, type UpdateState, type WindowAppearance, type WindowControl, type WindowFrameState, type BridgeLinkLookup, type BridgeNotification } from "@squorli/web/platform/bridge";
+import { BRIDGE_GLOBAL, INFO_ARGUMENT, IPC, type ControlEvent, type CustomProgram, type DesktopBridge, type DesktopInfo, type DetectedGame, type GameWatchSettings, type HotkeyRequest, type HotkeyStatus, type RunningGame, type AppearanceState, type ScreenAudioEvent, type ScreenPick, type ScreenPickRequest, type ScreenPickUpdate, type SystemActivityEvent, type UpdateState, type WindowAppearance, type WindowControl, type WindowFrameState, type BridgeBackup, type BridgeLinkLookup, type BridgeNotification } from "@squorli/web/platform/bridge";
 
 /**
  * Preload script (sandboxed, context-isolated): the only thing the page gets from the shell is this bridge. Plain data in
@@ -57,6 +57,16 @@ const bridge: DesktopBridge = {
     available: ipcRenderer.sendSync(IPC.secretsAvailable) === true,
     get: (key: string) => { const v: unknown = ipcRenderer.sendSync(IPC.secretsGet, key); return typeof v === "string" ? v : null; },
     set: (key: string, value: string | null) => ipcRenderer.sendSync(IPC.secretsSet, key, value) === true,
+  },
+  // The account keys' seeds stay in the main process (keyVault.ts): the page asks for signatures and derived keys by the public half.
+  keys: {
+    sign: (publicKey: string, message: string) => ipcRenderer.invoke(IPC.keysSign, publicKey, message) as Promise<string | null>,
+    dmKey: (publicKey: string, peerPublicKey: string) => ipcRenderer.invoke(IPC.keysDm, publicKey, peerPublicKey) as Promise<string | null>,
+    settingsKey: (publicKey: string) => ipcRenderer.invoke(IPC.keysSettings, publicKey) as Promise<string | null>,
+    backup: (publicKey: string, password: string, context?: string) => ipcRenderer.invoke(IPC.keysBackup, publicKey, password, context) as Promise<BridgeBackup | null>,
+    generate: () => ipcRenderer.invoke(IPC.keysGenerate) as Promise<string | null>,
+    import: (privateKey: string) => ipcRenderer.invoke(IPC.keysImport, privateKey) as Promise<string | null>,
+    forget: (publicKey: string) => ipcRenderer.invoke(IPC.keysForget, publicKey) as Promise<void>,
   },
 };
 

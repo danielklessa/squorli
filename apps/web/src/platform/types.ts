@@ -1,8 +1,8 @@
-import type { AppearanceState, ControlEvent, CustomProgram, DetectedGame, GameWatchSettings, HotkeyRequest, HotkeyStatus, PlatformOs, RunningGame, ScreenPick, ScreenSource, SystemActivityEvent, UpdateState, WindowAppearance, WindowControl, WindowFrameState, WindowMaterial, BridgeLinkLookup } from "./bridge";
+import type { AppearanceState, BridgeKeys, ControlEvent, CustomProgram, DetectedGame, GameWatchSettings, HotkeyRequest, HotkeyStatus, PlatformOs, RunningGame, ScreenPick, ScreenSource, SystemActivityEvent, UpdateState, WindowAppearance, WindowControl, WindowFrameState, WindowMaterial, BridgeLinkLookup } from "./bridge";
 import type { DeepLink } from "./deepLink";
 
 export type { DeepLink } from "./deepLink";
-export type { AppearanceState, ControlAction, ControlEvent, CustomProgram, DetectedGame, GameWatchSettings, HotkeyAction, HotkeyBinding, HotkeyBindings, HotkeyRequest, HotkeyStatus, PlatformOs, RunningGame, ScreenCodec, ScreenPick, ScreenSource, SystemActivityEvent, UpdateState, WindowAppearance, WindowControl, WindowFrameState, WindowMaterial } from "./bridge";
+export type { AppearanceState, BridgeBackup, BridgeKeys, ControlAction, ControlEvent, CustomProgram, DetectedGame, GameWatchSettings, HotkeyAction, HotkeyBinding, HotkeyBindings, HotkeyRequest, HotkeyStatus, PlatformOs, RunningGame, ScreenCodec, ScreenPick, ScreenSource, SystemActivityEvent, UpdateState, WindowAppearance, WindowControl, WindowFrameState, WindowMaterial } from "./bridge";
 
 /** The chat server that serves the page: its key in the store and the domain a login there signs. */
 export type PlatformHome = { host: string; signDomain: string };
@@ -84,6 +84,12 @@ export interface Platform {
    * client keeps them in localStorage (browser, an older app, Linux without a keyring). identity.ts.
    */
   readonly secretStore: null | { get(key: string): string | null; set(key: string, value: string | null): boolean };
+  /**
+   * Where the account keys' seeds are held out of the page's reach (desktop app since 4 October 2026, security audit C1:
+   * the shell's main process signs and derives for the page); null = none, the client holds its keys itself (browser, an
+   * older app, where `secretStore` is null). identity.ts.
+   */
+  readonly keyVault: null | BridgeKeys;
   /**
    * What only the desktop app's shell sees (its native helper, Windows): controller input, which the browser's Gamepad API
    * delivers only while the window has the focus, and whether some program keeps the display on (a playing video);

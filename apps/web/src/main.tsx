@@ -8,12 +8,14 @@ import "./styles.css";
 import { applyLocaleToDocument, locale } from "./i18n";
 import { platform } from "./platform";
 import { indexedDbVault } from "./deviceKey";
-import { setDeviceVault, setSecretStore } from "./identity";
+import { setDeviceVault, setKeyVault, setSecretStore } from "./identity";
 import { TitleBar } from "./TitleBar";
 
 applyLocaleToDocument();
 // Keys encrypted by the system where the platform can (desktop app); must come before the store reads them (App.tsx).
 setSecretStore(platform.secretStore);
+// The account keys' seeds out of the page's reach where the platform holds them (desktop app, security audit C1).
+setKeyVault(platform.keyVault);
 // Device keys (docs/features/devices.md): made by the browser so that they cannot be read out, kept in IndexedDB. The same in
 // the desktop app, whose window is a browser of its own; where there is no IndexedDB the keys are ordinary ones.
 setDeviceVault(indexedDbVault("squorli-keys"));

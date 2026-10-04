@@ -1315,6 +1315,7 @@ export const de = {
   "err.banned": "Du bist auf diesem Server gebannt",
   "err.backupUndecryptable": "Das Backup ließ sich nicht entschlüsseln (beschädigt?).",
   "err.backupMismatch": "Das Backup passt nicht zum registrierten Schlüssel.",
+  "err.keyGone": "Der Schlüssel dieses Kontos ist auf diesem Gerät nicht mehr da. Melde dich mit Benutzername und Passwort neu an.",
   "err.backupNotBound": "Dieses Server-Konto nutzt noch das alte Passwortverfahren, das nicht an den Server gebunden ist. Aus Sicherheitsgründen meldet sich Squorli damit nicht an. Wende dich an den Betreiber des Servers.",
   "err.sessionRevoked": "Diese Sitzung wurde von einem anderen Gerät abgemeldet.",
   "err.accountDeleted": "Dein Konto auf diesem Server wurde gelöscht.",

@@ -649,10 +649,20 @@ const sealedUtf8 = (s: string) => new TextEncoder().encode(s);
 const sealedAad = (publicKeyHex: string) => sealedUtf8(`${SEALED_SETTINGS_INFO}\n${publicKeyHex}`);
 /** The key of an account's sealed settings, from the identity's seed (hex); cache it in the client. */
 export async function deriveSettingsKey(seedHex: string, publicKeyHex: string): Promise<CryptoKey> {
+  return importSettingsKey(await deriveSettingsKeyBits(seedHex, publicKeyHex));
+}
+/**
+ * The key's bytes alone. Split off on 4 October 2026 (security audit C1): the desktop app's main process holds the seed
+ * and derives these for the page, which imports them with `importSettingsKey` and never sees the seed.
+ */
+export async function deriveSettingsKeyBits(seedHex: string, publicKeyHex: string): Promise<Uint8Array> {
   const subtle = globalThis.crypto.subtle;
   const hk = await subtle.importKey("raw", hexToBytes(seedHex), "HKDF", false, ["deriveBits"]);
-  const bits = await subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: sealedUtf8(publicKeyHex), info: sealedUtf8(SEALED_SETTINGS_INFO) }, hk, 256);
-  return subtle.importKey("raw", bits, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return new Uint8Array(await subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: sealedUtf8(publicKeyHex), info: sealedUtf8(SEALED_SETTINGS_INFO) }, hk, 256));
+}
+/** The settings key as a key that cannot be read out again. */
+export function importSettingsKey(bits: Uint8Array): Promise<CryptoKey> {
+  return globalThis.crypto.subtle.importKey("raw", bits as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 export async function sealSettings(key: CryptoKey, publicKeyHex: string, content: SealedSettingsContent): Promise<SealedSettings> {
   const json = JSON.stringify(content);

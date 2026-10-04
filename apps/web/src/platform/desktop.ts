@@ -64,6 +64,9 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
     defaultDirectoryUrl: info.directoryUrl,
     systemIdle: "always",
     secretStore: bridge.secrets?.available ? { get: (key) => bridge.secrets!.get(key), set: (key, value) => bridge.secrets!.set(key, value) } : null,
+    // The shell's key vault goes with its encrypted store (an older shell has no `keys` member; without real encryption the
+    // shell holds nothing, and the page keeps its keys where it kept them).
+    keyVault: bridge.secrets?.available && bridge.keys && typeof bridge.keys.sign === "function" ? bridge.keys : null,
     // An app older than this client has no such member; one without the helper reports nothing.
     systemActivity: info.systemWatch === true && typeof bridge.onSystemActivity === "function" ? { subscribe: (cb) => bridge.onSystemActivity(cb) } : null,
     games: info.gameDetection === true && typeof bridge.scanGames === "function" ? {

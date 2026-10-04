@@ -9,10 +9,18 @@
  * its own per account (deviceKey.ts). The identity's entry names it (`device`) and says where its private half is kept;
  * whatever the account's key signs, the device signs too (`signBoth`), and the directory or the chat server lets only
  * devices in that were enrolled with the password. A device that was signed out loses the account's key (store.ts).
+ *
+ * The seed out of the page's reach (4 October 2026, security audit C1, docs/features/desktop.md): where the platform has a
+ * key vault (the desktop app's main process), the page never holds a seed. An identity with `privateKey` null names a key
+ * the vault holds; signing, the pair keys of direct messages, the settings key and the password backup go through it
+ * (`sign`, `dmKeyOf`, `settingsKeyOf`, `backupOf`). A script that gets into the page can still use the key while the app
+ * runs, but cannot take it along. In a browser `privateKey` is the seed as before.
  */
 import * as ed from "@noble/ed25519";
-import { deviceEnrolMessage, deviceProofMessage } from "@squorli/protocol";
+import { createBackup, deriveDmKey, deriveSettingsKey, deviceEnrolMessage, deviceProofMessage, hexToBytes, importDmKey, importSettingsKey, type BackupParams } from "@squorli/protocol";
 import { createDevice, forgetDevice, loadDevice, parseStoredDevice, type DeviceSigner, type DeviceVault, type StoredDevice } from "./deviceKey";
+import { t } from "./i18n";
+import type { BridgeKeys } from "./platform/bridge";
 
 const KEY = "chat.identity.v1";
 /** The storage key of the main identity: tabs of one browser share it (store.ts follows a change made in another tab). */
@@ -23,37 +31,49 @@ let secretStore: SecretStore | null = null;
 /** Where the platform keeps secrets encrypted (platform.secretStore); null = localStorage. Set once at start (main.tsx). */
 export function setSecretStore(store: SecretStore | null) { secretStore = store; }
 
+/** The platform's key vault (platform.keyVault); null = the page holds its seeds. Set once at start (main.tsx). */
+export type KeyVault = BridgeKeys;
+let keyVault: KeyVault | null = null;
+export function setKeyVault(vault: KeyVault | null) { keyVault = vault; }
+/** A key the vault no longer answers for: the user signs in anew. */
+const keyGone = () => new Error(t("err.keyGone"));
+
 /**
  * Read a secret. With a secret store, a value still in localStorage (an app from before, or the browser storage of this
- * origin) is moved over: written there, read back, and only then removed from localStorage.
+ * origin) is moved over: written there, read back, and only then removed from localStorage. What comes back is what the
+ * store holds now: a store with a key vault takes the seeds out of an entry on the way (the desktop shell's secrets.ts).
  */
 export function readSecret(key: string): string | null {
   if (!secretStore) return localStorage.getItem(key);
   const stored = secretStore.get(key);
   if (stored !== null) return stored;
   const legacy = localStorage.getItem(key);
-  if (legacy !== null && secretStore.set(key, legacy) && secretStore.get(key) === legacy) localStorage.removeItem(key);
-  return legacy;
+  if (legacy === null || !secretStore.set(key, legacy)) return legacy;
+  const moved = secretStore.get(key);
+  if (moved === null) return legacy;
+  localStorage.removeItem(key);
+  return moved;
 }
 export function writeSecret(key: string, value: string | null) {
   if (secretStore && secretStore.set(key, value)) { localStorage.removeItem(key); return; }
   if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
 }
 
-/** `device`: this installation's device key for the account (deviceKey.ts); missing on an entry from before devices. */
-export type Identity = { publicKey: string; privateKey: string; device?: StoredDevice | null };
+/**
+ * `privateKey`: the seed (hex), or null where the platform's key vault holds it (then the entry never carried one).
+ * `device`: this installation's device key for the account (deviceKey.ts); missing on an entry from before devices.
+ */
+export type Identity = { publicKey: string; privateKey: string | null; device?: StoredDevice | null };
 
 const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const fromHex = (h: string) => Uint8Array.from(h.match(/.{2}/g)!.map((x) => parseInt(x, 16)));
-/** An entry as it was stored: the two keys, and the device if the entry names one this version can read. */
-const readIdentity = (raw: { publicKey: string; privateKey: string; device?: unknown }): Identity => ({ publicKey: raw.publicKey, privateKey: raw.privateKey, device: parseStoredDevice(raw.device) });
+/** An entry as it was stored: the public key, the seed where the page holds it, and the device if the entry names one this version can read. */
+const readIdentity = (raw: { publicKey: string; privateKey?: unknown; device?: unknown }): Identity => ({ publicKey: raw.publicKey, privateKey: typeof raw.privateKey === "string" ? raw.privateKey : null, device: parseStoredDevice(raw.device) });
 
 export async function loadOrCreateIdentity(): Promise<Identity> {
   const raw = readSecret(KEY);
   if (raw) return readIdentity(JSON.parse(raw) as Identity);
-  const priv = ed.utils.randomPrivateKey();
-  const pub = await ed.getPublicKeyAsync(priv);
-  const id: Identity = { publicKey: toHex(pub), privateKey: toHex(priv), device: null };
+  const id: Identity = { ...(await newIdentity()), device: null };
   writeSecret(KEY, JSON.stringify(id));
   return id;
 }
@@ -62,12 +82,23 @@ export function storedIdentity(): Identity | null {
   try { const raw = readSecret(KEY); return raw ? readIdentity(JSON.parse(raw) as Identity) : null; } catch { return null; }
 }
 
+/** Forget the main identity, and its seed where the vault holds it. */
 export function forgetIdentity() {
+  forgetKey(storedIdentity());
   writeSecret(KEY, null);
 }
+/** The vault lets a key go (a sign-out, a replaced identity, a server account that was dropped). Nothing where the page holds the seed. */
+export function forgetKey(id: Identity | null | undefined) {
+  if (id && id.privateKey === null && keyVault) void keyVault.forget(id.publicKey).catch(() => {});
+}
 
-/** M6b: identity from a recovered seed (sign-in with handle + password). */
+/** M6b: identity from a recovered seed (sign-in with handle + password). With a vault the seed goes there and the page keeps only the public half. */
 export async function identityFromPrivateKey(privateKeyHex: string): Promise<Identity> {
+  if (keyVault) {
+    const publicKey = await keyVault.import(privateKeyHex);
+    if (!publicKey) throw keyGone();
+    return { publicKey, privateKey: null, device: null };
+  }
   const pub = await ed.getPublicKeyAsync(fromHex(privateKeyHex));
   return { publicKey: toHex(pub), privateKey: privateKeyHex, device: null };
 }
@@ -78,8 +109,34 @@ export function storeIdentity(id: Identity) {
 }
 
 export async function sign(id: Identity, message: string): Promise<string> {
+  if (id.privateKey === null) {
+    const signature = keyVault ? await keyVault.sign(id.publicKey, message) : null;
+    if (!signature) throw keyGone();
+    return signature;
+  }
   const sig = await ed.signAsync(new TextEncoder().encode(message), fromHex(id.privateKey));
   return toHex(sig);
+}
+/** The pair key of direct messages with `peer` (the protocol's dm.ts); from the vault where it holds the seed. */
+export async function dmKeyOf(id: Identity, peer: string): Promise<CryptoKey> {
+  if (id.privateKey !== null) return deriveDmKey(id.privateKey, id.publicKey, peer);
+  const bits = keyVault ? await keyVault.dmKey(id.publicKey, peer) : null;
+  if (!bits) throw keyGone();
+  return importDmKey(hexToBytes(bits));
+}
+/** The key of the account's sealed settings (the protocol's directory.ts); from the vault where it holds the seed. */
+export async function settingsKeyOf(id: Identity): Promise<CryptoKey> {
+  if (id.privateKey !== null) return deriveSettingsKey(id.privateKey, id.publicKey);
+  const bits = keyVault ? await keyVault.settingsKey(id.publicKey) : null;
+  if (!bits) throw keyGone();
+  return importSettingsKey(hexToBytes(bits));
+}
+/** The seed encrypted with a password (the protocol's backup.ts; `context` binds a server account's backup to its host); made by the vault where it holds the seed. */
+export async function backupOf(id: Identity, password: string, context?: string): Promise<{ params: BackupParams; ciphertext: string; authKey: string }> {
+  if (id.privateKey !== null) return createBackup(password, id.privateKey, undefined, context);
+  const backup = keyVault ? await keyVault.backup(id.publicKey, password, context) : null;
+  if (!backup) throw keyGone();
+  return backup;
 }
 
 // ---------- Devices (docs/features/devices.md): the signers of the device keys this installation holds, by the device's
@@ -148,10 +205,16 @@ function saveServerAccounts(all: Record<string, ServerAccount>) {
   try { writeSecret(SERVER_ACCOUNTS, JSON.stringify(all)); } catch { /* no storage: the account lasts this page */ }
 }
 export function storeServerAccount(host: string, account: ServerAccount) { saveServerAccounts({ ...loadServerAccounts(), [host]: account }); }
-export function forgetServerAccount(host: string) { const all = loadServerAccounts(); delete all[host]; saveServerAccounts(all); }
+/** Forget a server account, and its seed where the vault holds it. */
+export function forgetServerAccount(host: string) { const all = loadServerAccounts(); forgetKey(all[host]); delete all[host]; saveServerAccounts(all); }
 
-/** A fresh key pair that is not stored anywhere yet (a new server account). */
+/** A fresh key pair that is not stored anywhere yet (a new server account, the first identity); made by the vault where there is one. */
 export async function newIdentity(): Promise<Identity> {
+  if (keyVault) {
+    const publicKey = await keyVault.generate();
+    if (!publicKey) throw keyGone();
+    return { publicKey, privateKey: null, device: null };
+  }
   const priv = ed.utils.randomPrivateKey();
   return { publicKey: toHex(await ed.getPublicKeyAsync(priv)), privateKey: toHex(priv), device: null };
 }

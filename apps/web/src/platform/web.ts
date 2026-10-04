@@ -48,6 +48,7 @@ export function webPlatform(): Platform {
     home: homeless ? null : { host: window.location.host, signDomain: window.location.hostname },
     systemIdle: "permission",
     secretStore: null,
+    keyVault: null,
     systemActivity: null,
     games: null,
     hotkeys: null,

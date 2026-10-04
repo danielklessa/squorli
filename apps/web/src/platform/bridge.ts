@@ -222,12 +222,40 @@ export interface DesktopBridge {
    * Only the keys of SECRET_KEYS are accepted.
    */
   readonly secrets?: { readonly available: boolean; get(key: string): string | null; set(key: string, value: string | null): boolean };
+  /**
+   * The account keys the shell holds for the page (shell from 4 October 2026, security audit C1; missing = an older shell,
+   * then the page keeps its keys itself): the page names a key by its public half and gets signatures and derived keys,
+   * never the seed. Every member answers null for a key the shell does not hold, or a message it does not sign.
+   */
+  readonly keys?: BridgeKeys;
 }
+
+/**
+ * What the page may ask the shell's key vault (keyVault.ts of the shell): `sign` for the protocol's known message formats
+ * only, `dmKey`/`settingsKey` = the derived AES key's bytes as hex (the page imports them as a key it cannot read out),
+ * `backup` = the seed encrypted with a password (the protocol's backup.ts), `generate` = a fresh key, `import` = a seed the
+ * page recovered from a backup (the one moment the page holds a seed, at a sign-in with the password), `forget`.
+ */
+export type BridgeKeys = {
+  sign(publicKey: string, message: string): Promise<string | null>;
+  dmKey(publicKey: string, peerPublicKey: string): Promise<string | null>;
+  settingsKey(publicKey: string): Promise<string | null>;
+  backup(publicKey: string, password: string, context?: string): Promise<BridgeBackup | null>;
+  generate(): Promise<string | null>;
+  import(privateKey: string): Promise<string | null>;
+  forget(publicKey: string): Promise<void>;
+};
+/** What `BridgeKeys.backup` answers: the protocol's `createBackup` result, as plain data. */
+export type BridgeBackup = { params: { kdf: "pbkdf2-sha256"; iterations: number; salt: string; iv: string; bound?: true | undefined }; ciphertext: string; authKey: string };
 
 /** What the shell keeps encrypted for the client (identity.ts): the identity key, and the server accounts' keys and tokens. */
 // `chat.sessions.v2` since 2 October 2026 (security audit, C5): the sessions of the directory account were the one secret
 // left in the profile's localStorage, readable by anyone who copies the folder.
 export const SECRET_KEYS = ["chat.identity.v1", "chat.serverAccounts.v1", "chat.sessions.v2"] as const;
+/** The entry of the shell's key vault in the same store (never in SECRET_KEYS: the page cannot read it): public key -> seed. */
+export const KEY_VAULT_ENTRY = "chat.keys.v1";
+/** The entries whose `privateKey` fields the shell takes into its vault (4 October 2026): the identity, the server accounts. */
+export const KEYED_SECRETS = ["chat.identity.v1", "chat.serverAccounts.v1"] as const;
 
 /** A notification the client asks the shell to show; `tag` comes back when it is clicked. */
 /** `inFullscreen`: show it also while a game or another application runs in full screen (Windows; the setting in Einstellungen > Töne). */
@@ -278,6 +306,13 @@ export const IPC = {
   secretsAvailable: "squorli:secrets-available",
   secretsGet: "squorli:secrets-get",
   secretsSet: "squorli:secrets-set",
+  keysSign: "squorli:keys-sign",
+  keysDm: "squorli:keys-dm",
+  keysSettings: "squorli:keys-settings",
+  keysBackup: "squorli:keys-backup",
+  keysGenerate: "squorli:keys-generate",
+  keysImport: "squorli:keys-import",
+  keysForget: "squorli:keys-forget",
 } as const;
 
 /** Name of the global the preload script exposes, and of the argument that carries `DesktopInfo` (base64 JSON). */

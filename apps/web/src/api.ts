@@ -1,7 +1,7 @@
 import {
   AccountStatus, Ban, ChallengeResponse, DirectoryAccount, DirectoryHealth, DirectoryRegisterPending, EmailAddress, EmailCode, EmailCodeResponse, FriendSearchResponse, ServerLeaveResponse, ServerListResponse, Handle, Invite, InvitePreview, Me, Message, MessagePage, RtcTokenResponse, ServerState, SessionInfo, VerifyResponse,
   AvatarUpdateResponse, avatarDigest, directoryAvatarPayload,
-  BackupBlob, BackupParamsResponse, challengeMessage, createBackup, deriveBackupKeys, directoryActionMessage, directoryBackupMessage, directoryDmReportPayload, DmReportResponse, type DmReportContent, directoryProfilePayload,
+  BackupBlob, BackupParamsResponse, challengeMessage, deriveBackupKeys, directoryActionMessage, directoryBackupMessage, directoryDmReportPayload, DmReportResponse, type DmReportContent, directoryProfilePayload,
   directoryRegisterMessage, directorySoundSettingsPayload, openBackup, type AccountSettings, type SealedSettings, type SoundSettings,
   MuteState, ReadStateResponse, StatusApiKeyResponse, DoctorReport, LimitsReport, ReportsResponse, ModLogResponse, type CreateReportRequest, type CloseReportRequest, type DeleteRecentHours, type Attachment, type Category, type Channel, type RadioStation, type Role, type StatusApiMode,
   type DiscordImportRequest, type DiscordImportResult, type ImportPlan,
@@ -14,7 +14,7 @@ import {
 } from "@squorli/protocol";
 import { z } from "zod";
 import { toBase64, type AvatarImage } from "./avatarImage";
-import { type Identity, type NewDevice, enrolFields, identityFromPrivateKey, sign, signBoth } from "./identity";
+import { type Identity, type NewDevice, backupOf, enrolFields, identityFromPrivateKey, sign, signBoth } from "./identity";
 import type { DeviceSigner } from "./deviceKey";
 import { fmtDateTime, t } from "./i18n";
 import { connectedHost } from "./serverHost";
@@ -133,7 +133,7 @@ export class ServerApi {
   /** Register a server account for `id` (a fresh key) and sign in with it; the signature binds handle and ciphertext to `domain`. */
   async localRegister(id: Identity, domain: string, rawHandle: string, password: string, invite?: string, ownerCode?: string): Promise<VerifyResponse> {
     const handle = LocalHandle.parse(rawHandle);
-    const backup = await createBackup(password, id.privateKey, undefined, this.bindHost);
+    const backup = await backupOf(id, password, this.bindHost);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
     const signed = await signBoth(id, localRegisterMessage(domain, challenge.nonce, handle, backup.ciphertext));
     return VerifyResponse.parse(await this.request("POST", "/api/local/register",
@@ -175,7 +175,7 @@ export class ServerApi {
    */
   async localClaim(old: Identity, fresh: Identity, domain: string, rawHandle: string, password: string): Promise<void> {
     const handle = LocalHandle.parse(rawHandle);
-    const backup = await createBackup(password, fresh.privateKey, undefined, this.bindHost);
+    const backup = await backupOf(fresh, password, this.bindHost);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: old.publicKey }, { auth: false }));
     const message = localClaimMessage(domain, challenge.nonce, handle, fresh.publicKey, backup.ciphertext);
     // The new account's first device signs along with the new key (docs/features/devices.md).
@@ -188,7 +188,7 @@ export class ServerApi {
   /** A new password: the same key, encrypted anew; the old password proves the change. */
   async localChangePassword(id: Identity, handle: string, oldPassword: string, newPassword: string): Promise<void> {
     const old = await this.localKeys(handle, oldPassword);
-    await this.request("PUT", "/api/local/backup", { oldAuthKey: old.authKey, backup: await createBackup(newPassword, id.privateKey, undefined, this.bindHost) });
+    await this.request("PUT", "/api/local/backup", { oldAuthKey: old.authKey, backup: await backupOf(id, newPassword, this.bindHost) });
   }
   /** Delete the server account (the password proves it; the first owner cannot). */
   async localDelete(handle: string, password: string): Promise<void> {
@@ -448,7 +448,7 @@ export async function directoryRegister(dirUrl: string, id: Identity, rawHandle:
  * and its password so far, which a directory with devices asks for when a backup exists (a new password needs the old one).
  */
 export async function directoryBackupUpload(dirUrl: string, id: Identity, password: string, old?: { handle: string; password: string }): Promise<void> {
-  const b = await createBackup(password, id.privateKey);
+  const b = await backupOf(id, password);
   const oldAuthKey = old ? await directoryAuthKey(dirUrl, old.handle, old.password) : undefined;
   await directorySigned(dirUrl, id, "PUT", "/api/backup", (host, nonce) => directoryBackupMessage(host, nonce, b.ciphertext), { ciphertext: b.ciphertext, params: b.params, authKey: b.authKey, ...(oldAuthKey ? { oldAuthKey } : {}) });
 }

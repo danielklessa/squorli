@@ -1,5 +1,5 @@
 import {
-  DM_MAX_CIPHERTEXT_CHARS, DM_REPORT_CONTEXT_MAX, base64ToBytes, deriveDmKey, deriveSettingsKey, directoryServerUrl, openDm, openSettings, reportKindsOf, sealDm, sealSettings, type DmControl, type DmPreview,
+  DM_MAX_CIPHERTEXT_CHARS, DM_REPORT_CONTEXT_MAX, base64ToBytes, directoryServerUrl, openDm, openSettings, reportKindsOf, sealDm, sealSettings, type DmControl, type DmPreview,
   type AccountServer, type AccountSettings, type AccountStatus, type DirectoryAccount, type DirectoryServerEvent, type DmConversation, type DmMessage, type Friend, type GamePresence, type ReportReason, type ServerLeaveResponse,
   type AccountNotice, type DirectoryReportKind, type ServerReportEvidence,
   isDeviceRefusal, type DeviceInfo, type TooManyDevicesResponse,
@@ -14,7 +14,7 @@ import * as api from "./api";
 import type { AvatarImage } from "./avatarImage";
 import { DirectoryLink, type LinkStatus } from "./directoryLink";
 import { dmReportContent } from "./dmReports";
-import { IDENTITY_STORAGE_KEY, readSecret, writeSecret, deviceSignerOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
+import { IDENTITY_STORAGE_KEY, readSecret, writeSecret, deviceSignerOf, dmKeyOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetKey, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, settingsKeyOf, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
 import { ServerConnection, type ServerConnState } from "./serverConnection";
 import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSettings } from "./accountSettings";
 import { loadBlockedLists, sameBlocked, saveBlockedLists, saveBlockedName, withBlocked, type BlockedLists } from "./blocked";
@@ -1024,7 +1024,7 @@ export class Store {
   private dmKey(peer: string): Promise<CryptoKey> {
     const id = this.state.identity!;
     let p = this.dmKeys.get(peer);
-    if (!p) { p = deriveDmKey(id.privateKey, id.publicKey, peer); this.dmKeys.set(peer, p); }
+    if (!p) { p = dmKeyOf(id, peer); this.dmKeys.set(peer, p); }
     return p;
   }
   private async decrypt(m: DmMessage): Promise<Dm> {
@@ -1455,7 +1455,7 @@ export class Store {
   /** The main identity's blocked people, the part of the block lists that may follow the account. */
   private mainBlocked(): string[] { return this.state.identity ? this.state.blocked[this.state.identity.publicKey] ?? [] : []; }
   private settingsKeyOf(id: Identity): Promise<CryptoKey> {
-    if (this.settingsKey?.publicKey !== id.publicKey) this.settingsKey = { publicKey: id.publicKey, key: deriveSettingsKey(id.privateKey, id.publicKey) };
+    if (this.settingsKey?.publicKey !== id.publicKey) this.settingsKey = { publicKey: id.publicKey, key: settingsKeyOf(id) };
     return this.settingsKey.key;
   }
   /**
@@ -1684,9 +1684,12 @@ export class Store {
   private async replaceIdentity(id: Identity): Promise<void> {
     const old = this.state.identity; const url = this.state.directoryUrl;
     storeIdentity(id);
-    if (!old?.device || old.device.publicKey === id.device?.publicKey) return;
-    if (url && old.publicKey === id.publicKey && deviceSignerOf(old) && this.state.deviceRevoke) await Promise.race([api.directoryRevokeDevice(url, old, "self").catch(() => {}), new Promise((r) => setTimeout(r, SIGN_OUT_WAIT_MS))]);
-    await dropDevice(old.device);
+    if (old?.device && old.device.publicKey !== id.device?.publicKey) {
+      if (url && old.publicKey === id.publicKey && deviceSignerOf(old) && this.state.deviceRevoke) await Promise.race([api.directoryRevokeDevice(url, old, "self").catch(() => {}), new Promise((r) => setTimeout(r, SIGN_OUT_WAIT_MS))]);
+      await dropDevice(old.device);
+    }
+    // The platform's key vault lets the replaced key go (the same account signed in again imported the same seed: nothing to let go).
+    if (old && old.publicKey !== id.publicKey) forgetKey(old);
   }
 
   /**

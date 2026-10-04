@@ -61,14 +61,25 @@ export function dmAad(from: string, to: string, id: string): string {
   return `${DM_VERSION}\n${from}\n${to}\n${id}`;
 }
 
-/** Pair key from my seed and the friend's Ed25519 key; cache it per friend in the client. */
-export async function deriveDmKey(mySeedHex: string, myPublicKeyHex: string, theirPublicKeyHex: string): Promise<CryptoKey> {
+/**
+ * The pair key's bytes from my seed and the friend's Ed25519 key. Split from `deriveDmKey` on 4 October 2026 (security
+ * audit C1): the desktop app's main process holds the seed and derives these for the page, which imports them with
+ * `importDmKey` and never sees the seed.
+ */
+export async function deriveDmKeyBits(mySeedHex: string, myPublicKeyHex: string, theirPublicKeyHex: string): Promise<Uint8Array> {
   const myX = ed25519.utils.toMontgomerySecret(hexToBytes(mySeedHex));
   const shared = x25519.getSharedSecret(myX, hexToBytes(dmPublicKeyOf(theirPublicKeyHex)));
   const [lo, hi] = [myPublicKeyHex, theirPublicKeyHex].sort();
   const hk = await subtle().importKey("raw", shared, "HKDF", false, ["deriveBits"]);
-  const bits = await subtle().deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(`${lo}${hi}`), info: utf8("squorli-dm-v1") }, hk, 256);
-  return subtle().importKey("raw", bits, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return new Uint8Array(await subtle().deriveBits({ name: "HKDF", hash: "SHA-256", salt: utf8(`${lo}${hi}`), info: utf8("squorli-dm-v1") }, hk, 256));
+}
+/** The pair key as a key that cannot be read out again. */
+export function importDmKey(bits: Uint8Array): Promise<CryptoKey> {
+  return subtle().importKey("raw", bits as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+/** Pair key from my seed and the friend's Ed25519 key; cache it per friend in the client. */
+export async function deriveDmKey(mySeedHex: string, myPublicKeyHex: string, theirPublicKeyHex: string): Promise<CryptoKey> {
+  return importDmKey(await deriveDmKeyBits(mySeedHex, myPublicKeyHex, theirPublicKeyHex));
 }
 
 /** Encrypt a message: fresh IV, plaintext as JSON. */
