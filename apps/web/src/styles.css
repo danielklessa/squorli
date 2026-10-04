@@ -636,6 +636,12 @@ button.dock-stage:hover { background: var(--sel); }
 .stage-main .tile video { object-fit: contain; }
 .stage-strip { display: flex; gap: 0.5rem; overflow-x: auto; flex: none; padding-bottom: 0.2rem; }
 .stage-strip .tile { width: 11rem; flex: none; }
+/* Dragging a tile to another place (VoiceStage.tsx, tileOrder.ts): the marks sit inside the tile, which clips its overflow. */
+.stage-grid.reordering, .stage-strip.reordering, .stage-grid.reordering .tile, .stage-strip.reordering .tile { cursor: grabbing; user-select: none; }
+.tile.drop-source { opacity: 0.35; }
+.tile.drop-before::before, .tile.drop-after::after { content: ""; position: absolute; top: 0.4rem; bottom: 0.4rem; width: 3px; border-radius: 2px; background: var(--brand); z-index: 3; pointer-events: none; }
+.tile.drop-before::before { left: 2px; }
+.tile.drop-after::after { right: 2px; }
 .tile { position: relative; aspect-ratio: 16 / 9; background: var(--bg2); border-radius: var(--r); overflow: hidden; border: 2px solid transparent; min-height: 0; cursor: pointer; }
 .tile:hover { border-color: var(--sel); }
 .tile.speaking:hover { border-color: var(--ok); }

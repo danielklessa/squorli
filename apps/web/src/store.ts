@@ -1008,6 +1008,7 @@ export class Store {
     const run = ++this.linkRun;
     this.link?.close(); this.link = null;
     this.dmKeys.clear();
+    this.welcomed = false;
     this.set({ directoryLink: "idle", directoryLinkError: null, dmReports: false, dmReportProof: false, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null });
     if (!id || !url || !this.state.directoryAccount) return;
     if (this.homeHost === null && !this.state.signedIn) return;
@@ -1050,6 +1051,8 @@ export class Store {
         // After a reconnect, reload the open history; messages could be missing.
         this.set({ friends: e.friends, conversations, dms: {} });
         if (this.state.currentPeer) void this.loadDmHistory(this.state.currentPeer);
+        // The same for the server list: a `servers.changed` while the socket was down is lost, so a reconnect reads the status again.
+        if (this.welcomed) this.scheduleAccountRefresh(); else this.welcomed = true;
         break;
       }
       case "friends.update": {
@@ -1120,6 +1123,11 @@ export class Store {
       // A measure of the directory's operator left a notice (or one was read on another device): read the status again.
       case "notices.changed":
         void this.refreshAccountServers();
+        break;
+      // The server list changed (an icon, an entry, the rail's order from another device; 4 October 2026): the same, a
+      // moment later so that a burst of events becomes one read.
+      case "servers.changed":
+        this.scheduleAccountRefresh();
         break;
       case "pong": case "challenge":
         break;
@@ -1331,6 +1339,14 @@ export class Store {
   }
 
   /** Server rail: fetch the account's server list from the directory (signed). Only with a handle; errors are not a sign-in problem. */
+  /** The first `welcome` of this account's socket is the one right after the status was read; later ones are reconnects. */
+  private welcomed = false;
+  private accountRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  /** `refreshAccountServers` once, shortly: several `servers.changed` in a row (a leave and its confirmation) become one read. */
+  private scheduleAccountRefresh(): void {
+    if (this.accountRefreshTimer) return;
+    this.accountRefreshTimer = setTimeout(() => { this.accountRefreshTimer = null; void this.refreshAccountServers(); }, 300);
+  }
   async refreshAccountServers(): Promise<void> {
     const id = this.state.identity; const url = this.state.directoryUrl;
     if (!id || !url || !this.state.directoryAccount) {

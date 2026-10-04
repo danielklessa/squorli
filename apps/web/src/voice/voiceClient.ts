@@ -117,6 +117,8 @@ export type VoiceState = {
   /** After starting a screen share: did an audio track come along? null = no share active. */
   screenAudio: boolean | null;
   tiles: VideoTile[];
+  /** The user's own order of the stage's tiles by their keys (tileOrder.ts; 4 October 2026): for this stay in the channel only, never stored. */
+  tileOrder: string[];
   /** Notice from a moderator (moved, camera stopped); the user can dismiss it. */
   notice: string | null;
   /** Output device for screen audio, how many tracks it carries and which way they play (debug): "webaudio" = through the screen context on the separate device, "element" = LiveKit's element on the voice device (applyShareAudio). */
@@ -199,7 +201,7 @@ export class VoiceClient {
   private readonly listeners = new Set<(s: VoiceState) => void>();
   state: VoiceState = {
     status: "disconnected", channelId: null, afkRoom: false, participants: [], micMuted: false, deafened: false, gateOpen: false, level: 0, micBoost: 1, micInput: 0, micSide: "stereo", micTest: false,
-    canPlayback: true, audioContext: "none", inputDeviceId: null, cameraOn: false, cameraBlur: 0, screenOn: false, screenAudio: null, tiles: [], notice: null, screenSink: { deviceId: null, tracks: 0, error: null, via: "element" }, audioProfile: null, rtcUrl: null, events: [], error: null,
+    canPlayback: true, audioContext: "none", inputDeviceId: null, cameraOn: false, cameraBlur: 0, screenOn: false, screenAudio: null, tiles: [], tileOrder: [], notice: null, screenSink: { deviceId: null, tracks: 0, error: null, via: "element" }, audioProfile: null, rtcUrl: null, events: [], error: null,
   };
   private audioProfile: AudioProfile = DEFAULT_AUDIO_PROFILE;
   private micSettings: VoiceSettings | null = null;
@@ -637,7 +639,7 @@ export class VoiceClient {
     this.micMutedByUser = false;
     // Switching rooms (join() while in one) never shows "disconnected": App.tsx takes that for the end of voice and closes
     // the stage, so after the first join every further channel landed on the first text channel (user's report, 24 September 2026).
-    this.patch({ status: this.switchingRoom ? "connecting" : "disconnected", channelId: null, afkRoom: false, participants: [], gateOpen: false, level: 0, micBoost: 1, micInput: 0, micSide: "stereo", micMuted: false, deafened: false, inputDeviceId: null, cameraOn: false, screenOn: false, screenAudio: null, tiles: [] });
+    this.patch({ status: this.switchingRoom ? "connecting" : "disconnected", channelId: null, afkRoom: false, participants: [], gateOpen: false, level: 0, micBoost: 1, micInput: 0, micSide: "stereo", micMuted: false, deafened: false, inputDeviceId: null, cameraOn: false, screenOn: false, screenAudio: null, tiles: [], tileOrder: [] });
   }
 
   // ---------- Permission VIEW_VIDEO: who receives camera and screen
@@ -722,6 +724,8 @@ export class VoiceClient {
     const { identity, source } = parseFeedId(tileId);
     return this.videoWatch.watching(identity, source);
   }
+  /** The user's own order of the stage's tiles (tileOrder.ts): kept until the room is left, with the rest of the room's state. */
+  setTileOrder(order: string[]): void { this.patch({ tileOrder: order }); }
 
   // ---------- Camera and screen (M3)
 

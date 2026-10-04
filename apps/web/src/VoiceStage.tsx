@@ -5,7 +5,7 @@ import { FullscreenButton, TrackVideo } from "./VideoWindows";
 import { VideoAudioControls } from "./VideoAudioControls";
 import { Avatar } from "./Avatar";
 import { Permission, displayNameOf, hasPermission, type Channel, type Member, type RadioStation, type VoiceMember } from "@squorli/protocol";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { MenuAnchor } from "./ContextMenu";
 import { VoiceMemberMenu } from "./VoiceMemberMenu";
 import { RadioControl } from "./RadioControl";
@@ -19,6 +19,7 @@ import { t } from "./i18n";
 import { platform } from "./platform";
 import { useVoiceSettings } from "./voice/useVoiceSettings";
 import { feedId, videoActive } from "./voice/videoWatch";
+import { moveTile, orderTiles } from "./tileOrder";
 
 type Props = {
   client: VoiceClient;
@@ -66,6 +67,11 @@ type Props = {
 };
 
 type Layout = "grid" | "focus";
+/** A tile being dragged to another place (tileOrder.ts): where it started, whether the threshold was passed, where it would drop. */
+type TileDrag = { key: string; index: number; startX: number; startY: number; active: boolean; over: number | null };
+type DropMark = "source" | "before" | "after" | null;
+/** Pointer travel before a press turns into a drag (a click stays a click). */
+const TILE_DRAG_START_PX = 6;
 /** `off`: the participant sends this feed, the user may see it and does not watch it (voiceClient.setVideoWatching): the tile offers to turn it on. */
 /** A participant with the avatar of the matching member (null for identities that are no members: bots, "external"). */
 type StageParticipant = VoiceParticipant & { avatarUrl: string | null };
@@ -144,14 +150,17 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
     ?? null;
   const focus = items.find((i) => i.key === focusKey) ?? null;
   // The strip scrolls sideways with many participants: the notice that a video runs comes first, or nobody would see it there.
-  const rest = [...items.filter((i) => i.kind === "playerOff"), ...items.filter((i) => i.key !== focusKey && i.kind !== "playerOff")];
+  // The user's own order (tileOrder.ts, dragging below): the own tile first, then what they placed, then the rest as it arrived.
+  const fixedTile = (i: Item) => i.kind === "camera" && i.participant.isLocal;
+  const ordered = orderTiles(items, voice.tileOrder, fixedTile);
+  const rest = [...ordered.filter((i) => i.kind === "playerOff"), ...ordered.filter((i) => i.key !== focusKey && i.kind !== "playerOff")];
   const screenHint = explainScreenAudio(voice, platform.kind === "desktop" ? { audioPossible: platform.os === "windows" } : undefined);
   // Tile view: hide participants without video. Only while a video is being sent at all, and never stored: it is gone
   // with the last video and with the stage (user's requirement).
   const anyVideo = videoActive(participants, !!playerTile);
   const [videoOnly, setVideoOnly] = useState(false);
   useEffect(() => { if (!anyVideo) setVideoOnly(false); }, [anyVideo]);
-  const gridItems = videoOnly && anyVideo ? items.filter((i) => i.kind !== "camera" || i.participant.cameraOn) : items;
+  const gridItems = videoOnly && anyVideo ? ordered.filter((i) => i.kind !== "camera" || i.participant.cameraOn) : ordered;
   const grid = useFittedGrid(gridItems.length);
 
   // A share's audio plays for who watches that share (user, 26 September 2026: "sollte da sein sobald ich das Ansehen
@@ -168,6 +177,79 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   // Click a tile: show it large. Click the large tile: back to the tiles.
   const focusOn = (key: string) => { setPinned(key); setLayout("focus"); };
   const unfocus = () => { setPinned(null); setLayout("grid"); };
+
+  // Drag a tile where you want it (user's wish, 4 October 2026): the order lives in the voice client until the room is left
+  // (tileOrder.ts), the own tile stays first. A pointer with a threshold and capture, like the server rail; a touch scrolls
+  // instead; Alt+arrow moves the focused tile by one. The player's tile keeps its place in the order but is not dragged.
+  const movable = ordered.filter((i) => !fixedTile(i));
+  const movableIndex = new Map(movable.map((i, n) => [i.key, n] as const));
+  const sortable = movable.length > 1;
+  const [drag, setDrag] = useState<TileDrag | null>(null);
+  const dragRef = useRef<TileDrag | null>(null);
+  /** A drag just ended on this tile: the click that follows the pointer up must not focus it. */
+  const swallowClick = useRef(false);
+  const moveTo = (from: number, to: number) => {
+    const next = moveTile(movable.map((i) => i.key), from, to);
+    if (next.some((k, n) => k !== movable[n]!.key)) client.setTileOrder(next);
+  };
+  /** Where a pointer would drop, in reading order: in front of the first tile whose row lies below the pointer, or whose middle lies right of it in the pointer's row; else last. */
+  const insertionIndex = (x: number, y: number, container: HTMLElement | null): number => {
+    for (const el of container ? Array.from(container.querySelectorAll<HTMLElement>("[data-tile-index]")) : []) {
+      const r = el.getBoundingClientRect();
+      if (y < r.top || (y <= r.bottom && x < r.left + r.width / 2)) return Number(el.dataset.tileIndex);
+    }
+    return movable.length;
+  };
+  const endDrag = (e: ReactPointerEvent<HTMLDivElement>, drop: boolean) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    if (!d?.active) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    setDrag(null);
+    // The click after this pointer up belongs to the drag, not to the tile. The flag clears itself in case no click comes.
+    swallowClick.current = true;
+    setTimeout(() => { swallowClick.current = false; }, 0);
+    if (drop && d.over !== null) moveTo(d.index, d.over);
+  };
+  const dragAttrs = (key: string): HTMLAttributes<HTMLDivElement> => {
+    const index = movableIndex.get(key);
+    if (!sortable || index === undefined) return {};
+    return {
+      "data-tile-index": index, tabIndex: 0,
+      onPointerDown: (e) => {
+        // A touch scrolls; the tile's buttons are not a handle.
+        if (e.button !== 0 || e.pointerType === "touch" || (e.target as HTMLElement).closest("button, input, a")) return;
+        dragRef.current = { key, index, startX: e.clientX, startY: e.clientY, active: false, over: null };
+      },
+      onPointerMove: (e) => {
+        const d = dragRef.current;
+        if (!d) return;
+        if (!d.active) {
+          if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < TILE_DRAG_START_PX) return;
+          d.active = true;
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }
+        const over = insertionIndex(e.clientX, e.clientY, e.currentTarget.parentElement);
+        if (over !== d.over) { d.over = over; setDrag({ ...d }); }
+      },
+      onPointerUp: (e) => endDrag(e, true),
+      onPointerCancel: (e) => endDrag(e, false),
+      onKeyDown: (e: ReactKeyboardEvent<HTMLDivElement>) => {
+        if (!e.altKey || e.currentTarget !== e.target || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+        e.preventDefault();
+        moveTo(index, e.key === "ArrowLeft" || e.key === "ArrowUp" ? index - 1 : index + 2);
+      },
+    } as HTMLAttributes<HTMLDivElement>;
+  };
+  const dropOf = (key: string): DropMark => {
+    const index = movableIndex.get(key);
+    if (!drag?.active || index === undefined) return null;
+    if (drag.key === key) return "source";
+    if (drag.over === index) return "before";
+    if (drag.over === movable.length && index === movable.length - 1) return "after";
+    return null;
+  };
+  const focusUnlessDragged = (key: string) => { if (!swallowClick.current) focusOn(key); };
 
   // Right-click a tile of another member: the sidebar's voice member menu. Bots have no member entry and get no menu.
   const [menu, setMenu] = useState<({ identity: string } & MenuAnchor) | null>(null);
@@ -210,10 +292,10 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
       {items.length === 0 ? (
         <div className="stage-empty muted">{t("stage.empty")}</div>
       ) : layout === "grid" || !focus ? (
-        <div className="stage-grid" ref={grid.ref}>
+        <div className={`stage-grid ${drag?.active ? "reordering" : ""}`} ref={grid.ref}>
           <div className="stage-grid-inner" style={{ gridTemplateColumns: `repeat(${grid.cols}, ${grid.tileWidth}px)` }}>
             {gridItems.map((i) => i.participant === null ? playerTileOf(i)
-              : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusOn(i.key)} />)}
+              : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusUnlessDragged(i.key)} attrs={dragAttrs(i.key)} drop={dropOf(i.key)} />)}
           </div>
         </div>
       ) : (
@@ -221,9 +303,9 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
           <div className="stage-main">{focus.participant === null ? playerTileOf(focus, true)
             : <Tile item={focus} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big pinned={pinned === focus.key} onClick={unfocus} />}</div>
           {rest.length > 0 && (
-            <div className="stage-strip">
+            <div className={`stage-strip ${drag?.active ? "reordering" : ""}`}>
               {rest.map((i) => i.participant === null ? playerTileOf(i)
-                : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusOn(i.key)} />)}
+                : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusUnlessDragged(i.key)} attrs={dragAttrs(i.key)} drop={dropOf(i.key)} />)}
             </div>
           )}
         </div>
@@ -344,7 +426,7 @@ function PlayerOffTile({ big, kind, name, radio, onDismiss }: { big: boolean; ki
   );
 }
 
-function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds, onRestore, onMenu }: { item: Extract<Item, { participant: StageParticipant }>; client: VoiceClient; viewers: StageParticipant[]; big?: boolean; pinned: boolean; onClick: () => void; onPopout: (tile: VideoTile, opener?: Window) => void; poppedIds: Set<string>; onRestore: (id: string) => void; onMenu: (item: Item, event: ReactMouseEvent<HTMLElement>) => void }) {
+function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds, onRestore, onMenu, attrs, drop = null }: { item: Extract<Item, { participant: StageParticipant }>; client: VoiceClient; viewers: StageParticipant[]; big?: boolean; pinned: boolean; attrs?: HTMLAttributes<HTMLDivElement>; drop?: DropMark; onClick: () => void; onPopout: (tile: VideoTile, opener?: Window) => void; poppedIds: Set<string>; onRestore: (id: string) => void; onMenu: (item: Item, event: ReactMouseEvent<HTMLElement>) => void }) {
   const { participant: p, tile } = item;
   const ref = useRef<HTMLDivElement>(null);
   const target = useCallback(() => ref.current, []);
@@ -363,13 +445,13 @@ function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds
     update(); doc.addEventListener("fullscreenchange", update);
     return () => { doc.removeEventListener("fullscreenchange", update); client.setScreenAudioListening(listenId, "fullscreen", false); };
   }, [client, listenId]);
-  const cls = ["tile", item.kind, hasAudioControls ? "has-volume" : "", p.speaking && item.kind === "camera" ? "speaking" : "", big ? "big" : "", tile && !popped ? "" : "avatar"].join(" ");
+  const cls = ["tile", item.kind, hasAudioControls ? "has-volume" : "", p.speaking && item.kind === "camera" ? "speaking" : "", big ? "big" : "", tile && !popped ? "" : "avatar", drop ? `drop-${drop}` : ""].join(" ");
   // Turned off while it fills the screen: leave fullscreen, an avatar has no business there.
   const watch = (on: boolean) => { const doc = ref.current?.ownerDocument; if (!on && doc?.fullscreenElement === ref.current) void doc?.exitFullscreen().catch(() => {}); client.setVideoWatching(item.key, on); };
   // A share nobody turned on for themselves: the whole tile is the switch, there is nothing to enlarge yet.
   const shareOff = item.kind === "screen" && item.off;
   return (
-    <div ref={ref} className={cls} onClick={() => { if (shareOff) watch(true); else if (!ref.current?.ownerDocument.fullscreenElement) onClick(); }} onContextMenu={(event) => onMenu(item, event)} title={shareOff ? t("stage.screenOn") : big ? t("stage.backToGrid") : t("stage.enlarge")}>
+    <div ref={ref} className={cls} {...attrs} onClick={() => { if (shareOff) watch(true); else if (!ref.current?.ownerDocument.fullscreenElement) onClick(); }} onContextMenu={(event) => onMenu(item, event)} title={shareOff ? t("stage.screenOn") : big ? t("stage.backToGrid") : t("stage.enlarge")}>
       {shareOff ? <div className="tile-popped"><Icon name="monitor" /><span>{t("stage.shareOffered", { name: p.name })}</span><button className="small" onClick={(event) => { event.stopPropagation(); watch(true); }}><Icon name="eye" /> {t("stage.watch")}</button></div>
         : popped ? <div className="tile-popped"><Icon name="external-link" /><span>{t("stage.poppedOut")}</span><button className="secondary small" onClick={(event) => { event.stopPropagation(); onRestore(tile!.id); }}>{t("stage.restoreVideo")}</button></div> : tile ? <TrackVideo tile={tile} /> : <Avatar name={p.name} src={p.avatarUrl} size="large" />}
       {item.kind === "camera" && item.off && <div className="tile-window-actions" onClick={(event) => event.stopPropagation()}>

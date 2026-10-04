@@ -146,8 +146,16 @@ export const DirectoryErrorEvent = z.object({ type: z.literal("error"), code: Di
  * Nothing in it: what changed is read with the account's signature. A client from before it drops the event.
  */
 export const NoticesChangedEvent = z.object({ type: z.literal("notices.changed") });
+/**
+ * The account's server list changed (4 October 2026, user's wish: the rail follows at once on every device): a server of the
+ * list got a new icon, an entry came (a sign-in on a new server) or went (leave, its confirmation), or the sealed settings
+ * (the rail's order, the hidden servers) were written, from this or another device. Nothing in it: the client reads its
+ * status again, like after `notices.changed`. A client from before it drops the event.
+ */
+export const ServersChangedEvent = z.object({ type: z.literal("servers.changed") });
 export const DirectoryServerEvent = z.discriminatedUnion("type", [
   DirectoryChallengeEvent, DirectoryWelcomeEvent, DirectoryPongEvent, FriendUpdateEvent, FriendPresenceEvent, DmMessageEvent, DmHistoryEvent, DmReadEvent, DmDeletedEvent, DmClearedEvent, DirectoryErrorEvent, NoticesChangedEvent,
+  ServersChangedEvent,
 ]);
 export type DirectoryServerEvent = z.infer<typeof DirectoryServerEvent>;
 
