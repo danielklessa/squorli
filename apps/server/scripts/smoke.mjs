@@ -927,6 +927,8 @@ check("mute: text channels only, valid input, signed in", smuVoice === 404 && sm
       if (req.url === "/bild.png") return res.writeHead(200, { "content-type": "image/png" }).end(PNG);
       if (req.url === "/text") return res.writeHead(200, { "content-type": "text/plain" }).end("<title>kein HTML</title>");
       if (req.url === "/nach-innen") return res.writeHead(302, { location: "http://127.0.0.1:3197/geheim" }).end();
+      // A page built to stall the head parser: 512 KB of `<meta ` without a single `>` (26 s before the fix of 5 October 2026).
+      if (req.url === "/stillstand") return res.writeHead(200, { "content-type": "text/html" }).end("<meta ".repeat(512 * 1024 / 6));
       res.writeHead(404).end();
     });
     // What a member must never reach through the server: another address of the machine itself.
@@ -971,7 +973,16 @@ check("mute: text channels only, valid input, signed in", smuVoice === 404 && sm
     check("link previews: a youtube link becomes a video with title and a picture from this server", yp?.kind === "youtube" && yp.videoId === YT_ID && yp.start === 42 && typeof yp.title === "string" && yp.title.length > 0 && /^\/api\/previews\//.test(yp.image ?? ""), JSON.stringify(yp));
     const [sRmYt] = await api("POST", `/api/messages/${yt.id}/previews/remove`, { url: yp?.url }, B.token);
     check("link previews: the author removes the video too", sRmYt === 200 && !!(await updateOf(yt.id, (m) => m.previews?.length === 0)));
-    for (const m of [pm, quiet, yt]) await api("DELETE", `/api/messages/${m.id}`, undefined, B.token);
+
+    // Security audit of 5 October 2026, H-1: a page built to stall the head parser gets no preview, and the server keeps
+    // answering while it is looked up (the parser is linear and runs in a worker thread with a budget; before, one such
+    // message stopped the whole event loop for 26 s).
+    const [, slow] = await post(`${SITE}/stillstand`);
+    let worstHealth = 0;
+    for (let i = 0; i < 5; i++) { const t0 = performance.now(); await api("GET", "/api/health"); worstHealth = Math.max(worstHealth, performance.now() - t0); }
+    await new Promise((r) => setTimeout(r, 1500));
+    check("link previews: a page built to stall the parser gets no preview and the server keeps answering meanwhile", (await stored(slow.id))?.previews?.length === 0 && hits.includes("/stillstand") && worstHealth < 500, `previews ${JSON.stringify((await stored(slow.id))?.previews)} fetched ${hits.includes("/stillstand")} worst /api/health ${worstHealth.toFixed(0)} ms`);
+    for (const m of [pm, quiet, yt, slow]) await api("DELETE", `/api/messages/${m.id}`, undefined, B.token);
     await new Promise((r) => site.close(r)); await new Promise((r) => inside.close(r));
   }
 }

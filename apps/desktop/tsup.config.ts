@@ -1,9 +1,11 @@
 import { defineConfig } from "tsup";
 
-// Two CommonJS bundles: the main process and the (sandboxed) preload script. Everything except `electron` is bundled:
-// the workspace packages only exist as TypeScript source, and a packaged app then needs no node_modules at all.
+// Three CommonJS bundles: the main process, the (sandboxed) preload script and the worker thread that reads linked pages'
+// heads for the previews of direct messages (main/previewWorker.ts, started by linkLookup.ts from the file next to main.cjs).
+// Everything except `electron` is bundled: the workspace packages only exist as TypeScript source, and a packaged app then
+// needs no node_modules at all.
 export default defineConfig({
-  entry: { main: "src/main/index.ts", preload: "src/preload/index.ts" },
+  entry: { main: "src/main/index.ts", preload: "src/preload/index.ts", "preview-worker": "src/main/previewWorker.ts" },
   outDir: "out",
   format: ["cjs"],
   outExtension: () => ({ js: ".cjs" }),

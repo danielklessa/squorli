@@ -296,11 +296,12 @@ async function main() {
   await registerChannelBlockRoutes(app, db, hub, presence, lk);
   await registerInviteRoutes(app, db);
   await registerImportRoutes(app, db, hub);
-  // Link previews: looked up after a message is stored; the result goes out as the message itself, once more.
+  // Link previews: looked up after a message is stored; the result goes out as the message itself, once more. The pages'
+  // heads are read in a worker thread whose bundle lies next to this one (dist/preview-worker.js; src/preview-worker.ts under tsx).
   const previews = new LinkPreviews(db, config, app.log, async (row) => {
     const [message] = await loadMessages(db, [row]);
     if (message) hub.broadcastToChannel(message.channelId, { type: "message.update", message });
-  });
+  }, join(here, import.meta.url.endsWith(".ts") ? "preview-worker.ts" : "preview-worker.js"));
   previews.meter = meter;
   await previews.init();
   app.addHook("onClose", async () => previews.close());

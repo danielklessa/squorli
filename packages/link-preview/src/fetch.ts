@@ -21,13 +21,19 @@ export type FetchOptions = {
   maxBytes: (contentType: string) => number;
   /** true = an answer longer than the cap is cut there (a page's head is at its start); false = it is no answer (half a picture is none). */
   cut?: (contentType: string) => boolean;
-  enough?: (contentType: string, soFar: Buffer) => boolean;
+  /**
+   * Asked after every piece that arrives, with that piece and the ENOUGH_OVERLAP bytes before it (so a marker of up to that
+   * length is seen even when it is split across two pieces); true = stop reading. Everything read so far is not handed over
+   * on purpose: searching it again after every piece grew with the square of the answer (security audit of 5 October 2026).
+   */
+  enough?: (contentType: string, latest: Buffer) => boolean;
   testOrigin?: string | undefined;
   timeoutMs?: number;
 };
 
 const MAX_REDIRECTS = 5;
 const DEFAULT_TIMEOUT_MS = 6000;
+export const ENOUGH_OVERLAP = 16;
 // Sites hand their description to programs that say what they are; a bare library name often gets a consent wall or a 403.
 const USER_AGENT = "Mozilla/5.0 (compatible; SquorliBot/1.0; +https://squorli.com)";
 
@@ -50,16 +56,19 @@ function decoded(res: IncomingMessage): Readable {
   return res.pipe(unpack);
 }
 
-async function readCapped(res: IncomingMessage, limit: number, cut: boolean, enough: (soFar: Buffer) => boolean): Promise<Buffer | null> {
+async function readCapped(res: IncomingMessage, limit: number, cut: boolean, enough: (latest: Buffer) => boolean): Promise<Buffer | null> {
   const stream = decoded(res);
   const chunks: Buffer[] = [];
   let size = 0;
+  let tail: Buffer | null = null;
   try {
     for await (const chunk of stream) {
       const c = chunk as Buffer;
       chunks.push(c); size += c.length;
       if (size > limit) { if (!cut) return null; break; }
-      if (enough(Buffer.concat(chunks, size))) break;
+      const latest: Buffer = tail ? Buffer.concat([tail, c]) : c;
+      if (enough(latest)) break;
+      tail = latest.subarray(Math.max(0, latest.length - ENOUGH_OVERLAP));
     }
   } catch (err) {
     // A truncated compressed stream still holds the head we came for.
@@ -92,7 +101,7 @@ export async function safeGet(address: string, options: FetchOptions): Promise<F
       const cut = options.cut?.(contentType) ?? false;
       const declared = res.headers["content-encoding"] ? 0 : Number(res.headers["content-length"] ?? 0);
       if (limit <= 0 || (!cut && declared > limit)) { res.destroy(); return null; }
-      const body = await readCapped(res, limit, cut, (soFar) => options.enough?.(contentType, soFar) ?? false);
+      const body = await readCapped(res, limit, cut, (latest) => options.enough?.(contentType, latest) ?? false);
       return body && body.length > 0 ? { url: url.href, contentType, body } : null;
     }
     return null;

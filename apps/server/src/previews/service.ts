@@ -1,4 +1,4 @@
-import { lookUpPage, lookUpYoutubeVideo, type LinkImage } from "@squorli/link-preview";
+import { createHeadParser, lookUpPage, lookUpYoutubeVideo, type HeadParser, type LinkImage } from "@squorli/link-preview";
 import { previewLinks, youtubeVideoOf, type LinkPreview } from "@squorli/protocol";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
@@ -48,9 +48,15 @@ export class LinkPreviews {
 
   /** The storage quota (docs/features/limits.md): a picture that does not fit is left out, the preview keeps its texts. */
   meter: StorageMeter | null = null;
+  /**
+   * Reads a page's head in a worker thread with a time budget (security audit of 5 October 2026, H-1): a page built to stall
+   * the parser costs its own preview, never the server. `workerFile` is the bundle next to this one (index.ts); null = on this thread.
+   */
+  readonly parser: HeadParser;
 
-  constructor(private readonly db: Db, private readonly config: Config, private readonly log: Log, private readonly onChange: (row: typeof messages.$inferSelect) => Promise<void>) {
+  constructor(private readonly db: Db, private readonly config: Config, private readonly log: Log, private readonly onChange: (row: typeof messages.$inferSelect) => Promise<void>, workerFile: string | URL | null = null) {
     this.dir = join(config.DATA_DIR, "previews");
+    this.parser = createHeadParser({ workerFile: workerFile ?? undefined, warn: (msg, detail) => this.log.warn(detail, msg) });
   }
 
   get enabled(): boolean { return this.config.LINK_PREVIEWS; }
@@ -61,7 +67,7 @@ export class LinkPreviews {
     this.sweeper = setInterval(() => { void this.sweep().catch((err) => this.log.warn({ err }, "link preview sweep")); }, SWEEP_MS);
     this.sweeper.unref();
   }
-  close(): void { if (this.sweeper) clearInterval(this.sweeper); }
+  close(): void { if (this.sweeper) clearInterval(this.sweeper); void this.parser.close(); }
 
   /** One thing at a time per message: a lookup, a second edit and a removal must not overwrite each other. */
   private enqueue<T>(messageId: string, work: () => Promise<T>): Promise<T> {
@@ -141,7 +147,7 @@ export class LinkPreviews {
 
   /** The lookup itself is the shared package's; here the picture becomes a file of this server. */
   private async build(url: string): Promise<LinkPreview | null> {
-    const options = { testOrigin: this.config.LINK_PREVIEW_TEST_ORIGIN };
+    const options = { testOrigin: this.config.LINK_PREVIEW_TEST_ORIGIN, parser: this.parser };
     const video = youtubeVideoOf(url);
     const found = video ? await lookUpYoutubeVideo(video.videoId, options) : await lookUpPage(url, options);
     if (!found) return null;

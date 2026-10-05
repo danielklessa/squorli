@@ -1,5 +1,6 @@
 import { safeGet } from "./fetch";
-import { cleanText, decodeHtml, parsePageMeta, sniffImage, type ImageType } from "./parse";
+import { parseHead, type HeadParser } from "./headParser";
+import { cleanText, sniffImage, type ImageType } from "./parse";
 import { lookupYoutube } from "./youtube";
 
 /**
@@ -9,7 +10,11 @@ import { lookupYoutube } from "./youtube";
  */
 export type LinkImage = ImageType & { bytes: Buffer };
 export type LinkLookup = { kind: "page" | "youtube"; siteName: string | null; title: string | null; description: string | null; image: LinkImage | null };
-export type LookupOptions = { testOrigin?: string | undefined };
+export type LookupOptions = {
+  testOrigin?: string | undefined;
+  /** Reads the page's head in a worker thread with a time budget (headParser.ts); none = on the calling thread. */
+  parser?: HeadParser | undefined;
+};
 
 export const HTML_MAX_BYTES = 512 * 1024;
 export const IMAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -20,7 +25,7 @@ const get = (url: string, accept: string, options: LookupOptions) => safeGet(url
   accept, testOrigin: options.testOrigin,
   maxBytes: (type) => (isHtml(type) ? HTML_MAX_BYTES : isImage(type) ? IMAGE_MAX_BYTES : 0),
   cut: isHtml,
-  enough: (type, soFar) => isHtml(type) && soFar.includes("</head>"),
+  enough: (type, latest) => isHtml(type) && latest.includes("</head>"),
 });
 
 /** The picture's type is what its bytes say, whatever the host calls it. */
@@ -42,8 +47,8 @@ export async function lookUpPage(url: string, options: LookupOptions = {}): Prom
     const image = imageOf(res.body);
     return image ? { kind: "page", siteName: null, title: null, description: null, image } : null;
   }
-  const meta = parsePageMeta(decodeHtml(res.body, res.contentType), res.url);
-  if (!meta.title) return null;
+  const meta = options.parser ? await options.parser.parse(res.body, res.contentType, res.url) : parseHead(res.body, res.contentType, res.url);
+  if (!meta?.title) return null;
   let siteName = meta.siteName;
   if (!siteName) { try { siteName = cleanText(new URL(res.url).hostname.replace(/^www\./, ""), 100); } catch { siteName = null; } }
   return { kind: "page", siteName, title: meta.title, description: meta.description, image: meta.imageUrl ? await fetchImage(meta.imageUrl, options) : null };

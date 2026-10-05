@@ -323,8 +323,9 @@ else {
     ipcMain.on(IPC.screenAudioStop, (event) => { if (isClientFrame(event)) screenAudio.stop(); });
     // Controller input and "display required" for the client's AFK detection (native helper, Windows).
     const systemWatch = startSystemWatch(() => mainWindow, isClientFrame);
-    // Link previews of direct messages: the sender's app asks the linked host itself (linkLookup.ts).
-    handleLinkLookup(isClientFrame);
+    // Link previews of direct messages: the sender's app asks the linked host itself (linkLookup.ts); the page's head is read
+    // in a worker thread from the bundle next to this one (previewWorker.ts).
+    handleLinkLookup(isClientFrame, join(__dirname, "preview-worker.cjs"), app.isPackaged ? undefined : (text) => console.log(text));
     // Game detection: the launchers' installed games, and the helper says when one of them is in front (gameWatch.ts).
     const games = handleGames(() => mainWindow, isClientFrame, systemWatch);
     handleDisplayMedia(session.defaultSession, isClientFrame, screenAudio, systemWatch, games);

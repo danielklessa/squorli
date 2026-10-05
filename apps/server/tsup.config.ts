@@ -1,7 +1,9 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  // Two bundles: the server itself and the worker thread that reads linked pages' heads for the link previews
+  // (src/preview-worker.ts); index.ts starts the worker from the file next to its own.
+  entry: { index: "src/index.ts", "preview-worker": "src/preview-worker.ts" },
   format: ["esm"],
   target: "node24",
   clean: true,
