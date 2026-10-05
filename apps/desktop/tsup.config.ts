@@ -13,6 +13,10 @@ export default defineConfig({
   platform: "node",
   clean: true,
   external: ["electron"],
+  // CommonJS shims for `import.meta.url` and `__dirname` of bundled ESM packages: openpgp's Node build calls
+  // `createRequire(import.meta.url)`, which esbuild turns into `undefined` without the shim and the app died at its start
+  // (found 5 October 2026 right after the 0.12.6 tag; the shim gives it `pathToFileURL(__filename)`).
+  shims: true,
   // `noExternal` wins over `external`, so the pattern itself has to leave `electron` out (the runtime provides it).
   noExternal: [/^(?!electron$).*/],
 });
