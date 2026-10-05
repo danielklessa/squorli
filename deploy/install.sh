@@ -235,6 +235,20 @@ ensure_docker() {
 
 # Is $1 an image a release signed? stable, a version tag or a digest are; latest, a branch, a commit or a local build are not.
 signed_ref() { case "$1" in *@sha256:*|*:stable|*:v[0-9]*) return 0 ;; *) return 1 ;; esac; }
+# busy CMD...: runs CMD and, while it runs, writes a dot to the terminal every 2 s, so a long silent step (cosign's online
+# check) is seen to be alive; nothing is written without a terminal (the autoupdate timer). Returns CMD's status.
+busy() {
+  local pid rc=0 dots=0
+  "$@" & pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 2
+    kill -0 "$pid" 2>/dev/null || break
+    { [ "$dots" = 1 ] || printf '     '; printf '.'; } 2>/dev/null >/dev/tty && dots=1 || true
+  done
+  wait "$pid" || rc=$?
+  [ "$dots" = 0 ] || printf '\n' 2>/dev/null >/dev/tty || true
+  return "$rc"
+}
 # Checks the signature of the pulled image $1 with cosign in its own container (COSIGN_IMAGE), before anything of the
 # image runs. $2 is IMAGE_VERIFY of .env: empty or on = check, off = say so and go on. Returns 1 when the image carries no
 # valid signature of the release workflow; the caller then leaves the running server as it is.
@@ -254,7 +268,11 @@ verify_image() {
     printf '%s\n' "$(t "  x  $ref trägt keinen Digest einer Registry (lokal gebaut?): Die Signatur lässt sich nicht prüfen." "  x  $ref carries no digest of a registry (built locally?): the signature cannot be checked.")"
     return 1
   fi
-  if said="$(docker run --rm "$COSIGN_IMAGE" verify --certificate-identity-regexp "$SIGNER_IDENTITY" --certificate-oidc-issuer "$SIGNER_ISSUER" "$digest" 2>&1 >/dev/null)"; then
+  # cosign's image is pulled visibly (once), and the check is announced: it asks Sigstore's transparency log and may take a while.
+  local cimg="${COSIGN_IMAGE%%@*}"; cimg="${cimg%:*}@${COSIGN_IMAGE#*@}"
+  docker image inspect "$cimg" >/dev/null 2>&1 || { printf '%s\n' "$(t "     cosign holen (das Prüfwerkzeug, einmalig) ..." "     pulling cosign (the checking tool, once) ...")"; docker pull "$COSIGN_IMAGE" || true; }
+  printf '%s\n' "$(t "     Signatur prüfen (cosign fragt das Transparenzprotokoll von Sigstore; bis zu 3 Minuten) ..." "     checking the signature (cosign asks Sigstore's transparency log; up to 3 minutes) ...")"
+  if said="$(busy docker run --rm "$COSIGN_IMAGE" verify --certificate-identity-regexp "$SIGNER_IDENTITY" --certificate-oidc-issuer "$SIGNER_ISSUER" "$digest" 2>&1 >/dev/null)"; then
     printf '%s\n' "$(t "  ok Signatur geprüft: $digest (cosign; signiert vom Release-Workflow bei GitHub)" "  ok Signature checked: $digest (cosign; signed by the release workflow on GitHub)")"
     return 0
   fi
@@ -629,7 +647,9 @@ fetch_files() {
   ref="$(deploy_image)"
   note "$(t "Die Deploy-Dateien kommen aus dem signierten Image $ref." "The deploy files come out of the signed image $ref.")"
   # A locally built image (README "Building from source", a test) cannot be pulled; it is taken as it is, and verify_image says it carries no digest unless IMAGE_VERIFY=off.
-  docker pull -q "$ref" >/dev/null 2>&1 || docker image inspect "$ref" >/dev/null 2>&1 || die "$(t "Das Image ließ sich nicht holen" "The image could not be pulled"): $ref"
+  # The pull shows its progress: hidden, the minutes a first pull takes look like a hang (an installation on 5 October 2026 was given up here).
+  docker image inspect "$ref" >/dev/null 2>&1 || note "$(t "Image holen: je nach Verbindung einige Minuten ..." "Pulling the image: a few minutes, depending on the connection ...")"
+  docker pull "$ref" || docker image inspect "$ref" >/dev/null 2>&1 || die "$(t "Das Image ließ sich nicht holen" "The image could not be pulled"): $ref"
   verify_image "$ref" "$(env_get "$DIR/.env" IMAGE_VERIFY)" || die "$(t "Die Signatur des Images ist nicht in Ordnung (siehe oben): keine Datei daraus übernommen." "The image's signature is not in order (see above): no file taken from it.")"
   cid="$(docker create "$ref")" || die "$(t "Container für die Deploy-Dateien ließ sich nicht anlegen" "Could not create the container for the deploy files")"
   if ! docker cp "$cid:/app/deploy/." "$FILES_SRC/deploy/" >/dev/null 2>&1; then
@@ -719,7 +739,7 @@ write_helper() {
     printf 'ARGS=(%s)\n' "${CARGS[*]}"
     # The signature check as the installer has it (above): the constants, then the functions word for word
     printf 'COSIGN_IMAGE=%q\nSIGNER_IDENTITY=%q\nSIGNER_ISSUER=%q\n' "$COSIGN_IMAGE" "$SIGNER_IDENTITY" "$SIGNER_ISSUER"
-    declare -f signed_ref verify_image
+    declare -f signed_ref busy verify_image
     cat <<'EOF'
 set -euo pipefail
 here="$(dirname "$(readlink -f "$0")")"

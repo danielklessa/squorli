@@ -90,6 +90,12 @@ function Step([string]$text) { Write-Host ''; Write-Host ''; Write-Host '---- ' 
 function Ok([string]$text) { Write-Host '  ok ' -ForegroundColor Green -NoNewline; Write-Host $text }
 function Warn([string]$text) { Write-Host "  !  $text" -ForegroundColor Yellow }
 function Note([string]$text) { Write-Host "     $text" -ForegroundColor DarkGray }
+# A long silent step is announced (Busy), kept alive with a dot (Dot) and its line ended (Done): the person sees that
+# something still happens, as in install.sh (an installation of 5 October 2026 looked hung during a hidden download).
+$script:Dots = $false
+function Busy([string]$text) { Write-Host "     $text ..." -ForegroundColor DarkGray -NoNewline; $script:Dots = $true }
+function Dot { if ($script:Dots) { Write-Host '.' -ForegroundColor DarkGray -NoNewline } }
+function Done { if ($script:Dots) { Write-Host ''; $script:Dots = $false } }
 function Die([string]$text) { Write-Host ''; Write-Host "x $text" -ForegroundColor Red; Stop-Log; exit 1 }
 function Stop-Log { if ($S.ContainsKey('Log')) { try { Stop-Transcript | Out-Null } catch { } ; $S.Remove('Log') } }
 
@@ -688,14 +694,18 @@ function Install-VcRuntime {
     Die (T 'Ohne die Laufzeit geht es nicht: https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist' 'The runtime is required: https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist')
   }
   $file = Join-Path $env:TEMP 'squorli-vc_redist.x64.exe'
-  Invoke-WebRequest -Uri 'https://aka.ms/vc14/vc_redist.x64.exe' -OutFile $file -UseBasicParsing
+  Busy (T 'Laufzeit von Microsoft laden (etwa 25 MB)' 'Downloading the runtime from Microsoft (about 25 MB)')
+  try { Invoke-WebRequest -Uri 'https://aka.ms/vc14/vc_redist.x64.exe' -OutFile $file -UseBasicParsing } finally { Done }
   # Microsoft publishes no hash for this address (it always serves the newest), so the signature decides.
   $signature = Get-AuthenticodeSignature -LiteralPath $file
   if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
     Remove-Item -LiteralPath $file -Force
     Die (T 'Die geladene Datei ist nicht gültig von Microsoft signiert; nicht installiert.' 'The downloaded file carries no valid signature of Microsoft; not installed.')
   }
-  $p = Start-Process -FilePath $file -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
+  Busy (T 'Laufzeit installieren' 'Installing the runtime')
+  $p = Start-Process -FilePath $file -ArgumentList '/install', '/quiet', '/norestart' -PassThru
+  while (-not $p.WaitForExit(2000)) { Dot }
+  Done
   Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
   if (@(0, 1638, 3010) -notcontains $p.ExitCode) { Die (T "Die Installation der Laufzeit endete mit Code $($p.ExitCode)." "The runtime's installation ended with code $($p.ExitCode).") }
   if ($p.ExitCode -eq 3010) { Warn (T 'Die Laufzeit verlangt einen Neustart des Rechners, bevor alles läuft.' 'The runtime asks for a restart of the machine before everything works.') }
@@ -805,7 +815,9 @@ function Copy-Programs {
   foreach ($name in $ServiceNames) { if ($S.Replace -notcontains $name) { $kept += $Programs[$name].Folders } }
   foreach ($folder in @('app', 'node', 'livekit', 'caddy', 'pgsql', 'templates', 'licenses', 'proxies', 'bin')) {
     if ($kept -contains $folder) { continue }
-    if (Test-Path -LiteralPath (Join-Path $source $folder)) { Copy-Folder (Join-Path $source $folder) (Join-Path $S.InstallDir $folder) }
+    if (-not (Test-Path -LiteralPath (Join-Path $source $folder))) { continue }
+    Busy "$folder"
+    try { Copy-Folder (Join-Path $source $folder) (Join-Path $S.InstallDir $folder) } finally { Done }
   }
   # winsw holds the filled service files of this installation next to the program: only the program is replaced.
   New-Item -ItemType Directory -Force -Path (Join-Path $S.InstallDir 'winsw') | Out-Null
@@ -1006,10 +1018,11 @@ function Install-Postgres {
     $pwFile = Join-Path $S.DataDir 'pgdata.pw'
     [IO.File]::WriteAllText($pwFile, '', $Utf8); Set-Access $pwFile @{ $me = 'R' }
     [IO.File]::WriteAllText($pwFile, (Env-Get $S.EnvFile 'POSTGRES_PASSWORD'), (New-Object Text.ASCIIEncoding))
+    Busy (T 'Datenbank anlegen (initdb)' 'Creating the database cluster (initdb)')
     try {
       # Locale C: text sorts by bytes like in the Docker installation's database, and nothing depends on Windows' locales.
       $null = Invoke-Program (Join-Path $bin 'initdb.exe') @('-D', $pgdata, '-U', 'chat', '-E', 'UTF8', '--locale=C', '--auth-local=scram-sha-256', '--auth-host=scram-sha-256', "--pwfile=$pwFile") -Quiet
-    } finally { Remove-Item -LiteralPath $pwFile -Force -ErrorAction SilentlyContinue }
+    } finally { Done; Remove-Item -LiteralPath $pwFile -Force -ErrorAction SilentlyContinue }
     $null = Invoke-Program 'icacls.exe' @($pgdata, '/remove:g', "*$me", '/T', '/C', '/Q') -Quiet
     Set-Access $pgdata @{ (Get-AccountSid 'SquorliPostgres') = 'F' }
     # initdb's own rules of access are replaced as a whole; no copy of them is kept
@@ -1025,9 +1038,11 @@ function Install-Postgres {
 
   Start-SquorliService 'SquorliPostgres'
   $ready = $false
+  Busy (T 'Warten, bis PostgreSQL Verbindungen annimmt' 'Waiting until PostgreSQL accepts connections')
   foreach ($i in 1..30) {
-    try { $null = Invoke-Program (Join-Path $bin 'pg_isready.exe') @('-h', '127.0.0.1', '-p', "$($S.Ports.PostgresPort)", '-q') -Quiet; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
+    try { $null = Invoke-Program (Join-Path $bin 'pg_isready.exe') @('-h', '127.0.0.1', '-p', "$($S.Ports.PostgresPort)", '-q') -Quiet; $ready = $true; break } catch { Dot; Start-Sleep -Seconds 1 }
   }
+  Done
   if (-not $ready) { Show-ServiceLog 'SquorliPostgres'; Die (T 'PostgreSQL nimmt keine Verbindungen an.' 'PostgreSQL accepts no connections.') }
   try {
     $exists = (Invoke-Psql 'postgres' "select 1 from pg_database where datname = 'chat'") -join ''
@@ -1096,17 +1111,21 @@ function Set-Firewall {
 
 # Waits until the address answers with the status; returns the answer's text, or $null after the time.
 function Wait-Http([string]$url, [int]$status, [int]$tries = 30, [int]$pause = 2) {
-  foreach ($i in 1..$tries) {
-    try {
-      $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
-      if ([int]$r.StatusCode -eq $status) { return "$($r.Content)" }
-    } catch {
-      $response = $_.Exception.Response
-      if ($response -and [int]$response.StatusCode -eq $status) { return '' }
+  Busy (T "Warten auf $url" "Waiting for $url")
+  try {
+    foreach ($i in 1..$tries) {
+      try {
+        $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
+        if ([int]$r.StatusCode -eq $status) { return "$($r.Content)" }
+      } catch {
+        $response = $_.Exception.Response
+        if ($response -and [int]$response.StatusCode -eq $status) { return '' }
+      }
+      Dot
+      Start-Sleep -Seconds $pause
     }
-    Start-Sleep -Seconds $pause
-  }
-  return $null
+    return $null
+  } finally { Done }
 }
 
 function Start-All {
