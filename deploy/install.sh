@@ -118,9 +118,13 @@ env_set() {
 
 secret() { if command -v openssl >/dev/null 2>&1; then openssl rand -hex 32; else head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n'; fi; }
 # default_quota_mb DIR: 80 % of the space free on DIR's filesystem, in MB (security audit S13, 4 October 2026: a server
-# without a storage quota lets one member fill the disk); empty when df cannot tell.
+# without a storage quota lets one member fill the disk); empty when df cannot tell. On a fresh installation DIR does not
+# exist yet (the files are downloaded after the summary), so the nearest existing parent is asked; df may fail (the
+# question comes before the files, the script runs with pipefail and an ERR trap), so a failure yields nothing, not an abort.
 default_quota_mb() {
-  local kb; kb="$(df -Pk "$1" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ {print $4}')"
+  local dir="$1" kb
+  while [ ! -d "$dir" ] && [ "$dir" != / ] && [ -n "$dir" ]; do dir="$(dirname "$dir")"; done
+  kb="$(df -Pk "$dir" 2>/dev/null | awk 'NR==2 && $4 ~ /^[0-9]+$/ {print $4}' || true)"
   [ -n "$kb" ] || return 0
   printf '%s' "$(( kb * 8 / 10 / 1024 ))"
 }
@@ -400,8 +404,10 @@ configure() {
   # Who becomes the owner (docs/features/local-accounts.md): a Squorli account by its key (with a directory only), a server
   # account that registers with a setup code this script makes, or whoever signs in first.
   say_owner_hint
+  # Default (user, 5 October 2026): with a directory the Squorli account, unless the .env already holds a setup code and
+  # no key; without a directory the server account with a code; a reconfiguration that had neither keeps "whoever first".
   local ow ow_def=2
-  [ -n "$d_owner" ] && [ -n "$DIRECTORY" ] && ow_def=1
+  if [ -n "$DIRECTORY" ] && { [ -n "$d_owner" ] || [ -z "$d_code" ]; }; then ow_def=1; fi
   [ "$MODE" = reconfigure ] && [ -z "$d_owner" ] && [ -z "$d_code" ] && ow_def=3
   if [ -n "$DIRECTORY" ]; then
     choose ow "$(t "Wer wird Besitzer?" "Who becomes the owner?")" "$ow_def" \

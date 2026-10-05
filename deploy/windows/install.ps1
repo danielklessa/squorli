@@ -567,8 +567,10 @@ function Read-Settings {
   Note (T 'Jede Anmeldung braucht ein Konto: ein Squorli-Konto (@name) oder ein Serverkonto dieses Servers (~name).' 'Every sign-in needs an account: a Squorli account (@name) or a server account of this server (~name).')
   Note (T 'Den Besitzer legst du hier fest: dein Squorli-Konto über seinen Schlüssel, oder ein Serverkonto, das sich mit einem' 'You choose the owner here: your Squorli account by its key, or a server account that registers with a setup code this')
   Note (T 'Einrichtungscode aus diesem Skript registriert. Ohne beides wird Besitzer, wer sich zuerst anmeldet.' 'script makes. Without either, whoever signs in first becomes the owner.')
+  # Default (user, 5 October 2026): with a directory the Squorli account, unless the .env already holds a setup code and
+  # no key; without a directory the server account with a code; a reconfiguration that had neither keeps "whoever first".
   $owDefault = 2
-  if ($dOwner -and $S.Directory) { $owDefault = 1 }
+  if ($S.Directory -and ($dOwner -or -not $dCode)) { $owDefault = 1 }
   if ($S.Mode -eq 'reconfigure' -and -not $dOwner -and -not $dCode) { $owDefault = 3 }
   $givenOwner = 0
   if ($Owner) { $givenOwner = [array]::IndexOf(@('key', 'code', 'first'), $Owner) + 1 }
