@@ -38,7 +38,7 @@ export type HeadParserOptions = {
 
 /** What the main thread sends: the page's bytes (transferred, not copied), its type and address; the worker answers with the same id. */
 export type HeadParserJob = { id: number; bytes: ArrayBuffer; contentType: string; baseUrl: string };
-/** `ready` once the worker listens (so a worker that dies before it is one that could not start), then one answer per job. */
+/** `ready` once the worker listens (a job is posted only after it, so a worker that dies before it is one that could not start), then one answer per job. */
 export type HeadParserReply = { ready: true } | { id: number; meta: PageMeta } | { id: number; error: string };
 
 export const DEFAULT_BUDGET_MS = 1000;
@@ -64,6 +64,8 @@ export function createHeadParser(options: HeadParserOptions = {}): HeadParser {
   let nextId = 1;
   const queue: Pending[] = [];
   let current: Pending | null = null;
+  /** The current job was handed to the worker (only after `ready`; until then it waits in `current`). */
+  let sent = false;
   let budget: ReturnType<typeof setTimeout> | null = null;
   let idle: ReturnType<typeof setTimeout> | null = null;
 
@@ -71,6 +73,7 @@ export function createHeadParser(options: HeadParserOptions = {}): HeadParser {
 
   function finish(): void {
     current = null;
+    sent = false;
     if (budget) { clearTimeout(budget); budget = null; }
   }
 
@@ -93,7 +96,15 @@ export function createHeadParser(options: HeadParserOptions = {}): HeadParser {
     ready = false;
     w.on("message", (reply: HeadParserReply) => {
       if (worker !== w) return;
-      if ("ready" in reply) { ready = true; return; }
+      if ("ready" in reply) {
+        ready = true;
+        // The page that waited for the worker goes now. A job is never posted before `ready`: the worker's `error` and the
+        // `ready` message travel over different ports and may overtake each other (seen on a Windows runner, 5 October
+        // 2026: the crash of the first job arrived before `ready` and read as "could not start", which switched the
+        // parser to the calling thread for good). With the job held back, an error before `ready` is only ever a start that failed.
+        if (current && !sent) { if (budget) { clearTimeout(budget); budget = null; } dispatch(current, w); }
+        return;
+      }
       if (!current || reply.id !== current.job?.id) return;
       const p = current;
       finish();
@@ -138,6 +149,22 @@ export function createHeadParser(options: HeadParserOptions = {}): HeadParser {
     current = p;
     worker.ref();
     const w = worker;
+    if (ready) { dispatch(p, w); return; }
+    // Not ready yet: the job waits for the `ready` message (the handler above dispatches it). A worker that does not get
+    // there within the budget could not start: this page and every later one are read on the calling thread.
+    budget = setTimeout(() => {
+      if (worker !== w || current !== p) return;
+      finish();
+      worker = null;
+      void w.terminate().catch(() => {});
+      giveUp(`not ready within ${budgetMs} ms`, p);
+      next();
+    }, budgetMs);
+  }
+
+  /** Hands the current job to the worker and starts its budget. */
+  function dispatch(p: Pending, w: Worker): void {
+    sent = true;
     budget = setTimeout(() => {
       if (worker !== w || current !== p) return;
       finish();
@@ -147,7 +174,7 @@ export function createHeadParser(options: HeadParserOptions = {}): HeadParser {
       void w.terminate().catch(() => {});
       next();
     }, budgetMs);
-    w.postMessage(p.job, [p.job.bytes]);
+    w.postMessage(p.job, [p.job!.bytes]);
   }
 
   return {

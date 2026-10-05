@@ -22,8 +22,15 @@ parentPort.on("message", (job) => {
 parentPort.postMessage({ ready: true });
 `;
 
+/** Says `ready` only after 150 ms; the first job must wait for it (it is never posted before). */
+const SLOW = FAKE.replace('parentPort.postMessage({ ready: true });', 'setTimeout(() => parentPort.postMessage({ ready: true }), 150);');
+/** Never says `ready` (a start that hangs): the parser gives up after the budget and reads on the calling thread. */
+const NEVER = FAKE.replace('parentPort.postMessage({ ready: true });', 'for (;;) {}');
+
 let dir: string;
 let fake: string;
+let slow: string;
+let never: string;
 const parsers: HeadParser[] = [];
 const make = (options: Parameters<typeof createHeadParser>[0]) => { const p = createHeadParser(options); parsers.push(p); return p; };
 const ask = (p: HeadParser, text: string) => p.parse(Buffer.from(text), "text/html", "https://example.org/");
@@ -32,7 +39,11 @@ const threadOf = (title: string | null | undefined) => title?.split(":").pop();
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "squorli-head-parser-"));
   fake = join(dir, "fake.mjs");
+  slow = join(dir, "slow.mjs");
+  never = join(dir, "never.mjs");
   await writeFile(fake, FAKE);
+  await writeFile(slow, SLOW);
+  await writeFile(never, NEVER);
 });
 afterAll(async () => {
   await Promise.all(parsers.map((p) => p.close()));
@@ -73,6 +84,29 @@ describe("createHeadParser", () => {
     expect(warnings.filter((w) => w.includes("failed") || w.includes("exited")).length).toBe(2);
     expect(p.mode).toBe("worker");
   });
+
+  it("holds the first page until the worker says ready, and gives up on a worker that never does (5 October 2026, the race seen on a Windows runner)", async () => {
+    // A late `ready`: the page waits and is read by the worker, not on the calling thread.
+    const late = make({ workerFile: slow, budgetMs: 2000 });
+    const first = await ask(late, "late");
+    expect(first?.title?.startsWith("T:late:")).toBe(true);
+    expect(late.mode).toBe("worker");
+    // A crash on the very first job (the case of the race): unreadable, and the parser stays with the worker.
+    const crashFirst = make({ workerFile: fake });
+    expect(await ask(crashFirst, "crash")).toBeNull();
+    expect((await ask(crashFirst, "z"))?.title?.startsWith("T:z:")).toBe(true);
+    expect(crashFirst.mode).toBe("worker");
+    // No `ready` within the budget: this page and the next are read on the calling thread, the worker is gone.
+    const warnings: string[] = [];
+    const stuck = make({ workerFile: never, budgetMs: 300, warn: (m, d) => warnings.push(`${m} ${JSON.stringify(d)}`) });
+    const html = Buffer.from("<title>Stuck</title>");
+    const t0 = performance.now();
+    expect((await stuck.parse(html, "text/html", "https://example.org/"))?.title).toBe("Stuck");
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(stuck.mode).toBe("inline");
+    expect(warnings.some((w) => w.includes("could not start") && w.includes("not ready"))).toBe(true);
+    expect((await stuck.parse(html, "text/html", "https://example.org/"))?.title).toBe("Stuck");
+  }, 15_000);
 
   it("without a worker file, or when the worker cannot start, the page is read on the calling thread", async () => {
     const html = Buffer.from('<title>Inline</title><meta property="og:description" content="d">');
