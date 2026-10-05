@@ -14,7 +14,8 @@ import * as api from "./api";
 import type { AvatarImage } from "./avatarImage";
 import { DirectoryLink, type LinkStatus } from "./directoryLink";
 import { dmReportContent } from "./dmReports";
-import { IDENTITY_STORAGE_KEY, readSecret, writeSecret, deviceSignerOf, dmKeyOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetKey, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, settingsKeyOf, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
+import { IDENTITY_STORAGE_KEY, SESSIONS_STORAGE_KEY, readSecret, refreshSecret, writeSecret, deviceSignerOf, dmKeyOf, dropDevice, forgetIdentity as forgetStoredIdentity, forgetKey, forgetServerAccount, loadDeviceOf, loadOrCreateIdentity, loadServerAccounts, newDevice, newIdentity, settingsKeyOf, storeIdentity, storeServerAccount, storedIdentity, type Identity, type NewDevice, type ServerAccount } from "./identity";
+import { sealedKeyOf } from "./browserSecrets";
 import { ServerConnection, type ServerConnState } from "./serverConnection";
 import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSettings } from "./accountSettings";
 import { loadBlockedLists, sameBlocked, saveBlockedLists, saveBlockedName, withBlocked, type BlockedLists } from "./blocked";
@@ -153,7 +154,7 @@ export type State = {
 };
 
 /** Sessions per server (the token stays secret); v1 held only the own server's and is migrated once. */
-const SESSIONS_KEY = "chat.sessions.v2";
+const SESSIONS_KEY = SESSIONS_STORAGE_KEY;
 const SESSION_KEY_V1 = "chat.session.v1";
 type StoredSessions = { publicKey: string; tokens: Record<string, string> };
 
@@ -262,7 +263,7 @@ export class Store {
     setInterval(() => { void this.refreshRefused(); }, REFUSED_LIST_MAX_AGE_MS);
     subscribeVoiceSettings((_s, source) => { if (source === "user") this.scheduleSettingsPush(); });
     // Another tab of this browser signed out, or signed in anew: the keys live in storage all tabs share, and this tab follows.
-    if (typeof window !== "undefined") window.addEventListener("storage", (e) => { if (e.key === IDENTITY_STORAGE_KEY || e.key === null) void this.followStorage(); });
+    if (typeof window !== "undefined") window.addEventListener("storage", (e) => { if (e.key === IDENTITY_STORAGE_KEY || e.key === sealedKeyOf(IDENTITY_STORAGE_KEY) || e.key === null) void this.followStorage(); });
     // AFK detection: every chat server and the directory hear when the user turns idle or comes back (activity.ts).
     activity.subscribe((idle) => { for (const conn of this.conns.values()) conn.setIdle(idle); this.link?.setIdle(idle); });
   }
@@ -585,6 +586,7 @@ export class Store {
   private async followStorage(): Promise<void> {
     const id = this.state.identity;
     if (!id || this.wiping || this.leaving) return;
+    await refreshSecret(IDENTITY_STORAGE_KEY); // a sealed store reads the other tab's entry first (browserSecrets.ts)
     const stored = storedIdentity();
     if (stored && stored.publicKey === id.publicKey && stillThatDevice(stored.device?.publicKey, id.device?.publicKey)) return;
     await this.wipeAccount(null);

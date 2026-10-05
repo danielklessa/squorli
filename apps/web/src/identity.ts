@@ -26,10 +26,21 @@ const KEY = "chat.identity.v1";
 /** The storage key of the main identity: tabs of one browser share it (store.ts follows a change made in another tab). */
 export const IDENTITY_STORAGE_KEY = KEY;
 
-type SecretStore = { get(key: string): string | null; set(key: string, value: string | null): boolean };
+/** The sessions per server (store.ts) and the server accounts (below): the secrets besides the identity, named here so that a browser's store seals all of them at start. */
+export const SESSIONS_STORAGE_KEY = "chat.sessions.v2";
+const SERVER_ACCOUNTS = "chat.serverAccounts.v1";
+export const SECRET_STORAGE_KEYS: readonly string[] = [KEY, SESSIONS_STORAGE_KEY, SERVER_ACCOUNTS];
+
+/**
+ * `refresh`: a store that keeps its values in memory (the browser's sealed store, browserSecrets.ts) reads the entry again
+ * after another tab wrote it; the platform's store (desktop app) has none, its reads are always current.
+ */
+type SecretStore = { get(key: string): string | null; set(key: string, value: string | null): boolean; refresh?(key: string): Promise<void> };
 let secretStore: SecretStore | null = null;
-/** Where the platform keeps secrets encrypted (platform.secretStore); null = localStorage. Set once at start (main.tsx). */
+/** Where the platform keeps secrets encrypted (platform.secretStore) or the browser seals them; null = localStorage. Set once at start (main.tsx). */
 export function setSecretStore(store: SecretStore | null) { secretStore = store; }
+/** Before a read that must see another tab's write (store.ts follows a sign-out or a new sign-in made elsewhere). */
+export async function refreshSecret(key: string): Promise<void> { await secretStore?.refresh?.(key); }
 
 /** The platform's key vault (platform.keyVault); null = the page holds its seeds. Set once at start (main.tsx). */
 export type KeyVault = BridgeKeys;
@@ -189,7 +200,6 @@ export async function enrolFields(device: NewDevice, host: string, handle: strin
 // ---------- Server accounts (`~name`, docs/features/local-accounts.md): one key of its own per server, next to the main identity
 // above (the directory account's key, or this device's). The session token of such a server lives here too, so switching the
 // main identity (another directory account) never touches them.
-const SERVER_ACCOUNTS = "chat.serverAccounts.v1";
 
 export type ServerAccount = Identity & { localHandle: string; token: string | null };
 

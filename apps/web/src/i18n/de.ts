@@ -204,6 +204,7 @@ export const de = {
   "login.manageAccountHint": "(Passwort, Authenticator, Wiederherstellungscodes)",
   "login.deviceKey": "Schlüssel dieses Browsers",
   "login.appHint": "Squorli gibt es auch als Desktop-App:",
+  "login.keysHint": "Im Browser liegen deine Schlüssel verschlüsselt im Browserprofil; die Desktop-App schützt sie mit dem Betriebssystem.",
   "login.openInApp": "In der App öffnen",
   "login.getApp": "App herunterladen",
   "login.handle": "Handle",

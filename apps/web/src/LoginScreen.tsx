@@ -189,7 +189,7 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
           </div>
         </>}
       </div>
-      {appLink && <p className="login-app muted small">{t("login.appHint")} <a href={appLink}>{t("login.openInApp")}</a> · <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">{t("login.getApp")}</a></p>}
+      {appLink && <p className="login-app muted small">{t("login.appHint")} <a href={appLink}>{t("login.openInApp")}</a> · <a href={DOWNLOAD_URL} target="_blank" rel="noreferrer">{t("login.getApp")}</a><br />{t("login.keysHint")}</p>}
       <footer className="login-foot">
         <img src="/brand/squorli-icon-small.svg" alt="" width="18" height="18" />
         <span>{t("login.poweredBy")}{home.serverVersion ? ` · ${t("login.version", { v: home.serverVersion })}` : ""}</span>

@@ -203,6 +203,7 @@ export const en: Messages = {
   "login.manageAccountHint": "(password, authenticator, recovery codes)",
   "login.deviceKey": "This browser's key",
   "login.appHint": "Squorli is also available as a desktop app:",
+  "login.keysHint": "In a browser your keys live encrypted in the browser profile; the desktop app protects them with the operating system.",
   "login.openInApp": "Open in the app",
   "login.getApp": "Download the app",
   "login.handle": "Handle",
