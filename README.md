@@ -149,8 +149,8 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 | `DIRECTORY_URL` | `https://directory.squorli.com` or your own directory; empty = no directory |
 | `DIRECTORY_PROOF_URL` | Only if the directory cannot reach `https://PUBLIC_DOMAIN/api/health` directly |
 | `LOCAL_ACCOUNTS` | Server accounts (`~name`): `true`/`false` fixes whether they may be registered, empty = admin panel decides (default off). Always on without a directory. (`REQUIRE_ACCOUNT` is gone: an account is always required.) |
-| `TRUSTED_PROXIES` | External mode: IPs/CIDRs whose `X-Forwarded-*` headers are trusted (default: private ranges) |
-| `PROXY_BIND_IP` | External mode with the proxy on another host: address on which 3000 and 7880 listen |
+| `TRUSTED_PROXIES` | External mode: IPs/CIDRs whose `X-Forwarded-*` headers are trusted; `auto` (the default of the templates) = the stack's own Docker network and loopback, a proxy on another host is added to it (`auto,10.0.0.9`) |
+| `PROXY_BIND_IP` | External mode with the proxy on another host: this host's LAN/VPN address on which 3000 and 7880 listen (plain HTTP; the overlay refuses to start without it, the Portainer stack defaults to `127.0.0.1`) |
 | `LIVEKIT_TCP_PORT` / `LIVEKIT_UDP_PORT` | Media ports on the host (default 7881 / 7882), when another service already uses them; LiveKit announces them to the clients, so forward the same numbers |
 | `APP_PORT` / `LIVEKIT_HTTP_PORT` | External mode with a port overlay: host ports the proxy forwards to (default 3000 / 7880) |
 | `LISTEN_HOST` | Without Docker only (the Windows package sets it): the address the app server listens on, `127.0.0.1` for a proxy on the same machine. Leave it unset with Docker Compose |
@@ -182,7 +182,7 @@ TURN for clients in networks that block UDP and direct TCP is prepared but off b
 `deploy/portainer.yml` is a self-contained stack for Portainer (web editor or git repository, path `deploy/portainer.yml`): external mode with a reverse proxy on another host, no `env_file`, no build, no bind mounts. The LiveKit config is inlined via `LIVEKIT_CONFIG` (keep it in step with `deploy/livekit/livekit.yaml`).
 
 1. Stacks > Add stack > paste `deploy/portainer.yml`.
-2. Enter the environment variables: `PUBLIC_DOMAIN`, `POSTGRES_PASSWORD`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (required); `APP_IMAGE` optional (default `ghcr.io/danielklessa/squorli-server:stable`; pin a tag or digest for production); optionally `LIVEKIT_NODE_IP`, `DIRECTORY_URL`, `TRUSTED_PROXIES`, `PROXY_BIND_IP` (default `0.0.0.0`, then restrict via firewall), `LOCAL_ACCOUNTS`, `SERVER_NAME`, `OWNER_PUBLIC_KEY`, `MAX_UPLOAD_MB`, `LIVEKIT_PUBLIC_URL`, `DIRECTORY_PROOF_URL`, `APP_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`. Meaning as in [Configuration](#configuration).
+2. Enter the environment variables: `PUBLIC_DOMAIN`, `POSTGRES_PASSWORD`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (required); `APP_IMAGE` optional (default `ghcr.io/danielklessa/squorli-server:stable`; pin a tag or digest for production); optionally `LIVEKIT_NODE_IP`, `DIRECTORY_URL`, `TRUSTED_PROXIES` (default `auto`), `PROXY_BIND_IP` (default `127.0.0.1`: a proxy on this host; a proxy on another host needs this host's LAN/VPN address here, and the firewall should still allow 3000 and 7880 for the proxy alone), `LOCAL_ACCOUNTS`, `SERVER_NAME`, `OWNER_PUBLIC_KEY`, `MAX_UPLOAD_MB`, `LIVEKIT_PUBLIC_URL`, `DIRECTORY_PROOF_URL`, `APP_PORT`, `LIVEKIT_HTTP_PORT`, `LIVEKIT_TCP_PORT`, `LIVEKIT_UDP_PORT`. Meaning as in [Configuration](#configuration).
 3. Set up the proxy and firewall as in [Reverse proxy](#reverse-proxy).
 4. Check `https://PUBLIC_DOMAIN/api/health` and `https://PUBLIC_DOMAIN/rtc/validate` (401).
 
@@ -221,6 +221,7 @@ Since 4 October 2026 (security audit S9) every release is signed, and the instal
 
   Every image the CI pushes also carries GitHub's build provenance attestation (which workflow built it from which commit): `gh attestation verify oci://ghcr.io/danielklessa/squorli-server:stable --owner danielklessa`.
 - **The package for Windows:** its `.sha256` file is signed with the release key (Ed25519), whose public half ships in the package as `squorli-server-releases.pub`. `squorli update` on Windows fetches zip, `.sha256` and `.sha256.sig`, checks the signature with the installed key first and the hash second. The first installation trusts the downloaded package; from then on every update is checked. By hand, with openssl: `openssl pkeyutl -verify -pubin -inkey squorli-server-releases.pub -rawin -in <zip>.sha256 -sigfile <zip>.sha256.sig`.
+- **The deploy files** (`compose.yml`, the Caddyfile, LiveKit's configuration, the proxy overlays, `.env.example`) travel inside the image under `/app/deploy` since 5 October 2026, and the install script takes them from there after the signature check, so they carry the release's signature and match the version that runs (an installation by hand may do the same: `docker create` the image, `docker cp <id>:/app/deploy/. deploy/`, `docker rm`).
 - Portainer stacks and Compose by hand pull without a check: verify by hand as above, or pin a digest.
 
 ## Building from source
@@ -265,7 +266,7 @@ curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/live
 curl -fL https://raw.githubusercontent.com/danielklessa/squorli/main/deploy/proxies/nginx.ports.yml -o deploy/proxies/nginx.ports.yml
 ```
 
-Run the download step only once in a fresh directory; repeating it overwrites configuration. Edit .env, replace the hostname and secrets, set PROXY_MODE=bundled and APP_IMAGE=ghcr.io/danielklessa/squorli-server:latest. Generate separate secrets with `openssl rand -hex 32`. Reserve the first login with OWNER_PUBLIC_KEY (a Squorli account's key) or sign in first yourself (without a directory: create the first server account) right after the start. The nginx overlay is only needed for an external proxy.
+Run the download step only once in a fresh directory; repeating it overwrites configuration. The same files are inside the signed image under `/app/deploy` (see [Signed releases](#signed-releases)), which is where the install script takes them from. Edit .env, replace the hostname and secrets, set PROXY_MODE=bundled and APP_IMAGE=ghcr.io/danielklessa/squorli-server:latest. Generate separate secrets with `openssl rand -hex 32`. Reserve the first login with OWNER_PUBLIC_KEY (a Squorli account's key) or sign in first yourself (without a directory: create the first server account) right after the start. The nginx overlay is only needed for an external proxy.
 
 ```bash
 cd deploy

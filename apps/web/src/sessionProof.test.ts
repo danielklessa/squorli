@@ -1,4 +1,4 @@
-import { SESSION_PROOF_HEADER, deviceProofMessage, sessionProofMessage } from "@squorli/protocol";
+import { SESSION_PROOF_HEADER, deviceProofMessage, sessionBodyHash, sessionProofMessage } from "@squorli/protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerApi } from "./api";
 
@@ -50,6 +50,34 @@ describe("the session proof on the client's requests", () => {
     const hello = await api.helloProof();
     expect(hello?.domain).toBe("chat.example");
     expect(signed.at(-1)).toBe(deviceProofMessage(account, sessionProofMessage("chat.example", hello!.at, "WS", "/api/ws")));
+  });
+
+  it("signs the JSON body as sent in version 2, only towards a server that takes it (security audit of 5 October 2026, L-6)", async () => {
+    const calls = withFetch(() => ok({ ok: true }));
+    const api = new ServerApi("https://chat.example");
+    api.setToken("tok");
+    api.setProver(() => ({ signer, accountPublicKey: account }));
+    api.proofV2 = true;
+    await api.markRead("0ab2f0c4-5f3a-4b1e-9c2d-1234567890ab", 7);
+    const sent = String(calls[0]!.init.body);
+    expect(sent).toBe(JSON.stringify({ seq: 7 }));
+    const header = String((calls[0]!.init.headers as Record<string, string>)[SESSION_PROOF_HEADER]);
+    const m = /^v2:chat\.example:(\d+):([0-9a-f]{128})$/.exec(header);
+    expect(m).not.toBeNull();
+    const path = new URL(calls[0]!.url).pathname;
+    expect(signed.at(-1)).toBe(deviceProofMessage(account, sessionProofMessage("chat.example", Number(m![1]), String(calls[0]!.init.method), path, await sessionBodyHash(sent))));
+    // No body: the hash is empty; the hello the same.
+    await api.getMe().catch(() => {});
+    const h2 = /^v2:chat\.example:(\d+):/.exec(String((calls[1]!.init.headers as Record<string, string>)[SESSION_PROOF_HEADER]));
+    expect(signed.at(-1)).toBe(deviceProofMessage(account, sessionProofMessage("chat.example", Number(h2![1]), "GET", "/api/me", "")));
+    const hello = await api.helloProof();
+    expect(hello?.v2).toBe(true);
+    expect(signed.at(-1)).toBe(deviceProofMessage(account, sessionProofMessage("chat.example", hello!.at, "WS", "/api/ws", "")));
+    // Towards a server from before: version 1, no prefix, no v2 on the hello.
+    api.proofV2 = false;
+    await api.getMe().catch(() => {});
+    expect(String((calls[2]!.init.headers as Record<string, string>)[SESSION_PROOF_HEADER])).toMatch(/^chat\.example:\d+:[0-9a-f]{128}$/);
+    expect((await api.helloProof())?.v2).toBeUndefined();
   });
 
   it("learns the server's clock from a stale answer and tries once more, but only once", async () => {

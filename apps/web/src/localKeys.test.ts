@@ -64,3 +64,28 @@ describe("a server account's keys", () => {
     expect(a).not.toBe(b);
   });
 });
+
+describe("the KDF a server takes (security audit of 5 October 2026, L-1)", () => {
+  it("is PBKDF2 until /api/health says backupArgon2, and a PBKDF2 backup is only stored anew where Argon2id is taken", async () => {
+    const api = new ServerApi(BASE);
+    expect(api.backupKdf).toBe("pbkdf2-sha256");
+    const calls = stubServer(bound);
+    const id = { publicKey: "00".repeat(32), privateKey: "11".repeat(32), device: null };
+    // A server from before: nothing is sent, not even the parameters request.
+    expect(await api.localRewrapBackup(id, "alice", "hunter2hunter2")).toBe(false);
+    expect(calls).toEqual([]);
+    // A server that takes Argon2id and holds a PBKDF2 backup: the parameters are read, the new backup is sent with Argon2id parameters.
+    api.backupKdf = "argon2id";
+    api.setToken("tok");
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: typeof init?.body === "string" ? init.body : null });
+      return String(url).endsWith("/params") ? json(bound) : json({ ok: true });
+    }));
+    expect(await api.localRewrapBackup(id, "alice", "hunter2hunter2")).toBe(true);
+    expect(calls.map((c) => c.url)).toEqual([`${BASE}/api/local/backup/alice/params`, `${BASE}/api/local/backup`]);
+    const sent = JSON.parse(calls[1]!.body!) as { backup: { params: { kdf: string; memoryKib?: number; bound?: true } } };
+    expect(sent.backup.params.kdf).toBe("argon2id");
+    expect(sent.backup.params.memoryKib).toBe(65536);
+    expect(sent.backup.params.bound).toBe(true);
+  }, 30_000);
+});

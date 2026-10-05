@@ -445,8 +445,9 @@ export class Store {
     conn.state = { ...conn.state, connection: "logging-in", error: null, removed: null };
     this.publish(conn);
     let id: Identity;
+    let legacyBackup = false;
     const device = await newDevice();
-    try { id = await conn.api.localRestore(handle, password, { device, domain: await this.signDomainOf(conn), replaceDevice }); }
+    try { ({ legacyBackup, ...id } = await conn.api.localRestore(handle, password, { device, domain: await this.signDomainOf(conn), replaceDevice })); }
     catch (err) {
       await dropDevice(device.stored);
       if (err instanceof api.ApiError && err.code === "too_many_devices") {
@@ -461,6 +462,8 @@ export class Store {
     this.rememberServerAccount(host, id, handle.trim().toLowerCase(), null);
     try { await conn.login(await this.signDomainOf(conn), invite); }
     catch (err) { await dropDevice(id.device); this.dropServerAccount(host); throw err; }
+    // A backup from before Argon2id is stored anew under the password just proved (security audit of 5 October 2026, L-1); best effort.
+    if (legacyBackup) void conn.api.localRewrapBackup(id, handle.trim().toLowerCase(), password).catch((err) => console.warn("backup not stored anew", err));
   }
   /**
    * A member from before server accounts (`me.registrationRequired`) registers a server account on a fresh key for this server
@@ -917,12 +920,14 @@ export class Store {
     if (!url || this.homeHost !== null) return;
     this.set({ clientLogin: { busy: true, error: null } });
     let id: Identity;
-    try { id = await this.restoreWithDevice(url, handle, password, code, choice); }
+    let legacyBackup = false;
+    try { ({ legacyBackup, ...id } = await this.restoreWithDevice(url, handle, password, code, choice)); }
     catch (err) {
       // The limit of devices is no error but the next step (the login asks which device makes way).
       this.set({ clientLogin: { busy: false, error: err instanceof api.ApiError && err.code === "too_many_devices" ? null : api.explainDirectoryError(err) } });
       throw restoreError(err);
     }
+    this.rewrapDirectoryBackup(legacyBackup, url, id, handle, password);
     // Another key than this device had: its sessions and added servers belonged to that key. Servers with a server account
     // sign in with a key of their own and stay (the user's wish: directory account and server accounts side by side).
     if (id.publicKey !== this.state.identity?.publicKey) {
@@ -1591,7 +1596,8 @@ export class Store {
     home.state = { ...home.state, connection: "logging-in", error: null, removed: null };
     this.set({ servers: { ...this.state.servers, [home.state.host]: home.state } });
     let id: Identity;
-    try { id = await this.restoreWithDevice(url, handle, password, code, choice); }
+    let legacyBackup = false;
+    try { ({ legacyBackup, ...id } = await this.restoreWithDevice(url, handle, password, code, choice)); }
     catch (err) {
       const errCode = err instanceof api.ApiError ? err.code : null;
       // totp_required is not an error but the next step: keep the message neutral. The limit of devices the same way.
@@ -1600,6 +1606,7 @@ export class Store {
       this.set({ servers: { ...this.state.servers, [home.state.host]: home.state } });
       throw restoreError(err);
     }
+    this.rewrapDirectoryBackup(legacyBackup, url, id, handle, password);
     this.closeAllForeign(true);
     home.close();
     home.api.setToken(null);
@@ -1685,7 +1692,16 @@ export class Store {
    * (docs/features/devices.md). A fetch that fails takes its device with it, but for the one that met the limit of devices:
    * the directory's ticket is bound to that device's key, so the second try (with `choice`) enrols the same device.
    */
-  private async restoreWithDevice(url: string, handle: string, password: string, code?: string, choice?: api.DeviceChoice): Promise<Identity> {
+  /**
+   * A directory backup from before Argon2id is stored anew under the password just proved (security audit of 5 October
+   * 2026, L-1): best effort in the background; with an active authenticator the directory wants a code the sign-in used
+   * up (`totp_required`), then the next password change makes the new backup. Nothing of it reaches the user.
+   */
+  private rewrapDirectoryBackup(legacy: boolean, url: string, id: Identity, handle: string, password: string): void {
+    if (!legacy) return;
+    void api.directoryRewrapBackup(url, id, handle, password).catch((err) => { if (!(err instanceof api.ApiError && err.code === "totp_required")) console.warn("backup not stored anew", err); });
+  }
+  private async restoreWithDevice(url: string, handle: string, password: string, code?: string, choice?: api.DeviceChoice): Promise<api.RestoredIdentity> {
     const kept = this.limitDevice;
     this.limitDevice = null;
     const again = kept && choice?.ticket === kept.ticket ? kept.device : null;

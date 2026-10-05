@@ -1,6 +1,6 @@
 import { bigint, bigserial, boolean, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import type { LinkPreview, ReportSnapshot } from "@squorli/protocol";
+import type { BackupParams, LinkPreview, ReportSnapshot } from "@squorli/protocol";
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
@@ -43,7 +43,8 @@ export const users = pgTable("users", {
 export const localAccounts = pgTable("local_accounts", {
   userId: uuid("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   handle: text("handle").notNull().unique(),
-  backupParams: jsonb("backup_params").$type<{ kdf: "pbkdf2-sha256"; iterations: number; salt: string; iv: string }>().notNull(),
+  /** The KDF's parameters as the client chose them (protocol `BackupParams`: PBKDF2 until 5 October 2026, Argon2id since), only passed through here. */
+  backupParams: jsonb("backup_params").$type<BackupParams>().notNull(),
   ciphertext: text("ciphertext").notNull(),
   authHash: text("auth_hash").notNull(),
   avatarMime: text("avatar_mime"),

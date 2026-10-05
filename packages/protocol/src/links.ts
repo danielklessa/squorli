@@ -10,21 +10,30 @@ export const MAX_PREVIEW_LINKS = 3;
 const MAX_URL_LENGTH = 2100;
 const wordRe = /[\p{L}\p{N}]/u;
 const autolinkRe = /^<(?:https?:\/\/|mailto:)[^\s<>]+>/i;
-const count = (s: string, ch: string) => s.split(ch).length - 1;
+const TRAILING_PUNCTUATION = /[.,;:!?*_~'"\]]/;
 
-/** Bare http(s) address at `at`; trailing punctuation and emphasis marks belong to the sentence, not to the address. */
+/**
+ * Bare http(s) address at `at`; trailing punctuation and emphasis marks belong to the sentence, not to the address. A
+ * closing parenthesis stays only while the address has at least as many opening ones: the balance is counted once and
+ * kept up while the end is trimmed (until 5 October 2026 every trimmed character counted the whole address again, so an
+ * address of 2100 closing parentheses took the square of its length; security audit of that day, L-9).
+ */
 export function readBareUrl(text: string, at: number): string | null {
   const m = /^https?:\/\/[^\s<]+/i.exec(text.slice(at, at + MAX_URL_LENGTH));
   if (!m) return null;
   let url = m[0];
   const cut = url.indexOf("](");
   if (cut >= 0) url = url.slice(0, cut);
-  for (;;) {
-    const last = url[url.length - 1]!;
-    if (/[.,;:!?*_~'"\]]/.test(last)) { url = url.slice(0, -1); continue; }
-    if (last === ")" && count(url, ")") > count(url, "(")) { url = url.slice(0, -1); continue; }
+  let open = 0, close = 0;
+  for (const c of url) { if (c === "(") open++; else if (c === ")") close++; }
+  let end = url.length;
+  while (end > 0) {
+    const last = url[end - 1]!;
+    if (TRAILING_PUNCTUATION.test(last)) { end--; continue; }
+    if (last === ")" && close > open) { end--; close--; continue; }
     break;
   }
+  url = url.slice(0, end);
   return /^https?:\/\/[^/?#]/i.test(url) ? url : null;
 }
 

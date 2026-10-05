@@ -94,10 +94,10 @@ describe("parseControlAction", () => {
 });
 
 describe("control links with the key", () => {
-  it("carry the key only where the action could open the microphone", () => {
+  it("carry the key for every action (since 5 October 2026 also mic-off and deafen-on), and none without one", () => {
     expect(controlLink("mic-on", "abc_DEF-1")).toBe("squorli://control/mic-on?k=abc_DEF-1");
-    expect(controlLink("mic-off", "abc")).toBe("squorli://control/mic-off");
-    expect(controlLink("deafen-on", "abc")).toBe("squorli://control/deafen-on");
+    expect(controlLink("mic-off", "abc")).toBe("squorli://control/mic-off?k=abc");
+    expect(controlLink("deafen-on", "abc")).toBe("squorli://control/deafen-on?k=abc");
     expect(controlLink("deafen-toggle", null)).toBe("squorli://control/deafen-toggle");
   });
   it("are read back with their key", () => {

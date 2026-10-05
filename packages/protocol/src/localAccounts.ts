@@ -6,7 +6,7 @@
  * then sign the usual challenge. Every server account has a key of its own: it never replaces the client's directory key.
  */
 import { z } from "zod";
-import { AvatarMime, AVATAR_MAX_BYTES, BackupAuthKey, BackupParams, DeviceInfo, DeviceProofFields, Handle } from "./directory";
+import { AvatarMime, AVATAR_MAX_BYTES, BackupAuthKey, BackupParams, BackupParamsResponse, DeviceInfo, DeviceProofFields, Handle } from "./directory";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
 
 /** Prefix of a server account's handle; directory handles keep `@`. */
@@ -94,8 +94,8 @@ export type LocalClaimRequest = z.infer<typeof LocalClaimRequest>;
 
 /** GET /api/local/handles/:handle */
 export const LocalHandleResponse = z.object({ available: z.boolean() });
-/** GET /api/local/backup/:handle/params: salt and iterations, so the client can derive the auth key. */
-export const LocalBackupParamsResponse = BackupParams.omit({ iv: true });
+/** GET /api/local/backup/:handle/params: the KDF's parameters without the iv, so the client can derive the auth key. */
+export const LocalBackupParamsResponse = BackupParamsResponse;
 /**
  * POST /api/local/backup/fetch. `deviceKey` enrols the asking device (`deviceSignature` over `deviceEnrolMessage` with the
  * server's domain). At DEVICE_MAX devices the answer is 409 `too_many_devices` with the list (`TooManyDevicesResponse`,

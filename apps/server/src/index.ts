@@ -61,6 +61,7 @@ import { registerWs, WS_MAX_PAYLOAD } from "./ws/handler";
 import { registerRateLimits } from "./rateLimits";
 import { PAGE_HEADERS } from "./webHeaders";
 import { registerHardening } from "./httpHardening";
+import { registerBodyHash } from "./auth/bodyHash";
 import { logOptions } from "./logRedact";
 import { loadLinkSecret } from "./attachmentLinks";
 import { installShutdown } from "./shutdown";
@@ -119,6 +120,8 @@ async function main() {
   await app.register(cors, { origin: true });
   // HSTS over https, nosniff, and a server error that says nothing of itself (httpHardening.ts).
   registerHardening(app, config.PUBLIC_DOMAIN);
+  // Every JSON body's hash for the bound sessions' proofs of version 2 (auth/bodyHash.ts, security audit L-6).
+  registerBodyHash(app);
   // While the server closes, the members' connections end one after the other. What reacts to that in the background
   // (member list, AFK move, radio) would ask a database that is closing and log a warning per member. Registered before
   // the WebSocket plugin, whose own hook is the one that ends the connections.
@@ -179,6 +182,10 @@ async function main() {
     localClaimRekey: true,
     /** This server knows devices (docs/features/devices.md): a sign-in may name its device, server accounts have the routes under /api/me/devices. */
     devices: true,
+    /** A bound session's proof may sign the body too (version 2, protocol index.ts "Sessions bound to the device"); a client sends it only where this is true. */
+    sessionProofV2: true,
+    /** A server account's backup may use Argon2id parameters (protocol backup.ts, 5 October 2026); a client makes PBKDF2 backups for a server from before, which would refuse them. */
+    backupArgon2: true,
     protocolVersion: PROTOCOL_VERSION,
     time: new Date().toISOString(),
   }));

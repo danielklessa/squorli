@@ -1025,7 +1025,7 @@ export const de = {
   "hotkeys.pttLocal": "Auf diesem System gilt die Push-to-Talk-Taste {key} nur, solange ein Squorli-Fenster den Fokus hat. Auf dem ganzen System geht sie unter Windows.",
   "hotkeys.pttInvalid": "Die Taste {key} kann die App außerhalb ihres Fensters nicht erkennen. Eine andere Taste unter Sprache und Audio wählen.",
   "hotkeys.externalHead": "Steuerung von außen (Stream Deck, G Hub, Makros)",
-  "hotkeys.externalKey": "Die Links, die das Mikrofon einschalten können, enthalten einen Schlüssel dieser Installation, damit keine Webseite sie auslösen kann. Gib sie nicht weiter; sind die Daten der App einmal gelöscht, kopiere sie neu.",
+  "hotkeys.externalKey": "Jeder Link enthält einen Schlüssel dieser Installation, damit keine Webseite ihn auslösen kann. Gib die Links nicht weiter; sind die Daten der App einmal gelöscht, kopiere sie neu. Links ohne Schlüssel aus einer älteren Version funktionieren nicht mehr.",
   "hotkeys.externalText": "Zwei Wege. Das Gerät sendet eines der Tastenkürzel oben: im Stream Deck die Aktion „Hotkey“, in G Hub eine Tastenzuweisung. Oder es öffnet einen dieser Links (im Stream Deck „System > Website“): Die laufende App führt den Befehl aus, ohne ihr Fenster nach vorn zu holen. Läuft sie nicht, startet sie nur.",
   "hotkeys.externalCommand": "Dasselbe als Befehlszeile, etwa für „Programm starten“ in G Hub; statt mic-toggle jede Aktion von oben:",
   "hotkeys.copy": "Kopieren",

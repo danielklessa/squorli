@@ -1,10 +1,12 @@
 import { app, ipcMain, type BrowserWindow, type IpcMainEvent } from "electron";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
+import { EventEmitter } from "node:events";
 import { IPC, type UpdateState } from "@squorli/web/platform/bridge";
 import { loadConfig, saveConfig } from "./config";
 import type { Splash } from "./splash";
 import { mayInstallAtStart } from "./splashPage";
 import { updateMode } from "./updateMode";
+import { fetchSignature, signatureUrlOf, verifyDetachedSignature } from "./updateSignature";
 
 /**
  * App updates (docs/features/desktop.md, P4). The app asks only `https://squorli.com/updates/stable/` (the address is baked in
@@ -41,16 +43,39 @@ export function handleUpdates(getWindow: () => BrowserWindow | null, isClientFra
   if (mode === "none") return { state: () => state, checkAtStart: (splash) => fake ? fakeUpdate(splash) : Promise.resolve("continue"), checkSoon: () => {} };
 
   const tell = (next: UpdateState) => { state = next; const win = getWindow(); if (win && !win.isDestroyed()) win.webContents.send(IPC.updateState, state); };
+  // Linux (the AppImage): nothing is installed before the download's detached GPG signature was checked against the baked-in
+  // release key (updateSignature.ts, security audit of 5 October 2026, L-3); so the install at quit is switched on only once a
+  // download passed. On Windows electron-updater checks the installer's code signature itself (verifyUpdateCodeSignature).
+  const checksSignature = process.platform === "linux";
   autoUpdater.autoDownload = mode === "self";
-  autoUpdater.autoInstallOnAppQuit = mode === "self";
+  autoUpdater.autoInstallOnAppQuit = mode === "self" && !checksSignature;
   autoUpdater.allowDowngrade = false;
   autoUpdater.logger = null;
+  /** `verdict` (info, ok): a download was checked; only a good one is "ready" and may be installed. */
+  const verdicts = new EventEmitter();
+  async function signatureOk(info: UpdateDownloadedEvent): Promise<boolean> {
+    if (!checksSignature) return true;
+    const file = info.files[0]?.url ?? "";
+    const base = autoUpdater.getFeedURL() ?? "";
+    let url: string;
+    try { url = new URL(file, base || undefined).href; } catch { tell({ status: "error", message: `update ${info.version} refused: no address for its signature` }); return false; }
+    const signature = await fetchSignature(signatureUrlOf(url));
+    const check = signature ? await verifyDetachedSignature(info.downloadedFile, signature) : { ok: false as const, reason: "the signature could not be fetched" };
+    if (check.ok) return true;
+    tell({ status: "error", message: `update ${info.version} refused: ${check.reason}` });
+    return false;
+  }
 
   autoUpdater.on("checking-for-update", () => tell({ status: "checking" }));
   autoUpdater.on("update-not-available", () => tell({ status: "idle", checkedAt: Date.now() }));
   autoUpdater.on("update-available", (info) => tell(mode === "manual" ? { status: "available", version: info.version, manual: true } : { status: "downloading", version: info.version, percent: 0 }));
   autoUpdater.on("download-progress", (progress) => { if (state.status === "downloading") tell({ ...state, percent: Math.round(progress.percent) }); });
-  autoUpdater.on("update-downloaded", (info) => tell({ status: "ready", version: info.version }));
+  autoUpdater.on("update-downloaded", (info) => {
+    void signatureOk(info).then((ok) => {
+      if (ok) { tell({ status: "ready", version: info.version }); if (checksSignature) autoUpdater.autoInstallOnAppQuit = true; }
+      verdicts.emit("verdict", info, ok);
+    });
+  });
   autoUpdater.on("error", (error) => tell({ status: "error", message: error.message.split("\n")[0]!.slice(0, 300) }));
 
   const check = () => { if (state.status !== "checking" && state.status !== "downloading" && state.status !== "ready") void autoUpdater.checkForUpdates().catch(() => { /* reported through the error event */ }); };
@@ -75,6 +100,7 @@ export function handleUpdates(getWindow: () => BrowserWindow | null, isClientFra
         open = false;
         clearTimeout(timer);
         for (const [event, fn] of listeners) autoUpdater.removeListener(event as "error", fn as () => void);
+        verdicts.removeListener("verdict", onVerdict);
         resolve(result);
       };
       // Guards the check alone; once a download runs, the user has the progress in front of them and "install later".
@@ -91,9 +117,10 @@ export function handleUpdates(getWindow: () => BrowserWindow | null, isClientFra
         splash.onSkip(() => finish("continue")); // the download goes on; the client offers the restart once it is there
       });
       on("download-progress", (progress: { percent: number }) => { if (open && state.status === "downloading") splash.show({ step: "downloading", version: state.version, percent: progress.percent }); });
-      on("update-downloaded", (info: { version: string }) => {
+      // After the download AND its check (the verdict, above): a refused download opens the client, which shows the error.
+      const onVerdict = (info: { version: string }, ok: boolean) => {
         if (!open) return;
-        if (!mayInstall(info.version)) { finish("continue"); return; }
+        if (!ok || !mayInstall(info.version)) { finish("continue"); return; }
         splash.show({ step: "installing", version: info.version });
         saveConfig(userData, { ...loadConfig(userData), updateAttempt: info.version });
         setTimeout(() => {
@@ -101,7 +128,8 @@ export function handleUpdates(getWindow: () => BrowserWindow | null, isClientFra
           // Silent, and start the app again afterwards. If the installer cannot be started, the client opens as ever.
           try { beforeInstall(); autoUpdater.quitAndInstall(true, true); finish("installing"); } catch { finish("continue"); }
         }, INSTALL_NOTICE_MS);
-      });
+      };
+      verdicts.on("verdict", onVerdict);
       void autoUpdater.checkForUpdates().catch(() => finish("continue"));
     });
   }

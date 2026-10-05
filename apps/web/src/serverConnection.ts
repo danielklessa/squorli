@@ -243,6 +243,10 @@ export class ServerConnection {
   async refreshHealth(): Promise<Health | null> {
     if (await this.checkRefused()) return null;
     const health = await this.api.getHealth().catch(() => null);
+    // The proof of version 2 (body signed) only towards a server that takes it; an older one reads it as missing.
+    if (health) this.api.proofV2 = health.sessionProofV2 === true;
+    // Argon2id backups only for a server that takes them; a server from before refuses the parameters (api.ts `backupKdf`).
+    if (health) this.api.backupKdf = health.backupArgon2 === true ? "argon2id" : "pbkdf2-sha256";
     this.set({
       serverName: health?.serverName ?? null, iconUrl: health?.iconUrl ? this.api.abs(health.iconUrl) : null, serverDomain: health?.domain?.toLowerCase() ?? null,
       directoryUrl: health?.directoryUrl ?? null, requireAccount: !!health?.directoryUrl && health?.requireAccount === true, localAccounts: health?.localAccounts === true, inviteRequired: health?.inviteRequired === true, ownerSetup: health?.ownerSetup === true, privacyPolicyUrl: PrivacyPolicyUrl.safeParse(health?.privacyPolicyUrl).data ?? null, serverVersion: health?.version ?? null,
@@ -451,7 +455,9 @@ export class ServerConnection {
     ws.onopen = () => { void this.api.helloProof().catch(() => null).then((deviceProof) => { if (this.ws === ws) this.send({ type: "hello", protocolVersion: PROTOCOL_VERSION, sessionToken: token, ...(deviceProof ? { deviceProof } : {}) }); }); };
     ws.onmessage = (m) => {
       this.lastHeard = Date.now();
-      this.pushLog({ dir: "in", at: Date.now(), text: String(m.data).slice(0, 2000) });
+      // Masked like the outgoing frames (security audit of 5 October 2026, L-7): the panel is shared in screenshots, and a
+      // secret in a future event must not land there. Masked before the cut, so a value is never half shown.
+      this.pushLog({ dir: "in", at: Date.now(), text: redactForLog(String(m.data)).slice(0, 2000) });
       const parsed = ServerEvent.safeParse(JSON.parse(m.data));
       if (parsed.success) this.handle(parsed.data);
     };

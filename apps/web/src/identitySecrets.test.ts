@@ -124,7 +124,7 @@ describe("the account key in the platform's vault", () => {
       sign: async (pk, m) => (seeds.has(pk) && m.startsWith("community-chat-login\n") ? bytesToHex(await ed.signAsync(new TextEncoder().encode(m), hex(seeds.get(pk)!))) : null),
       dmKey: async (pk, peer) => (seeds.has(pk) ? bytesToHex(await deriveDmKeyBits(seeds.get(pk)!, pk, peer)) : null),
       settingsKey: async (pk) => (seeds.has(pk) ? bytesToHex(await deriveSettingsKeyBits(seeds.get(pk)!, pk)) : null),
-      backup: async (pk, password, context) => (seeds.has(pk) ? createBackup(password, seeds.get(pk)!, 1000, context) : null),
+      backup: async (pk, password, context) => (seeds.has(pk) ? createBackup(password, seeds.get(pk)!, { memoryKib: 8192, iterations: 1 }, context) : null),
       generate: () => take(bytesToHex(ed.utils.randomPrivateKey())),
       import: take,
       forget: async (pk) => { seeds.delete(pk); forgotten.push(pk); },
@@ -190,7 +190,7 @@ describe("the account key in the platform's vault", () => {
     const blob = await sealSettings(await settingsKeyOf(me), me.publicKey, { settings: AccountSettings.parse({}), blockedUsers: [] });
     // The same key from the seed itself, as a browser derives it.
     const backup = await backupOf(me, "hunter2hunter2");
-    const seed = await openBackup(await deriveBackupKeys("hunter2hunter2", backup.params.salt, backup.params.iterations), backup.params.iv, backup.ciphertext);
+    const seed = await openBackup(await deriveBackupKeys("hunter2hunter2", backup.params), backup.params.iv, backup.ciphertext);
     expect((await openSettings(await deriveSettingsKey(seed, me.publicKey), me.publicKey, blob))?.blockedUsers).toEqual([]);
   });
 

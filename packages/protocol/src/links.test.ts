@@ -34,4 +34,16 @@ describe("previewLinks", () => {
     expect(previewLinks("https:// ftp://example.org mailto:a@example.org")).toEqual([]);
     expect(readBareUrl("https://", 0)).toBeNull();
   });
+
+  it("keeps balanced parentheses, trims unbalanced ones and a flood of them in one pass (security audit of 5 October 2026, L-9)", () => {
+    expect(readBareUrl("https://example.org/a_(b))", 0)).toBe("https://example.org/a_(b)");
+    expect(readBareUrl("https://example.org/(a)).", 0)).toBe("https://example.org/(a)");
+    expect(readBareUrl("https://example.org/a))(", 0)).toBe("https://example.org/a))(");
+    expect(readBareUrl("https://example.org/a).)", 0)).toBe("https://example.org/a");
+    // 2000 closing parentheses: the balance is counted once, not once per trimmed character.
+    const flood = `https://example.org/a${")".repeat(2000)}`;
+    expect(readBareUrl(flood, 0)).toBe("https://example.org/a");
+    expect(readBareUrl(`x ${flood}`, 2)).toBe("https://example.org/a");
+    expect(previewLinks(`siehe ${flood} und ${"(".repeat(10)}https://example.com/b${")".repeat(10)}`)).toEqual(["https://example.org/a", "https://example.com/b"]);
+  });
 });

@@ -81,10 +81,11 @@ describe("the key vault", () => {
     vault.import(SEED);
     const plain = (await vault.backup(PUBLIC, "hunter2hunter2", undefined))!;
     expect(plain.params.bound).toBeUndefined();
-    expect(await openBackup(await deriveBackupKeys("hunter2hunter2", plain.params.salt, plain.params.iterations), plain.params.iv, plain.ciphertext)).toBe(SEED);
+    expect(plain.params.kdf).toBe("argon2id");
+    expect(await openBackup(await deriveBackupKeys("hunter2hunter2", plain.params), plain.params.iv, plain.ciphertext)).toBe(SEED);
     const bound = (await vault.backup(PUBLIC, "hunter2hunter2", "chat.example.org"))!;
     expect(bound.params.bound).toBe(true);
-    expect(await openBackup(await deriveBackupKeys("hunter2hunter2", bound.params.salt, bound.params.iterations, "chat.example.org"), bound.params.iv, bound.ciphertext)).toBe(SEED);
+    expect(await openBackup(await deriveBackupKeys("hunter2hunter2", bound.params, "chat.example.org"), bound.params.iv, bound.ciphertext)).toBe(SEED);
     expect(bound.authKey).not.toBe(plain.authKey);
     expect(await vault.backup(PUBLIC, "short", undefined)).toBeNull();
     expect(await vault.backup(PUBLIC, "hunter2hunter2", "")).toBeNull();
@@ -156,4 +157,18 @@ describe("the seeds of the page's entries move into the vault", () => {
     const entry = JSON.stringify({ publicKey: PUBLIC, privateKey: SEED });
     expect(takeSeeds(vault, "chat.identity.v1", entry)).toBe(entry);
   });
+});
+
+describe("the backup's KDF (security audit of 5 October 2026, L-1)", () => {
+  it("is Argon2id unless the page asks for PBKDF2 for a service from before, and refuses anything else", async () => {
+    const { vault } = memory();
+    vault.import(SEED);
+    expect((await vault.backup(PUBLIC, "hunter2hunter2", undefined))!.params.kdf).toBe("argon2id");
+    expect((await vault.backup(PUBLIC, "hunter2hunter2", undefined, "argon2id"))!.params.kdf).toBe("argon2id");
+    const old = (await vault.backup(PUBLIC, "hunter2hunter2", "chat.example.org", "pbkdf2-sha256"))!;
+    expect(old.params).toMatchObject({ kdf: "pbkdf2-sha256", iterations: 600_000, bound: true });
+    expect(await openBackup(await deriveBackupKeys("hunter2hunter2", old.params, "chat.example.org"), old.params.iv, old.ciphertext)).toBe(SEED);
+    expect(await vault.backup(PUBLIC, "hunter2hunter2", undefined, "scrypt")).toBeNull();
+    expect(await vault.backup(PUBLIC, "hunter2hunter2", undefined, 5)).toBeNull();
+  }, 30_000);
 });

@@ -26,6 +26,7 @@ files, in `node_modules` of the container image.
 | events | 3.3.0 | MIT | https://github.com/Gozala/events |
 | fs-extra (desktop app only) | 10.1.0 | MIT | https://github.com/jprichardson/node-fs-extra |
 | graceful-fs (desktop app only) | 4.2.11 | ISC | https://github.com/isaacs/node-graceful-fs |
+| hash-wasm | 4.12.0 | MIT | https://github.com/Daninet/hash-wasm#readme |
 | jose | 6.2.12 | MIT | https://github.com/panva/jose |
 | js-tokens | 4.0.0 | MIT | https://github.com/lydell/js-tokens |
 | js-yaml (desktop app only) | 4.3.2 | MIT | https://github.com/nodeca/js-yaml |
@@ -1141,6 +1142,51 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## License text 13
 
+Applies to: hash-wasm 4.12.0
+
+```text
+MIT License
+
+Copyright (c) 2020 Dani Biró
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Embedded C implementations might use other, similarly permissive licenses.
+Check the beginning of the files from the /src directory.
+
+Special thank you to the authors of original C algorithms:
+- Alexander Peslyak <solar@openwall.com>
+- Aleksey Kravchenko <rhash.admin@gmail.com>
+- Colin Percival
+- Stephan Brumme <create@stephan-brumme.com>
+- Steve Reid <steve@edmweb.com>
+- Samuel Neves <sneves@dei.uc.pt>
+- Solar Designer <solar@openwall.com>
+- Project Nayuki
+- ARM Limited
+- Yanbo Li dreamfly281@gmail.com, goldboar@163.comYanbo Li
+- Mark Adler
+- Yann Collet
+```
+
+## License text 14
+
 Applies to: jose 6.2.12
 
 ```text
@@ -1167,7 +1213,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 14
+## License text 15
 
 Applies to: js-tokens 4.0.0
 
@@ -1195,7 +1241,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## License text 15
+## License text 16
 
 Applies to: js-yaml 4.3.2
 
@@ -1223,7 +1269,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## License text 16
+## License text 17
 
 Applies to: jsonfile 6.2.1
 
@@ -1245,7 +1291,7 @@ OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHE
  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 17
+## License text 18
 
 Applies to: lodash.escaperegexp 4.1.2
 
@@ -1299,7 +1345,7 @@ licenses; we recommend you read them, as their terms may differ from the
 terms above.
 ```
 
-## License text 18
+## License text 19
 
 Applies to: lodash.isequal 4.5.0
 
@@ -1353,7 +1399,7 @@ licenses; we recommend you read them, as their terms may differ from the
 terms above.
 ```
 
-## License text 19
+## License text 20
 
 Applies to: loglevel 1.9.2
 
@@ -1382,7 +1428,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 20
+## License text 21
 
 Applies to: loose-envify 1.4.0
 
@@ -1410,7 +1456,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## License text 21
+## License text 22
 
 Applies to: lucide-static 0.577.0
 
@@ -1456,7 +1502,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 22
+## License text 23
 
 Applies to: machina 7.0.1
 
@@ -1532,7 +1578,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 23
+## License text 24
 
 Applies to: ms 2.1.3
 
@@ -1560,7 +1606,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 24
+## License text 25
 
 Applies to: react 18.3.1, react-dom 18.3.1, scheduler 0.23.2
 
@@ -1588,7 +1634,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 25
+## License text 26
 
 Applies to: rxjs 7.8.2
 
@@ -1796,7 +1842,7 @@ Apache License
  limitations under the License.
 ```
 
-## License text 26
+## License text 27
 
 Applies to: sax 1.6.1
 
@@ -1858,7 +1904,7 @@ will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim.***
 ```
 
-## License text 27
+## License text 28
 
 Applies to: sdp 3.2.2
 
@@ -1884,7 +1930,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 28
+## License text 29
 
 Applies to: sdp-transform 2.15.0
 
@@ -1913,7 +1959,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 29
+## License text 30
 
 Applies to: semver 7.7.4
 
@@ -1935,7 +1981,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## License text 30
+## License text 31
 
 Applies to: tiny-typed-emitter 2.1.0
 
@@ -1963,7 +2009,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 31
+## License text 32
 
 Applies to: tslib 2.8.1
 
@@ -1982,7 +2028,7 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## License text 32
+## License text 33
 
 Applies to: typed-emitter 2.1.0
 
@@ -2010,7 +2056,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## License text 33
+## License text 34
 
 Applies to: universalify 2.0.1
 
@@ -2037,7 +2083,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 34
+## License text 35
 
 Applies to: webrtc-adapter 9.0.6
 
@@ -2074,7 +2120,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## License text 35
+## License text 36
 
 Applies to: zod 3.25.76
 
@@ -2102,7 +2148,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 36
+## License text 37
 
 Applies to: Noto Color Emoji v47
 

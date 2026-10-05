@@ -1,3 +1,4 @@
+import type { BackupKdfName, BackupParams } from "@squorli/protocol";
 /**
  * Contract between the desktop shell (Electron, `apps/desktop`) and the client. The preload script exposes one
  * `DesktopBridge` as `window.squorliDesktop`; `desktop.ts` turns it into the client's `Platform`.
@@ -240,13 +241,14 @@ export type BridgeKeys = {
   sign(publicKey: string, message: string): Promise<string | null>;
   dmKey(publicKey: string, peerPublicKey: string): Promise<string | null>;
   settingsKey(publicKey: string): Promise<string | null>;
-  backup(publicKey: string, password: string, context?: string): Promise<BridgeBackup | null>;
+  /** `kdf` (5 October 2026): PBKDF2 for a server or directory from before Argon2id; an older app ignores it and makes a PBKDF2 backup either way. */
+  backup(publicKey: string, password: string, context?: string, kdf?: BackupKdfName): Promise<BridgeBackup | null>;
   generate(): Promise<string | null>;
   import(privateKey: string): Promise<string | null>;
   forget(publicKey: string): Promise<void>;
 };
 /** What `BridgeKeys.backup` answers: the protocol's `createBackup` result, as plain data. */
-export type BridgeBackup = { params: { kdf: "pbkdf2-sha256"; iterations: number; salt: string; iv: string; bound?: true | undefined }; ciphertext: string; authKey: string };
+export type BridgeBackup = { params: BackupParams; ciphertext: string; authKey: string };
 
 /** What the shell keeps encrypted for the client (identity.ts): the identity key, and the server accounts' keys and tokens. */
 // `chat.sessions.v2` since 2 October 2026 (security audit, C5): the sessions of the directory account were the one secret

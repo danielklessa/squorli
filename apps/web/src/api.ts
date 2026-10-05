@@ -10,7 +10,7 @@ import {
   localClaimMessage,
   NoticeReadResponse, RefusedServersResponse, directoryRefusedServersUrl, directoryReportPayload, reportKindsOf, suspendedUntilOf, type AccountNotice, type DirectoryReportContent,
   DeviceRevokeResponse, DevicesResponse, type DeviceRevokeTarget, type DirectoryAction,
-  DEVICE_PROOF_REQUIRED, SESSION_PROOF_HEADER, deviceProofMessage, sessionProofHeader, sessionProofMessage, type SessionProof,
+  DEVICE_PROOF_REQUIRED, SESSION_PROOF_HEADER, deviceProofMessage, sessionBodyHash, sessionProofHeader, sessionProofMessage, type BackupKdfName, type SessionProof,
 } from "@squorli/protocol";
 import { z } from "zod";
 import { toBase64, type AvatarImage } from "./avatarImage";
@@ -67,13 +67,30 @@ export class ServerApi {
   /** The device that proves the session on every request and hello (a bound session, docs/features/devices.md); the server ignores the proof on one that is not bound. */
   setProver(p: (() => SessionProver | null) | null) { this.prover = p; }
   get clockOffsetMs(): number { return this.clockOffset; }
-  /** The device's proof over one request (null without a device): `deviceProofMessage(account, sessionProofMessage(host, at, method, path))`, the path without its query. */
-  async sessionProof(method: string, path: string): Promise<SessionProof | null> {
+  /**
+   * The server takes version 2 of the proof, which signs the body too (`sessionProofV2` in /api/health, set by
+   * serverConnection.ts); until that is known, and towards an older server, the proof is version 1, which every server
+   * since the bound sessions takes.
+   */
+  proofV2 = false;
+  /**
+   * The KDF of a server account's backup this server takes (`backupArgon2` in /api/health, set by serverConnection.ts):
+   * Argon2id since server 0.10.4; a server from before refuses the new parameters, so it gets PBKDF2 backups as ever.
+   */
+  backupKdf: BackupKdfName = "pbkdf2-sha256";
+  /**
+   * The device's proof over one request (null without a device): `deviceProofMessage(account, sessionProofMessage(host, at,
+   * method, path[, bodyHash]))`, the path without its query; `body` = the JSON text as sent, hashed in version 2 (a
+   * request without one, a multipart body and the hello hash to "").
+   */
+  async sessionProof(method: string, path: string, body?: string): Promise<SessionProof | null> {
     const p = this.prover?.() ?? null;
     if (!p) return null;
     const domain = this.bindHost, at = Date.now() + this.clockOffset;
-    const signature = await p.signer.sign(deviceProofMessage(p.accountPublicKey, sessionProofMessage(domain, at, method, path.split("?")[0] ?? path)));
-    return { domain, at, signature };
+    const bare = path.split("?")[0] ?? path;
+    const message = this.proofV2 ? sessionProofMessage(domain, at, method, bare, await sessionBodyHash(body)) : sessionProofMessage(domain, at, method, bare);
+    const signature = await p.signer.sign(deviceProofMessage(p.accountPublicKey, message));
+    return { domain, at, signature, ...(this.proofV2 ? { v2: true as const } : {}) };
   }
   /** The hello's proof (serverConnection.ts). */
   helloProof(): Promise<SessionProof | null> { return this.sessionProof("WS", "/api/ws"); }
@@ -94,9 +111,9 @@ export class ServerApi {
     const withAuth = opts.auth !== false && !!this.token;
     if (withAuth) {
       headers.authorization = `Bearer ${this.token}`;
-      // A bound session's proof (docs/features/devices.md): the device signs this very request; a server from before, or a session that is not bound, ignores the header.
-      const proof = await this.sessionProof(method, path);
-      if (proof) headers[SESSION_PROOF_HEADER] = sessionProofHeader(proof.domain, proof.at, proof.signature);
+      // A bound session's proof (docs/features/devices.md): the device signs this very request, in version 2 its JSON body too; a server from before, or a session that is not bound, ignores the header.
+      const proof = await this.sessionProof(method, path, typeof init.body === "string" ? init.body : undefined);
+      if (proof) headers[SESSION_PROOF_HEADER] = sessionProofHeader(proof.domain, proof.at, proof.signature, proof.v2 === true);
     }
     const res = await fetch(`${this.base}${path}`, init);
     if (!res.ok) {
@@ -133,7 +150,7 @@ export class ServerApi {
   /** Register a server account for `id` (a fresh key) and sign in with it; the signature binds handle and ciphertext to `domain`. */
   async localRegister(id: Identity, domain: string, rawHandle: string, password: string, invite?: string, ownerCode?: string): Promise<VerifyResponse> {
     const handle = LocalHandle.parse(rawHandle);
-    const backup = await backupOf(id, password, this.bindHost);
+    const backup = await backupOf(id, password, this.bindHost, this.backupKdf);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: id.publicKey }, { auth: false }));
     const signed = await signBoth(id, localRegisterMessage(domain, challenge.nonce, handle, backup.ciphertext));
     return VerifyResponse.parse(await this.request("POST", "/api/local/register",
@@ -149,7 +166,19 @@ export class ServerApi {
   private async localKeys(handle: string, password: string) {
     const p = LocalBackupParamsResponse.parse(await this.request("GET", `/api/local/backup/${encodeURIComponent(handle)}/params`, undefined, { auth: false }));
     if (!p.bound) throw new Error(t("err.backupNotBound"));
-    return deriveBackupKeys(password, p.salt, p.iterations, this.bindHost);
+    return { ...(await deriveBackupKeys(password, p, this.bindHost)), kdf: p.kdf };
+  }
+  /**
+   * A backup from before Argon2id (security audit of 5 October 2026, L-1) is stored anew with it: the password, which
+   * the sign-in just proved, encrypts the same key again (`PUT /api/local/backup`, with the old auth key as the proof).
+   * Answers whether it did; a backup that is Argon2id already needs nothing. Best effort after a sign-in (store.ts).
+   */
+  async localRewrapBackup(id: Identity, handle: string, password: string): Promise<boolean> {
+    if (this.backupKdf !== "argon2id") return false; // a server from before Argon2id: nothing to gain, it would refuse the parameters
+    const old = await this.localKeys(handle, password);
+    if (old.kdf === "argon2id") return false;
+    await this.request("PUT", "/api/local/backup", { oldAuthKey: old.authKey, backup: await backupOf(id, password, this.bindHost, this.backupKdf) });
+    return true;
   }
   /**
    * Signing in on another device: fetch the account's key with handle + password and open it.
@@ -157,7 +186,7 @@ export class ServerApi {
    * `domain`, the host this client signs for). At the limit of devices the server answers 409 `too_many_devices` with the
    * list; the call comes again with `replaceDevice`, the device the user picked to make way.
    */
-  async localRestore(rawHandle: string, password: string, enrol?: { device: NewDevice; domain: string; replaceDevice?: string | undefined }): Promise<Identity> {
+  async localRestore(rawHandle: string, password: string, enrol?: { device: NewDevice; domain: string; replaceDevice?: string | undefined }): Promise<RestoredIdentity> {
     const handle = LocalHandle.parse(rawHandle);
     const keys = await this.localKeys(handle, password);
     const device = enrol ? { ...(await enrolFields(enrol.device, enrol.domain, handle)), ...(enrol.replaceDevice ? { replaceDevice: enrol.replaceDevice } : {}) } : {};
@@ -167,7 +196,7 @@ export class ServerApi {
     catch { throw new Error(t("err.backupUndecryptable")); }
     const restored = await identityFromPrivateKey(seed);
     if (restored.publicKey !== blob.publicKey) throw new Error(t("err.backupMismatch"));
-    return { ...restored, device: enrol?.device.stored ?? null };
+    return { ...restored, device: enrol?.device.stored ?? null, legacyBackup: blob.params.kdf !== "argon2id" };
   }
   /**
    * A member from before server accounts (`registrationRequired`) registers a server account on `fresh`, a new key for this
@@ -175,7 +204,7 @@ export class ServerApi {
    */
   async localClaim(old: Identity, fresh: Identity, domain: string, rawHandle: string, password: string): Promise<void> {
     const handle = LocalHandle.parse(rawHandle);
-    const backup = await backupOf(fresh, password, this.bindHost);
+    const backup = await backupOf(fresh, password, this.bindHost, this.backupKdf);
     const challenge = ChallengeResponse.parse(await this.request("POST", "/api/auth/challenge", { publicKey: old.publicKey }, { auth: false }));
     const message = localClaimMessage(domain, challenge.nonce, handle, fresh.publicKey, backup.ciphertext);
     // The new account's first device signs along with the new key (docs/features/devices.md).
@@ -188,7 +217,7 @@ export class ServerApi {
   /** A new password: the same key, encrypted anew; the old password proves the change. */
   async localChangePassword(id: Identity, handle: string, oldPassword: string, newPassword: string): Promise<void> {
     const old = await this.localKeys(handle, oldPassword);
-    await this.request("PUT", "/api/local/backup", { oldAuthKey: old.authKey, backup: await backupOf(id, newPassword, this.bindHost) });
+    await this.request("PUT", "/api/local/backup", { oldAuthKey: old.authKey, backup: await backupOf(id, newPassword, this.bindHost, this.backupKdf) });
   }
   /** Delete the server account (the password proves it; the first owner cannot). */
   async localDelete(handle: string, password: string): Promise<void> {
@@ -371,6 +400,10 @@ export type Health = {
   devices?: boolean;
   /** The claim moves to a fresh key (servers since 25 September 2026); missing = an older server, no claim offered. */
   localClaimRekey?: boolean;
+  /** A bound session's proof may sign the body (version 2, servers since 5 October 2026); missing = version 1 only. */
+  sessionProofV2?: boolean;
+  /** A server account's backup may use Argon2id (servers since 5 October 2026); missing = PBKDF2 only, the new parameters would be refused. */
+  backupArgon2?: boolean;
   ok: boolean; domain: string; protocolVersion: number; directoryUrl: string | null; serverName: string | null; iconUrl: string | null;
   /** Until server accounts: sign-in only with a directory account. Servers since then always report true. */
   requireAccount: boolean;
@@ -423,7 +456,22 @@ const directoryAction = <T>(dirUrl: string, id: Identity, action: DirectoryActio
 /** The auth key of a directory account's password: what proves the password to the directory. */
 async function directoryAuthKey(dirUrl: string, handle: string, password: string): Promise<string> {
   const p = BackupParamsResponse.parse(await directoryFetch(dirUrl, "GET", `/api/backup/${handle}/params`));
-  return (await deriveBackupKeys(password, p.salt, p.iterations)).authKey;
+  return (await deriveBackupKeys(password, p)).authKey;
+}
+/** An identity fetched with the password; `legacyBackup` = the backup was PBKDF2 (from before 5 October 2026) and should be stored anew (`directoryRewrapBackup`, `localRewrapBackup`). */
+export type RestoredIdentity = Identity & { legacyBackup: boolean };
+/**
+ * A directory backup from before Argon2id (security audit of 5 October 2026, L-1) is stored anew with it, under the same
+ * password, which the sign-in just proved. Answers whether it did. With an active authenticator the directory asks for a
+ * code, which the sign-in used up: then this throws `totp_required`, and the next password change makes the new backup
+ * (best effort after a sign-in, store.ts).
+ */
+export async function directoryRewrapBackup(dirUrl: string, id: Identity, handle: string, password: string): Promise<boolean> {
+  const p = BackupParamsResponse.parse(await directoryFetch(dirUrl, "GET", `/api/backup/${handle}/params`));
+  if (p.kdf === "argon2id") return false;
+  if (!(await directoryHealth(dirUrl)).features.backupArgon2) return false; // a directory from before: it would refuse the parameters
+  await directoryBackupUpload(dirUrl, id, password, { handle, password });
+  return true;
 }
 
 /** Handle for a key; null = not registered. */
@@ -448,7 +496,9 @@ export async function directoryRegister(dirUrl: string, id: Identity, rawHandle:
  * and its password so far, which a directory with devices asks for when a backup exists (a new password needs the old one).
  */
 export async function directoryBackupUpload(dirUrl: string, id: Identity, password: string, old?: { handle: string; password: string }): Promise<void> {
-  const b = await backupOf(id, password);
+  // Argon2id where the directory takes it (`features.backupArgon2`, since 5 October 2026), PBKDF2 for one from before.
+  const kdf: BackupKdfName = (await directoryHealth(dirUrl)).features.backupArgon2 ? "argon2id" : "pbkdf2-sha256";
+  const b = await backupOf(id, password, undefined, kdf);
   const oldAuthKey = old ? await directoryAuthKey(dirUrl, old.handle, old.password) : undefined;
   await directorySigned(dirUrl, id, "PUT", "/api/backup", (host, nonce) => directoryBackupMessage(host, nonce, b.ciphertext), { ciphertext: b.ciphertext, params: b.params, authKey: b.authKey, ...(oldAuthKey ? { oldAuthKey } : {}) });
 }
@@ -460,10 +510,10 @@ export type DeviceChoice = { replaceDevice: string; ticket: string | null };
  * (docs/features/devices.md); the identity that comes back names it. A 409 `too_many_devices` carries the account's
  * devices and a ticket; the call comes again with `choice`.
  */
-export async function directoryRestore(dirUrl: string, rawHandle: string, password: string, code?: string, device?: NewDevice, choice?: DeviceChoice): Promise<Identity> {
+export async function directoryRestore(dirUrl: string, rawHandle: string, password: string, code?: string, device?: NewDevice, choice?: DeviceChoice): Promise<RestoredIdentity> {
   const handle = Handle.parse(rawHandle);
   const p = BackupParamsResponse.parse(await directoryFetch(dirUrl, "GET", `/api/backup/${handle}/params`));
-  const keys = await deriveBackupKeys(password, p.salt, p.iterations);
+  const keys = await deriveBackupKeys(password, p);
   // Bound to the host this client connects to, like every signature for the directory.
   const enrol = device ? await enrolFields(device, connectedHost(dirUrl), handle) : {};
   const picked = choice ? { replaceDevice: choice.replaceDevice, ...(choice.ticket ? { ticket: choice.ticket } : {}) } : {};
@@ -473,7 +523,7 @@ export async function directoryRestore(dirUrl: string, rawHandle: string, passwo
   catch { throw new Error(t("err.backupUndecryptable")); }
   const id = await identityFromPrivateKey(seed);
   if (id.publicKey !== blob.publicKey) throw new Error(t("err.backupMismatch"));
-  return { ...id, device: device?.stored ?? null };
+  return { ...id, device: device?.stored ?? null, legacyBackup: blob.params.kdf !== "argon2id" };
 }
 /**
  * Sign devices of the directory account out (signed `device-revoke`, docs/features/devices.md): a device's id or "others"
@@ -490,7 +540,7 @@ export async function directoryRevokeDevice(dirUrl: string, id: Identity, target
 export async function directoryEmailCode(dirUrl: string, rawHandle: string, password: string): Promise<EmailCodeResponse> {
   const handle = Handle.parse(rawHandle);
   const p = BackupParamsResponse.parse(await directoryFetch(dirUrl, "GET", `/api/backup/${handle}/params`));
-  const keys = await deriveBackupKeys(password, p.salt, p.iterations);
+  const keys = await deriveBackupKeys(password, p);
   return EmailCodeResponse.parse(await directoryFetch(dirUrl, "POST", "/api/email/code", { handle, authKey: keys.authKey }));
 }
 /** Display name in the directory: server = null -> global (all servers), otherwise only for this chat server (host = its PUBLIC_DOMAIN). */

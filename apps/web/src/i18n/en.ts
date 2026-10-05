@@ -1024,7 +1024,7 @@ export const en: Messages = {
   "hotkeys.pttLocal": "On this system the push-to-talk key {key} works only while a Squorli window has the focus. Across the whole system it works on Windows.",
   "hotkeys.pttInvalid": "The app cannot see the key {key} outside its window. Choose another key under Voice and audio.",
   "hotkeys.externalHead": "Control from outside (Stream Deck, G Hub, macros)",
-  "hotkeys.externalKey": "The links that can switch the microphone on carry a key of this installation, so that no web page can trigger them. Keep them to yourself; once the app's data is deleted, copy them again.",
+  "hotkeys.externalKey": "Every link carries a key of this installation, so that no web page can trigger it. Keep the links to yourself; once the app's data is deleted, copy them again. Links without a key from an older version no longer work.",
   "hotkeys.externalText": "Two ways. The device sends one of the hotkeys above: the \"Hotkey\" action on a Stream Deck, a key assignment in G Hub. Or it opens one of these links (\"System > Website\" on a Stream Deck): the running app carries the command out without bringing its window to the front. If it is not running, it only starts.",
   "hotkeys.externalCommand": "The same as a command line, for \"Launch application\" in G Hub for instance; any action from above in place of mic-toggle:",
   "hotkeys.copy": "Copy",

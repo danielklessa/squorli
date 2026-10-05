@@ -23,25 +23,25 @@ In external mode `compose.yml` publishes **no** HTTP ports; `server` and `liveki
 |---|---|
 | on the host (nginx, Apache, Caddy as a package) | Start with the overlay `nginx.ports.yml`: publishes `127.0.0.1:3000` and `127.0.0.1:7880` |
 | as a container on the same host (Traefik, Nginx Proxy Manager, Caddy) | Attach the proxy container to the network `squorli_internal` or `server`/`livekit` to the proxy network (`npm.network.yml`, `traefik.labels.yml`) and use the container names `server` and `livekit` as targets |
-| on another host | Overlay `remote-proxy.ports.yml`: publishes 3000 and 7880 on `PROXY_BIND_IP`; the target in the proxy is the IP/hostname of the chat host. See section "Proxy on another host" |
+| on another host | Overlay `remote-proxy.ports.yml`: publishes 3000 and 7880 on `PROXY_BIND_IP` (required, this host's LAN/VPN address); the target in the proxy is the IP/hostname of the chat host. See section "Proxy on another host" |
 
 ## Proxy on another host
 
 Applies to Nginx Proxy Manager, nginx, Traefik etc. on a second machine. What changes:
 
-1. **Open the ports:** In `.env` set `PROXY_BIND_IP` to the LAN/VPN address of the chat host (if unset: all interfaces) and start with
+1. **Open the ports:** In `.env` set `PROXY_BIND_IP` to the LAN/VPN address of the chat host (the overlay refuses to start without it; until 5 October 2026 it fell back to all interfaces, which Docker opens past ufw/firewalld) and start with
    ```bash
    cd deploy && docker compose --env-file ../.env -f compose.yml -f proxies/remote-proxy.ports.yml --profile external up -d
    ```
    Then, via the firewall on the chat host, allow `3000/tcp` and `7880/tcp` **only** for the IP of the proxy host. Both ports speak unencrypted HTTP; there should be a private network or VPN between the hosts.
 2. **Target in the proxy:** instead of `server`/`livekit`, the IP or the internal hostname of the chat host, ports 3000 and 7880.
 3. **Media does not go through the proxy host.** Browsers connect directly to the **chat host** for audio: `7882/udp` and `7881/tcp` must be reachable there from the internet (public IP or port forwarding on the router). LiveKit must know this public address: the default is automatic detection (`use_external_ip`); with NAT or multiple addresses set `LIVEKIT_NODE_IP=<public IP of the chat host>` in `.env`. A chat host without its own public reachability does not work, no matter how the proxy is set up.
-4. **`TRUSTED_PROXIES`:** The app server sees the proxy host as the sender. If its IP lies in `10/8`, `172.16/12` or `192.168/16`, the default is sufficient; otherwise add the IP in `.env`. (Under Docker Desktop the sender appears as the Docker gateway `172.x`, also covered.)
+4. **`TRUSTED_PROXIES`:** The app server sees the proxy host as the sender, and the default `auto` covers only the stack's own Docker network: add the proxy host's IP in `.env`, `TRUSTED_PROXIES=auto,<IP of the proxy host>` (the installer does that in its "proxy on another host" setup). Without it every member shares the proxy's address in the rate limits and the log; `squorli doctor` says so. (Under Docker Desktop the sender appears as the Docker gateway `172.x`, which `auto` covers.)
 
 
 ## nginx
 
-1. `.env`: `PROXY_MODE=external`. `TRUSTED_PROXIES` can stay at the default (Docker networks + 127.0.0.1); the app server sees nginx as a sender from the Docker bridge network.
+1. `.env`: `PROXY_MODE=external`. `TRUSTED_PROXIES` can stay at the default `auto` (the stack's own Docker network + loopback); the app server sees nginx as a sender from that network's gateway.
 2. Start: `cd deploy && docker compose --env-file ../.env -f compose.yml -f proxies/nginx.ports.yml --profile external up -d`
 3. Adopt `nginx.conf` as a server block (`/etc/nginx/sites-available/chat.conf` or similar), adjust `chat.example.org` and the certificate paths, `nginx -t && systemctl reload nginx`.
 4. Firewall: open `443/tcp`, `80/tcp` (redirect), `7881/tcp`, `7882/udp`.
@@ -96,15 +96,15 @@ proxy_set_header Connection "upgrade";
 (Add `proxy_http_version 1.1;` only if NPM does not already set it there, otherwise nginx reports a duplicate directive and the host goes offline.)
 
 Firewall as with nginx: `443/tcp`, `80/tcp`, `7881/tcp`, `7882/udp` directly to the host; the media ports do not go through NPM.
-`TRUSTED_PROXIES` in `.env` can stay at the default (NPM comes from a Docker network). Check as above with `/api/health` and `/rtc/validate`.
+`TRUSTED_PROXIES` in `.env` can stay at the default `auto` (NPM comes from a Docker network the server is attached to). Check as above with `/api/health` and `/rtc/validate`.
 
 ## Plesk (nginx of the Plesk host in front of the containers)
 
 Works with the Portainer stack (`deploy/portainer.yml`) or the Docker extension on the same host. Do **not** use Plesk's
 "Docker Proxy Rules": the generated locations carry no `Upgrade`/`Connection` headers, so `/api/ws` and `/rtc` (WebSockets) fail.
 
-1. Stack: `PROXY_BIND_IP=127.0.0.1` (3000 and 7880 only reachable by the host's nginx), `TRUSTED_PROXIES` at its default
-   (the container sees nginx as the Docker gateway, `172.x`), `LIVEKIT_NODE_IP` = public IP of the Plesk host.
+1. Stack: `PROXY_BIND_IP` at its default `127.0.0.1` (3000 and 7880 only reachable by the host's nginx), `TRUSTED_PROXIES` at its
+   default `auto` (the container sees nginx as the Docker gateway, `172.x`), `LIVEKIT_NODE_IP` = public IP of the Plesk host.
 2. Plesk > domain > Hosting & DNS > Apache & nginx Settings > "Additional nginx directives" (regex locations, so that they
    do not collide with Plesk's own `location /`; order matters, first match wins):
 

@@ -106,11 +106,17 @@ export class KeyVault {
     if (!this.has(publicKey)) return null;
     return Buffer.from(await deriveSettingsKeyBits(this.keys[publicKey as string]!, publicKey as string)).toString("hex");
   }
-  /** The seed encrypted with a password (the protocol's backup; `context` binds a server account's backup to its host). */
-  async backup(publicKey: unknown, password: unknown, context: unknown): Promise<BridgeBackup | null> {
+  /**
+   * The seed encrypted with a password (the protocol's backup, Argon2id since 5 October 2026; `context` binds a server
+   * account's backup to its host). The floor is the sign-in's (BACKUP_MIN_PASSWORD): a backup from before is stored anew
+   * under its own password after a sign-in, which may be that short; the forms hold a new password to BACKUP_NEW_MIN_PASSWORD.
+   */
+  async backup(publicKey: unknown, password: unknown, context: unknown, kdf?: unknown): Promise<BridgeBackup | null> {
     if (!this.has(publicKey) || typeof password !== "string" || password.length < BACKUP_MIN_PASSWORD || password.length > PASSWORD_MAX) return null;
     if (context !== undefined && (typeof context !== "string" || context.length === 0 || context.length > CONTEXT_MAX)) return null;
-    return createBackup(password, this.keys[publicKey as string]!, undefined, context);
+    // `kdf` names PBKDF2 for a server or directory from before Argon2id (identity.ts `backupOf`); anything else is Argon2id.
+    if (kdf !== undefined && kdf !== "argon2id" && kdf !== "pbkdf2-sha256") return null;
+    return createBackup(password, this.keys[publicKey as string]!, { kdf: kdf === "pbkdf2-sha256" ? "pbkdf2-sha256" : "argon2id" }, context);
   }
 }
 

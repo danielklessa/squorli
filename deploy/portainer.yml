@@ -4,7 +4,9 @@
 # Enter the ${...} variables under "Environment variables" of the stack (see README.md "Portainer"):
 #   required: PUBLIC_DOMAIN, POSTGRES_PASSWORD, LIVEKIT_API_KEY, LIVEKIT_API_SECRET (32+ characters)
 #   usually:  LIVEKIT_NODE_IP (public IP of this host; a host whose address changes needs the installer's job `squorli nodeip`,
-#             docs/features/dynamic-ip.md, which a Portainer stack does not have), DIRECTORY_URL, TRUSTED_PROXIES (IP of the proxy), PROXY_BIND_IP
+#             docs/features/dynamic-ip.md, which a Portainer stack does not have), DIRECTORY_URL, TRUSTED_PROXIES (auto = the stack's own
+#             networks, plus the IP of a proxy on another host), PROXY_BIND_IP (default 127.0.0.1 = a proxy on this host; a proxy on
+#             another host needs this host's LAN/VPN address here, since 5 October 2026 never 0.0.0.0 by default, security audit M-6)
 #   optional: APP_IMAGE, SERVER_NAME, OWNER_PUBLIC_KEY, OWNER_SETUP_CODE, MAX_UPLOAD_MB, LINK_PREVIEWS (true/false), LIVEKIT_PUBLIC_URL, DIRECTORY_PROOF_URL, LOCAL_ACCOUNTS (true/false), RATE_LIMIT_FACTOR, LOG_LEVEL, LOG_REQUESTS (true/false), STORAGE_QUOTA_MB, VOICE_SEATS_MAX, MEMBER_MAX, DB_POOL_MAX (docs/features/limits.md)
 # The image defaults to the newest published release (:stable, signed) in the GitHub Container Registry; APP_IMAGE pins a
 # version (e.g. :v0.5.0) or names another registry. Portainer pulls without checking the signature (README, "Signed releases"). See the Portainer section in README.md.
@@ -32,7 +34,8 @@ services:
       NODE_ENV: production
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
       PROXY_MODE: external
-      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1}
+      # auto = the stack's own network (the host's proxy arrives from its gateway) and loopback; a proxy on another host: auto,<its IP>
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-auto}
       DATABASE_URL: postgres://chat:${POSTGRES_PASSWORD}@postgres:5432/chat
       LIVEKIT_URL: http://livekit:7880
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-}
@@ -56,7 +59,8 @@ services:
       LOG_REQUESTS: ${LOG_REQUESTS:-false}
     volumes: [appdata:/app/data]   # attachments, server icon
     ports:
-      - "${PROXY_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3000"   # proxy: https://PUBLIC_DOMAIN -> http://<host>:3000 (with WebSocket)
+      # Only the host's own proxy reaches it by default; a proxy on another host needs PROXY_BIND_IP = this host's LAN/VPN address.
+      - "${PROXY_BIND_IP:-127.0.0.1}:${APP_PORT:-3000}:3000"   # proxy: https://PUBLIC_DOMAIN -> http://<host>:3000 (with WebSocket)
     depends_on:
       postgres: { condition: service_healthy }
     networks:
@@ -112,7 +116,7 @@ services:
         logging:
           level: warn
     ports:
-      - "${PROXY_BIND_IP:-0.0.0.0}:${LIVEKIT_HTTP_PORT:-7880}:7880"   # signaling: proxy https://PUBLIC_DOMAIN/rtc* -> http://<host>:7880 (WebSocket)
+      - "${PROXY_BIND_IP:-127.0.0.1}:${LIVEKIT_HTTP_PORT:-7880}:7880"   # signaling: proxy https://PUBLIC_DOMAIN/rtc* -> http://<host>:7880 (WebSocket)
       - "${LIVEKIT_TCP_PORT:-7881}:${LIVEKIT_TCP_PORT:-7881}/tcp"   # media fallback via TCP
       - "${LIVEKIT_UDP_PORT:-7882}:${LIVEKIT_UDP_PORT:-7882}/udp"   # media via UDP
     networks: [internal]

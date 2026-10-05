@@ -27,6 +27,12 @@ COPY --from=build /out/package.json ./package.json
 COPY --from=build /repo/apps/web/dist ./public
 # License, notice and the third-party notices travel with the image (Apache License 2.0, section 4).
 COPY LICENSE NOTICE THIRD-PARTY-NOTICES.md ./
+# The deploy files travel with the image too (5 October 2026, security audit L-10): the installer takes compose.yml, the
+# Caddyfile, livekit.yaml, the proxy overlays and .env.example out of the signed and checked image (deploy/install.sh
+# `download_files`), so they carry the release's signature and match the version that runs, instead of coming from
+# raw.githubusercontent.com over TLS alone.
+COPY deploy ./deploy
+COPY .env.example ./deploy/.env.example
 RUN mkdir -p /app/data && chown node:node /app/data
 VOLUME /app/data
 EXPOSE 3000

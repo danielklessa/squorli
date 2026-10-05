@@ -288,8 +288,8 @@ else {
   const links = handleDeepLinks(() => mainWindow, isClientFrame);
   // A second start (the system opening a `squorli://` link while the app runs) hands its arguments over and quits.
   app.on("second-instance", (_event, argv) => {
-    // A command from outside (`squorli://control/<action>`, `--control=<action>`: a Stream Deck, G Hub, a macro) is carried
-    // out without bringing the window to the front; whoever pressed it is in a game or elsewhere (hotkeys.ts).
+    // A command from outside (`squorli://control/<action>?k=<key>`, `--control=<action>`: a Stream Deck, G Hub, a macro) is
+    // carried out without bringing the window to the front; whoever pressed it is in a game or elsewhere (hotkeys.ts).
     const control = findControl(argv, controlKey());
     if (control) { hotkeys?.control(control); return; }
     links.deliver(findDeepLink(argv));

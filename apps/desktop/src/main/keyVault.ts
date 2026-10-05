@@ -45,7 +45,7 @@ export function handleKeyVault(vault: KeyVault | null, isClientFrame: (event: Ip
   guarded<string | null>(IPC.keysSign, (publicKey, message) => vault!.sign(publicKey, message), null);
   guarded<string | null>(IPC.keysDm, (publicKey, peer) => vault!.dmKey(publicKey, peer), null);
   guarded<string | null>(IPC.keysSettings, (publicKey) => vault!.settingsKey(publicKey), null);
-  guarded(IPC.keysBackup, (publicKey, password, context) => vault!.backup(publicKey, password, context), null);
+  guarded(IPC.keysBackup, (publicKey, password, context, kdf) => vault!.backup(publicKey, password, context, kdf), null);
   guarded<string | null>(IPC.keysGenerate, () => vault!.generate(), null);
   guarded<string | null>(IPC.keysImport, (seed) => vault!.import(seed), null);
   guarded<void>(IPC.keysForget, (publicKey) => { vault!.forget(publicKey); }, undefined);

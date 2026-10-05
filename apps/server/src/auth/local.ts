@@ -1,5 +1,5 @@
 import {
-  AVATAR_MAX_BYTES, BACKUP_ITERATIONS, BackupParams, LocalAvatarRequest, LocalBackupFetchRequest, LocalClaimRequest, LocalDeleteRequest, LocalHandle,
+  AVATAR_MAX_BYTES, BackupParams, backupParamsResponseOf, backupWeak, LocalAvatarRequest, LocalBackupFetchRequest, LocalClaimRequest, LocalDeleteRequest, LocalHandle,
   LocalPasswordChangeRequest, LocalRegisterRequest, Uuid, localRegisterMessage, sniffAvatarMime, type LocalBackup, type LocalBackupBlob,
   localClaimMessage,
   LocalDeviceRevokeRequest, deviceEnrolMessage, labelFromUserAgent, type DevicesResponse, type TooManyDevicesResponse,
@@ -94,9 +94,9 @@ export async function registerLocalAccountRoutes(
     const body = LocalRegisterRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request", detail: body.error.issues[0]?.message ?? null });
     const { challengeId, publicKey, signature, handle, backup, invite, ownerCode } = body.data;
-    // A new backup below the clients' 600,000 rounds is refused (security audit, 2 October 2026, S12): once somebody has the
-    // database, the password alone protects the key, and PBKDF2 with fewer rounds is cracked that much faster.
-    if (backup.params.iterations < BACKUP_ITERATIONS) return reply.code(400).send({ error: "backup_weak" });
+    // A new backup below the clients' parameters is refused (security audit, 2 October 2026, S12; Argon2id since 5 October
+    // 2026, L-1): once somebody has the database, the password alone protects the key, and a cheaper KDF is cracked faster.
+    if (backupWeak(backup.params)) return reply.code(400).send({ error: "backup_weak" });
     // The owner's setup code (OWNER_SETUP_CODE): a wrong one, or one after the owner exists, is said as such; the right one
     // opens the registration even where server accounts are off, until the owner exists.
     if (ownerCode !== undefined && (!ownerCodeMatches(config, ownerCode) || !(await isFirstEver(db, config, publicKey, ownerCode)))) return reply.code(403).send({ error: "owner_code_invalid" });
@@ -183,11 +183,11 @@ export async function registerLocalAccountRoutes(
     if (!h.success) return reply.code(400).send({ error: "bad_handle" });
     const [row] = await db.select({ params: localAccounts.backupParams }).from(localAccounts).where(eq(localAccounts.handle, h.data)).limit(1);
     if (!row) return reply.code(404).send({ error: "unknown_account" });
-    const p = BackupParams.parse(row.params);
     // `bound` goes along (29 September 2026): without it a client derives the keys of a backup that is bound to this server's
     // host as if it were not, and the right password reads as a wrong one on every other device (found with two browsers,
-    // docs/features/devices.md; every server account made since 25 September 2026 has a bound backup).
-    return { kdf: p.kdf, iterations: p.iterations, salt: p.salt, ...(p.bound ? { bound: true as const } : {}) };
+    // docs/features/devices.md; every server account made since 25 September 2026 has a bound backup). The KDF's
+    // parameters as stored (PBKDF2 or Argon2id), never the iv.
+    return backupParamsResponseOf(BackupParams.parse(row.params));
   });
 
   // Step 2: the ciphertext for the auth key. A wrong key = a wrong password; failures count per IP and per handle.
@@ -226,7 +226,7 @@ export async function registerLocalAccountRoutes(
     if (!s) return;
     const body = LocalPasswordChangeRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
-    if (body.data.backup.params.iterations < BACKUP_ITERATIONS) return reply.code(400).send({ error: "backup_weak" });
+    if (backupWeak(body.data.backup.params)) return reply.code(400).send({ error: "backup_weak" });
     const account = { userId: s.userId };
     if (!attemptPassword(req.ip, account)) return reply.code(429).send({ error: "rate_limited" });
     const [row] = await db.select({ authHash: localAccounts.authHash }).from(localAccounts).where(eq(localAccounts.userId, s.userId)).limit(1);

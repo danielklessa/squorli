@@ -9,6 +9,9 @@ const deviceKey = (publicKey.export({ format: "der", type: "spki" }) as Buffer).
 const account = "cd".repeat(32);
 const session = { publicKey: account, deviceKey };
 const proofFor = (method: string, path: string, at: number, domain = "chat.example") => ({ domain, at, signature: sign(null, Buffer.from(deviceProofMessage(account, sessionProofMessage(domain, at, method, path)), "utf8"), privateKey).toString("hex") });
+/** Version 2 (security audit of 5 October 2026, L-6): the body's hash is in the message and the proof says `v2`. */
+const proofFor2 = (method: string, path: string, at: number, bodyHash: string, domain = "chat.example") => ({ domain, at, v2: true as const, signature: sign(null, Buffer.from(deviceProofMessage(account, sessionProofMessage(domain, at, method, path, bodyHash)), "utf8"), privateKey).toString("hex") });
+const bodyHash = "a".repeat(64);
 
 describe("sessions bound to the device (security audit S10, 4 October 2026)", () => {
   setSessionPolicy({ idleDays: 14, domain: "chat.example" });
@@ -33,9 +36,28 @@ describe("sessions bound to the device (security audit S10, 4 October 2026)", ()
     expect(sessionProofProblem({ ...proofFor("GET", "/api/me", now), signature: "zz" }, session, "GET", "/api/me", "chat.example", now)).toBe("signature");
   });
 
+  it("signs the body in version 2, so a captured proof fits no other body, and still takes version 1", () => {
+    expect(sessionProofProblem(proofFor2("POST", "/api/x", now, bodyHash), session, "POST", "/api/x", "chat.example", now, bodyHash)).toBeNull();
+    expect(sessionProofProblem(proofFor2("POST", "/api/x", now, bodyHash), session, "POST", "/api/x", "chat.example", now, "b".repeat(64))).toBe("signature");
+    expect(sessionProofProblem(proofFor2("POST", "/api/x", now, bodyHash), session, "POST", "/api/x", "chat.example", now, "")).toBe("signature");
+    expect(sessionProofProblem(proofFor2("GET", "/api/me", now, ""), session, "GET", "/api/me", "chat.example", now)).toBeNull();
+    expect(sessionProofProblem(proofFor2("WS", "/api/ws", now, ""), session, "WS", "/api/ws", "chat.example", now)).toBeNull();
+    // A version 1 proof is checked as before, whatever the body: a client of before, or one that has not read /api/health yet.
+    expect(sessionProofProblem(proofFor("POST", "/api/x", now), session, "POST", "/api/x", "chat.example", now, bodyHash)).toBeNull();
+    // The version is part of what is signed: a version 1 signature presented as version 2 is worth nothing, and the other way round.
+    expect(sessionProofProblem({ ...proofFor("POST", "/api/x", now), v2: true }, session, "POST", "/api/x", "chat.example", now, "")).toBe("signature");
+    const { v2: _v2, ...asV1 } = proofFor2("POST", "/api/x", now, "");
+    expect(sessionProofProblem(asV1, session, "POST", "/api/x", "chat.example", now, "")).toBe("signature");
+  });
+
   it("reads the header the client sends and refuses anything else", () => {
     const p = proofFor("GET", "/api/me", now);
     expect(parseSessionProofHeader(sessionProofHeader(p.domain, p.at, p.signature))).toEqual(p);
+    const p2 = proofFor2("GET", "/api/me", now, "");
+    expect(parseSessionProofHeader(sessionProofHeader(p2.domain, p2.at, p2.signature, true))).toEqual(p2);
+    expect(sessionProofHeader(p2.domain, p2.at, p2.signature, true)).toBe(`v2:chat.example:${now}:${p2.signature}`);
+    expect(parseSessionProofHeader(`V2:chat.example:${now}:${p2.signature}`)).toEqual(p2);
+    expect(parseSessionProofHeader(`v3:chat.example:${now}:${p2.signature}`)).toBeNull();
     expect(parseSessionProofHeader(`Chat.Example:${now}:${p.signature.toUpperCase()}`)).toEqual(p);
     expect(parseSessionProofHeader(undefined)).toBeNull();
     expect(parseSessionProofHeader(`chat.example:${now}`)).toBeNull();

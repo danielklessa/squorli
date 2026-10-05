@@ -17,7 +17,7 @@
  * runs, but cannot take it along. In a browser `privateKey` is the seed as before.
  */
 import * as ed from "@noble/ed25519";
-import { createBackup, deriveDmKey, deriveSettingsKey, deviceEnrolMessage, deviceProofMessage, hexToBytes, importDmKey, importSettingsKey, type BackupParams } from "@squorli/protocol";
+import { createBackup, deriveDmKey, deriveSettingsKey, deviceEnrolMessage, deviceProofMessage, hexToBytes, importDmKey, importSettingsKey, type BackupKdfName, type BackupParams } from "@squorli/protocol";
 import { createDevice, forgetDevice, loadDevice, parseStoredDevice, type DeviceSigner, type DeviceVault, type StoredDevice } from "./deviceKey";
 import { t } from "./i18n";
 import type { BridgeKeys } from "./platform/bridge";
@@ -142,10 +142,14 @@ export async function settingsKeyOf(id: Identity): Promise<CryptoKey> {
   if (!bits) throw keyGone();
   return importSettingsKey(hexToBytes(bits));
 }
-/** The seed encrypted with a password (the protocol's backup.ts; `context` binds a server account's backup to its host); made by the vault where it holds the seed. */
-export async function backupOf(id: Identity, password: string, context?: string): Promise<{ params: BackupParams; ciphertext: string; authKey: string }> {
-  if (id.privateKey !== null) return createBackup(password, id.privateKey, undefined, context);
-  const backup = keyVault ? await keyVault.backup(id.publicKey, password, context) : null;
+/**
+ * The seed encrypted with a password (the protocol's backup.ts; `context` binds a server account's backup to its host);
+ * made by the vault where it holds the seed. `kdf`: Argon2id, or PBKDF2 for a server or directory from before 5 October
+ * 2026, which would refuse the new parameters (`ServerApi.backupKdf`, the directory's `features.backupArgon2`).
+ */
+export async function backupOf(id: Identity, password: string, context?: string, kdf: BackupKdfName = "argon2id"): Promise<{ params: BackupParams; ciphertext: string; authKey: string }> {
+  if (id.privateKey !== null) return createBackup(password, id.privateKey, { kdf }, context);
+  const backup = keyVault ? await keyVault.backup(id.publicKey, password, context, kdf) : null;
   if (!backup) throw keyGone();
   return backup;
 }

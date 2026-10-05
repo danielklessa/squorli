@@ -1,7 +1,7 @@
 {
   "name": "@squorli/desktop",
   "productName": "Squorli",
-  "version": "0.12.5",
+  "version": "0.12.6",
   "private": true,
   "license": "Apache-2.0",
   "description": "Squorli desktop app: Electron shell around the web client",
@@ -25,6 +25,7 @@
     "electron": "^44.4.2",
     "electron-builder": "^26.15.3",
     "electron-updater": "6.8.9",
+    "openpgp": "6.3.2",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
     "vitest": "^4.0.0"

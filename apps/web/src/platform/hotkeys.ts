@@ -135,13 +135,14 @@ export function formatHotkey(binding: HotkeyBinding, names: ModifierNames, layou
 
 export const CONTROL_SCHEME_PREFIX = "squorli://control/";
 /**
- * Actions a control link may carry out without the installation's key: they only close the microphone or the sound. Every
- * other one could open the microphone, and any web page can open a `squorli://` link (security review, 25 September 2026),
- * so its link carries the key (`?k=`, made by the desktop app once per installation). The command line needs none.
+ * Every control link carries the installation's key (`?k=`, made by the desktop app once per installation): any web page
+ * can open a `squorli://` link (security review, 25 September 2026), and since 5 October 2026 (security audit L-8, the
+ * user's decision) that holds for `mic-off` and `deafen-on` as well, which were keyless until then because they only close
+ * things; a page could still have run them in a loop. The command line (`--control=`) needs none. A link without a key is
+ * a link from before: it has to be copied again from the tab.
  */
-export const KEYLESS_CONTROL_ACTIONS: readonly ControlAction[] = ["mic-off", "deafen-on"];
 export const controlLink = (action: ControlAction, key: string | null = null): string =>
-  `${CONTROL_SCHEME_PREFIX}${action}${key && !KEYLESS_CONTROL_ACTIONS.includes(action) ? `?k=${key}` : ""}`;
+  `${CONTROL_SCHEME_PREFIX}${action}${key ? `?k=${key}` : ""}`;
 
 /** A control link (`squorli://control/<action>`, optionally `?k=<key>`): its action and key; null for anything else. */
 export function parseControlLink(raw: string): { action: ControlAction; key: string | null } | null {

@@ -1,3 +1,4 @@
+import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { z } from "zod";
 
 const Env = z.object({
@@ -12,6 +13,7 @@ const Env = z.object({
   PUBLIC_DOMAIN: z.string().min(1),
   DATABASE_URL: z.string().url(),
   PROXY_MODE: z.enum(["bundled", "external"]).default("bundled"),
+  /** Whose X-Forwarded-* headers count: IPs, CIDRs, and `auto` for the networks this process is attached to (`resolveTrustedProxies`). */
   TRUSTED_PROXIES: z.string().default("127.0.0.1"),
   /** Internal URL to the LiveKit server (server-to-server, e.g. RoomService). */
   LIVEKIT_URL: z.string().url(),
@@ -109,7 +111,10 @@ const Env = z.object({
    * Default false: no request log, only requests that end in a server error, without the address.
    */
   LOG_REQUESTS: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").default("false"),
-  /** Scales every rate limit (rateLimits.ts, docs/features/rate-limits.md): 2 = twice as many requests, 0 = no limits (load tests only). */
+  /**
+   * Scales every rate limit (rateLimits.ts, docs/features/rate-limits.md): 2 = twice as many requests, 0 = no limits (load
+   * tests only; a production start refuses it, `rateLimitProblems`).
+   */
   RATE_LIMIT_FACTOR: z.coerce.number().min(0).default(1),
   /**
    * Who may read the setup check without a session (`squorli doctor`, docs/features/doctor.md). Empty (Docker): a request
@@ -144,6 +149,37 @@ export function placeholderSecretProblems(c: { NODE_ENV: string; LIVEKIT_API_SEC
     : [];
 }
 
+/**
+ * What stops a production start as well: RATE_LIMIT_FACTOR=0, which switches the generic IP and token limits off (meant
+ * for a load test on a scratch instance; security audit of 5 October 2026, L-17). The password limiters stay on either
+ * way, but a production server without the generic ones is open to floods. Empty outside production.
+ */
+export function rateLimitProblems(c: { NODE_ENV: string; RATE_LIMIT_FACTOR: number }): string[] {
+  if (c.NODE_ENV !== "production" || c.RATE_LIMIT_FACTOR > 0) return [];
+  return ["RATE_LIMIT_FACTOR=0 schaltet die Rate-Limits ab und ist nur fuer Lasttests gedacht: in Produktion startet der Server damit nicht. Setze einen Wert groesser 0 (1 = die Vorgabe, 2 = doppelt so viele Anfragen) oder entferne die Zeile aus der .env."];
+}
+
+/**
+ * `TRUSTED_PROXIES` resolved: `auto` (the templates' default since 5 October 2026, security audit L-2) stands for the
+ * networks this process is attached to (the subnet of every interface but loopback, from `os.networkInterfaces()`), plus
+ * loopback. In a container that is the stack's own Docker network: the bundled Caddy, a proxy container that joined it,
+ * and the host's own proxy, which arrives from the network's gateway. A proxy on another host is named next to it
+ * (`auto,203.0.113.5`; the installer does that). Until then the templates trusted every private range, so any machine
+ * of the operator's LAN that reached the port could forge a forwarded address (rate limits, the log). `loopback` is
+ * proxy-addr's word for 127.0.0.0/8 and ::1.
+ */
+export function resolveTrustedProxies(list: string, interfaces: () => NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces): string[] {
+  const out: string[] = [];
+  for (const raw of list.split(",")) {
+    const item = raw.trim();
+    if (!item) continue;
+    if (item.toLowerCase() !== "auto") { out.push(item); continue; }
+    out.push("loopback");
+    for (const infos of Object.values(interfaces())) for (const i of infos ?? []) if (!i.internal && i.cidr) out.push(i.cidr);
+  }
+  return [...new Set(out)];
+}
+
 /** What only deserves a line in the log: weak but not public (a shorter secret, the database's template password). */
 export function configWarnings(c: { NODE_ENV: string; LIVEKIT_API_SECRET: string; DATABASE_URL: string }): string[] {
   if (c.NODE_ENV !== "production") return [];
@@ -163,13 +199,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Ungueltige Konfiguration:\n${issues}`);
   }
   const c = parsed.data;
-  const problems = placeholderSecretProblems(c);
+  const problems = [...placeholderSecretProblems(c), ...rateLimitProblems(c)];
   if (problems.length) throw new Error(`Unsichere Konfiguration:\n${problems.map((p) => `  ${p}`).join("\n")}`);
   const publicOrigin = c.PUBLIC_DOMAIN === "localhost" ? `http://localhost:${c.PORT}` : `https://${c.PUBLIC_DOMAIN}`;
   return {
     ...c,
     publicOrigin,
-    trustedProxies: c.TRUSTED_PROXIES.split(",").map((s) => s.trim()).filter(Boolean),
+    trustedProxies: resolveTrustedProxies(c.TRUSTED_PROXIES),
     livekitPublicUrl: (c.LIVEKIT_PUBLIC_URL ?? `wss://${c.PUBLIC_DOMAIN}`).replace(/\/+$/, ""),
     ...(c.DIRECTORY_URL ? { DIRECTORY_URL: c.DIRECTORY_URL.replace(/\/+$/, "") } : {}),
     directoryProofUrl: c.DIRECTORY_PROOF_URL ?? `${publicOrigin}/api/health`,

@@ -188,10 +188,13 @@ export const DirectoryAccount = z.object({
 // ---- M6b: password-encrypted key backup (crypto in backup.ts)
 const Hex = (bytes: number) => z.string().regex(new RegExp(`^[0-9a-f]{${bytes * 2}}$`), `${bytes * 2} hex chars`);
 
-/** Parameters of the backup, chosen by the client; the service only passes them through (iv is in the blob only, not in the parameter query). */
-export const BackupParams = z.object({
-  kdf: z.literal("pbkdf2-sha256"),
-  iterations: z.number().int().min(100_000).max(10_000_000),
+/**
+ * Parameters of the backup, chosen by the client; the service only passes them through (iv is in the blob only, not in the
+ * parameter query). Two KDFs (backup.ts): PBKDF2-SHA256 for the backups from before 5 October 2026, Argon2id since
+ * (security audit of that day, L-1; `memoryKib` = memory in KiB, `iterations` = passes, `parallelism` = lanes). The
+ * schemas accept less than the clients send, so old backups stay readable; storing a weak one is refused (`backupWeak`).
+ */
+const BackupParamsCommon = {
   salt: Hex(16),
   iv: Hex(12),
   /**
@@ -199,7 +202,16 @@ export const BackupParams = z.object({
    * the client passes the host it connects to, never a value from the server). Missing = unbound, as the directory's own.
    */
   bound: z.literal(true).optional(),
+};
+export const Pbkdf2BackupParams = z.object({ kdf: z.literal("pbkdf2-sha256"), iterations: z.number().int().min(100_000).max(10_000_000), ...BackupParamsCommon });
+export const Argon2BackupParams = z.object({
+  kdf: z.literal("argon2id"),
+  memoryKib: z.number().int().min(8192).max(1_048_576),
+  iterations: z.number().int().min(1).max(64),
+  parallelism: z.number().int().min(1).max(16),
+  ...BackupParamsCommon,
 });
+export const BackupParams = z.discriminatedUnion("kdf", [Pbkdf2BackupParams, Argon2BackupParams]);
 /** Auth key derived from the password; grants retrieval of the ciphertext, the service stores only its SHA-256. */
 export const BackupAuthKey = Hex(32);
 /** Storing is bound to host + challenge like registration and also covers the ciphertext. */
@@ -228,8 +240,8 @@ export const BackupUploadRequest = z.object({
   oldAuthKey: BackupAuthKey.optional(),
   ...DeviceProofFields,
 });
-/** First step of recovery: salt and iterations so the client can derive the auth key. */
-export const BackupParamsResponse = BackupParams.omit({ iv: true });
+/** First step of recovery: the KDF's parameters without the iv, so the client can derive the auth key (`backupParamsResponseOf`). */
+export const BackupParamsResponse = z.discriminatedUnion("kdf", [Pbkdf2BackupParams.omit({ iv: true }), Argon2BackupParams.omit({ iv: true })]);
 /**
  * Second step; `code` is only needed after a 401 totp_required (the response only comes with the correct password).
  * `deviceKey` enrols the asking device (`deviceSignature` over `deviceEnrolMessage`), `deviceKind` "page" with `remember`
@@ -864,7 +876,8 @@ export const DirectoryHealth = z.object({
   /** Host that registration signatures are bound to. */
   host: z.string(),
   /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `reportProof`: a direct message's report may carry each message's `iv` and `ciphertext` for the directory to compare with what it stores (`DmReportMessage`). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). `devices`: the directory enrols devices and lists them in the account's status. `deviceRevoke`: it signs devices out and enforces (action `device-revoke`, the refusals of a device). */
-  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), reportProof: z.boolean().default(false), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false) }),
+  /** `backupArgon2` (5 October 2026): the service takes a backup with Argon2id parameters; a client makes PBKDF2 backups for one from before, which would refuse them. */
+  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), reportProof: z.boolean().default(false), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false), backupArgon2: z.boolean().default(false) }),
   time: Iso,
 });
 
@@ -872,6 +885,8 @@ export type DirectoryRegisterRequest = z.infer<typeof DirectoryRegisterRequest>;
 export type DirectoryAccount = z.infer<typeof DirectoryAccount>;
 export type DirectoryHealth = z.infer<typeof DirectoryHealth>;
 export type BackupParams = z.infer<typeof BackupParams>;
+/** The parameters a client derives the keys from (the response of the parameter routes): everything but the iv. */
+export type BackupKdf = z.infer<typeof BackupParamsResponse>;
 export type BackupUploadRequest = z.infer<typeof BackupUploadRequest>;
 export type BackupBlob = z.infer<typeof BackupBlob>;
 export type TotpSetupResponse = z.infer<typeof TotpSetupResponse>;

@@ -1,4 +1,4 @@
-import { BACKUP_MIN_PASSWORD, DIRECTORY_HANDLE_PREFIX, LOCAL_HANDLE_PREFIX, LocalHandle, type DeviceInfo } from "@squorli/protocol";
+import { BACKUP_MIN_PASSWORD, BACKUP_NEW_MIN_PASSWORD, DIRECTORY_HANDLE_PREFIX, LOCAL_HANDLE_PREFIX, LocalHandle, type DeviceInfo } from "@squorli/protocol";
 import { useState, type ReactNode } from "react";
 import { DevicePicker } from "./DevicePicker";
 import { locale, t } from "./i18n";
@@ -163,7 +163,7 @@ export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, id
     setTaken(free ? null : clean);
   }
   async function submit() {
-    if (!valid || pw.length < BACKUP_MIN_PASSWORD || pw !== pw2) return;
+    if (!valid || pw.length < BACKUP_NEW_MIN_PASSWORD || pw !== pw2) return;
     try { await onRegister(clean, pw, ownerSetup && ownerCode.trim() ? ownerCode.trim() : undefined); setPw(""); setPw2(""); }
     catch (err) { if ((err as { code?: string | null }).code === "handle_taken") setTaken(clean); }
   }
@@ -179,7 +179,7 @@ export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, id
           <small id={`${idPrefix}-new-handle`} className={taken === clean && clean ? "error" : "muted"}>{taken === clean && clean ? t("local.handle_taken") : t("login.localHandleRules")}</small>
         </label>
         <label className="stack"><span>{t("login.password")}</span>
-          <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)} placeholder={t("login.passwordMin", { n: BACKUP_MIN_PASSWORD })} autoComplete="new-password" disabled={busy} />
+          <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)} placeholder={t("login.passwordMin", { n: BACKUP_NEW_MIN_PASSWORD })} autoComplete="new-password" disabled={busy} />
         </label>
         <label className="stack"><span>{t("login.passwordRepeat")}</span>
           <PasswordInput value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" disabled={busy} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
@@ -194,7 +194,7 @@ export function LocalRegisterForm({ busy, checkFree, onRegister, submitLabel, id
       </div>
       <p className="muted small">{t("login.localPasswordWarning")}</p>
       {privacyPolicyUrl && <PrivacyNote text={t("login.privacyServer")} url={privacyPolicyUrl} />}
-      <button className="login-primary" onClick={() => void submit()} disabled={busy || !valid || taken === clean || pw.length < BACKUP_MIN_PASSWORD || pw !== pw2}>{busy ? t("login.registering") : submitLabel ?? t("login.createLocal")}</button>
+      <button className="login-primary" onClick={() => void submit()} disabled={busy || !valid || taken === clean || pw.length < BACKUP_NEW_MIN_PASSWORD || pw !== pw2}>{busy ? t("login.registering") : submitLabel ?? t("login.createLocal")}</button>
     </div>
   );
 }
@@ -340,14 +340,14 @@ export function LocalAccountSettings({ handle, serverName, onChangePassword, onD
         <PasswordInput value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoComplete="current-password" disabled={busy} />
       </label>
       <label className="stack"><span>{t("local.newPassword")}</span>
-        <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)} placeholder={t("login.passwordMin", { n: BACKUP_MIN_PASSWORD })} autoComplete="new-password" disabled={busy} />
+        <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)} placeholder={t("login.passwordMin", { n: BACKUP_NEW_MIN_PASSWORD })} autoComplete="new-password" disabled={busy} />
       </label>
       <label className="stack"><span>{t("login.passwordRepeat")}</span>
         <PasswordInput value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" disabled={busy} />
         {pw2.length > 0 && pw !== pw2 && <small className="error">{t("login.passwordMismatch")}</small>}
       </label>
       <div className="row">
-        <button className="secondary" disabled={busy || !oldPw || pw.length < BACKUP_MIN_PASSWORD || pw !== pw2}
+        <button className="secondary" disabled={busy || !oldPw || pw.length < BACKUP_NEW_MIN_PASSWORD || pw !== pw2}
           onClick={() => void run(async () => { await onChangePassword(oldPw, pw); setOldPw(""); setPw(""); setPw2(""); }, t("local.passwordChanged"))}>{t("local.changePassword")}</button>
       </div>
       <p className="muted small">{t("login.localPasswordWarning")}</p>

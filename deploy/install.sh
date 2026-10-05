@@ -27,9 +27,12 @@ COSIGN_IMAGE="ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407
 SIGNER_IDENTITY='^https://github\.com/danielklessa/squorli/\.github/workflows/server-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
 SIGNER_ISSUER="https://token.actions.githubusercontent.com"
 DEFAULT_DIRECTORY="https://directory.squorli.com"
-DEFAULT_TRUSTED="172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1"
+# auto = the stack's own Docker network and loopback (the server resolves it at start); a proxy on another host is added to it.
+DEFAULT_TRUSTED="auto"
+# Taken out of the signed server image (fetch_files), or from RAW_BASE when SQUORLI_RAW_BASE is set.
 DEPLOY_FILES=(deploy/compose.yml deploy/caddy/Caddyfile deploy/livekit/livekit.yaml deploy/proxies/nginx.ports.yml
   deploy/proxies/remote-proxy.ports.yml deploy/proxies/nginx.conf deploy/proxies/Caddyfile.external deploy/proxies/README.md)
+FILES_FROM=""
 
 if [ -t 1 ]; then
   B=$'\e[1m'; D=$'\e[2m'; RED=$'\e[31m'; GRN=$'\e[32m'; YEL=$'\e[33m'; R=$'\e[0m'
@@ -591,18 +594,60 @@ firewall() {
     "A firewall at the hosting provider or a router in front has to let the same ports through (or forward them).")"
 }
 
+# The image the deploy files come out of: the one chosen in this run (IMAGE), else the installation's (.env), else the default.
+deploy_image() {
+  local ref="${IMAGE:-}"
+  [ -n "$ref" ] || ref="$(env_get "$DIR/.env" APP_IMAGE)"
+  printf '%s\n' "${ref:-$DEFAULT_IMAGE}"
+}
+# Where the deploy files come from (5 October 2026, security audit L-10): out of the server image itself. The image is
+# pulled and its signature checked (verify_image) before anything of it runs, so compose.yml, the Caddyfile, livekit.yaml,
+# the overlays and .env.example (COPY in the Dockerfile, under /app/deploy) carry the release's signature and always match
+# the version that runs, instead of trusting TLS to raw.githubusercontent.com alone. SQUORLI_RAW_BASE (the tests' file://,
+# a development checkout) keeps the download from a base address. The files are taken from a container that is created
+# and removed without ever being started. FILES_SRC = the folder they were unpacked into, used by download_files and write_env.
+FILES_SRC=""
+fetch_files() {
+  [ -z "$FILES_SRC" ] || return 0
+  FILES_SRC="$(mktemp -d)"
+  local f
+  if [ -n "${SQUORLI_RAW_BASE:-}" ]; then
+    mkdir -p "$FILES_SRC/deploy/caddy" "$FILES_SRC/deploy/livekit" "$FILES_SRC/deploy/proxies"
+    for f in "${DEPLOY_FILES[@]}" .env.example; do
+      curl -fsSL "$RAW_BASE/$f" -o "$FILES_SRC/$f" || die "$(t "Download fehlgeschlagen" "Download failed"): $RAW_BASE/$f"
+    done
+    FILES_FROM="$RAW_BASE"
+    return 0
+  fi
+  local ref cid
+  ref="$(deploy_image)"
+  note "$(t "Die Deploy-Dateien kommen aus dem signierten Image $ref." "The deploy files come out of the signed image $ref.")"
+  # A locally built image (README "Building from source", a test) cannot be pulled; it is taken as it is, and verify_image says it carries no digest unless IMAGE_VERIFY=off.
+  docker pull -q "$ref" >/dev/null 2>&1 || docker image inspect "$ref" >/dev/null 2>&1 || die "$(t "Das Image ließ sich nicht holen" "The image could not be pulled"): $ref"
+  verify_image "$ref" "$(env_get "$DIR/.env" IMAGE_VERIFY)" || die "$(t "Die Signatur des Images ist nicht in Ordnung (siehe oben): keine Datei daraus übernommen." "The image's signature is not in order (see above): no file taken from it.")"
+  cid="$(docker create "$ref")" || die "$(t "Container für die Deploy-Dateien ließ sich nicht anlegen" "Could not create the container for the deploy files")"
+  if ! docker cp "$cid:/app/deploy/." "$FILES_SRC/deploy/" >/dev/null 2>&1; then
+    docker rm "$cid" >/dev/null 2>&1 || true
+    die "$(t "Das Image $ref enthält keine Deploy-Dateien (/app/deploy): Images vor Version 0.10.4 haben keine. Für ein solches: SQUORLI_RAW_BASE=https://raw.githubusercontent.com/danielklessa/squorli/main setzen." \
+      "The image $ref carries no deploy files (/app/deploy): images before version 0.10.4 have none. For such an image set SQUORLI_RAW_BASE=https://raw.githubusercontent.com/danielklessa/squorli/main.")"
+  fi
+  docker rm "$cid" >/dev/null 2>&1 || true
+  cp "$FILES_SRC/deploy/.env.example" "$FILES_SRC/.env.example" 2>/dev/null || die "$(t "Im Image fehlt .env.example" "The image lacks .env.example")"
+  for f in "${DEPLOY_FILES[@]}"; do [ -f "$FILES_SRC/$f" ] || die "$(t "Im Image fehlt $f" "The image lacks $f")"; done
+  FILES_FROM="$ref"
+}
+
 download_files() {
-  step "$(t "Deploy-Dateien laden" "Downloading deploy files")"
+  step "$(t "Deploy-Dateien laden" "Loading deploy files")"
+  fetch_files
   mkdir -p "$DIR/deploy/caddy" "$DIR/deploy/livekit" "$DIR/deploy/proxies"
-  local f tmp
+  local f
   for f in "${DEPLOY_FILES[@]}"; do
-    tmp="$(mktemp)"
-    curl -fsSL "$RAW_BASE/$f" -o "$tmp" || { rm -f "$tmp"; die "$(t "Download fehlgeschlagen" "Download failed"): $RAW_BASE/$f"; }
     # Keep a copy of local edits (e.g. a changed Caddyfile) before replacing a file
-    if [ -f "$DIR/$f" ] && ! cmp -s "$tmp" "$DIR/$f"; then cp "$DIR/$f" "$DIR/$f.bak"; warn "$(t "$f geändert, alte Fassung: $f.bak" "$f changed, old version: $f.bak")"; fi
-    cat "$tmp" > "$DIR/$f"; rm -f "$tmp"
+    if [ -f "$DIR/$f" ] && ! cmp -s "$FILES_SRC/$f" "$DIR/$f"; then cp "$DIR/$f" "$DIR/$f.bak"; warn "$(t "$f geändert, alte Fassung: $f.bak" "$f changed, old version: $f.bak")"; fi
+    cat "$FILES_SRC/$f" > "$DIR/$f"
   done
-  ok "$RAW_BASE"
+  ok "$FILES_FROM"
 }
 
 write_env() {
@@ -610,7 +655,8 @@ write_env() {
   local envf="$DIR/.env"
   umask 077
   if [ ! -f "$envf" ]; then
-    curl -fsSL "$RAW_BASE/.env.example" -o "$envf" || die "$(t "Download fehlgeschlagen" "Download failed"): $RAW_BASE/.env.example"
+    fetch_files
+    cp "$FILES_SRC/.env.example" "$envf" || die "$(t ".env.example fehlt" ".env.example is missing"): $FILES_SRC"
   else
     cp "$envf" "$envf.bak.$(date +%Y%m%d-%H%M%S)"
   fi

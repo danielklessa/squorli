@@ -45,14 +45,16 @@ function deviceSignatureOk(deviceKey: string, signature: string, message: string
  * What is wrong with a bound session's proof, or null when it is good: `missing`, `stale` (the client's clock is more than
  * SESSION_PROOF_MAX_SKEW_MS off, or the proof is old), `domain` (neither PUBLIC_DOMAIN nor the host this request came in
  * on), `signature`. `method`/`path`: of this request (`WS`, `/api/ws` for the hello), the path without its query.
+ * `bodyHash`: the SHA-256 (hex) of this request's JSON body as received (`bodyHash.ts`), "" without one; a version 2
+ * proof (`proof.v2`, 5 October 2026, security audit L-6) signs it, a version 1 proof is checked as before.
  */
-export function sessionProofProblem(proof: SessionProof | null, session: { publicKey: string; deviceKey: string | null }, method: string, path: string, requestHost: string, now = Date.now()): string | null {
+export function sessionProofProblem(proof: SessionProof | null, session: { publicKey: string; deviceKey: string | null }, method: string, path: string, requestHost: string, now = Date.now(), bodyHash = ""): string | null {
   if (!proof) return "missing";
   if (!session.deviceKey) return "signature";
   if (Math.abs(now - proof.at) > SESSION_PROOF_MAX_SKEW_MS) return "stale";
   const domain = proof.domain.toLowerCase();
   if (domain !== policy.domain && domain !== hostOnly(requestHost)) return "domain";
-  const message = deviceProofMessage(session.publicKey, sessionProofMessage(domain, proof.at, method, path));
+  const message = deviceProofMessage(session.publicKey, proof.v2 ? sessionProofMessage(domain, proof.at, method, path, bodyHash) : sessionProofMessage(domain, proof.at, method, path));
   return deviceSignatureOk(session.deviceKey, proof.signature, message) ? null : "signature";
 }
 const pathOf = (url: string): string => url.split("?")[0] ?? url;
@@ -151,7 +153,7 @@ export async function requireSession(db: Db, req: FastifyRequest, reply: Fastify
   }
   // A bound session (security audit S10): the device's fresh proof over this very request, or 401 with the reason and our clock.
   if (session.deviceBound) {
-    const why = sessionProofProblem(parseSessionProofHeader(req.headers[SESSION_PROOF_HEADER]), session, req.method, pathOf(req.url), req.hostname);
+    const why = sessionProofProblem(parseSessionProofHeader(req.headers[SESSION_PROOF_HEADER]), session, req.method, pathOf(req.url), req.hostname, Date.now(), req.bodyHash ?? "");
     if (why) {
       await reply.code(401).send({ error: DEVICE_PROOF_REQUIRED, why, serverTime: new Date().toISOString() });
       return null;

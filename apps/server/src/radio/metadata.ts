@@ -109,7 +109,7 @@ export class RadioMetadata {
       for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
         // The address comes from a member (or a playlist): never connect to the host itself or its private network.
         if ((await checkHost(new URL(url).hostname)) !== "public") { feed.unsupported = true; return; }
-        const r = await openStream(url, attempt.signal);
+        const r = await openStream(url, attempt.signal, this.log);
         const location = r.statusCode && r.statusCode >= 300 && r.statusCode < 400 ? r.headers.location : undefined;
         if (location) {
           r.destroy();
@@ -147,13 +147,28 @@ export class RadioMetadata {
 
 /**
  * Not `fetch`: stations answer an `Icy-MetaData` request with sloppy HTTP often enough (bare line feeds in the header,
- * seen at a large German CDN) that the strict parser refuses them; Node's lenient parser reads them.
+ * seen at a large German CDN) that the strict parser refuses them; Node's lenient parser reads them. The strict parser
+ * goes first and the lenient one is tried only after it refused the answer (an `HPE_*` error; security audit of
+ * 5 October 2026, L-18): this process is the client here, the host was checked and the address pinned (`publicLookup`), so
+ * all a sloppy station can do is shape the title it sends; still, the lenient parser reads only what the strict one
+ * would not, and the log says which stations needed it.
  */
-function openStream(url: string, signal: AbortSignal): Promise<IncomingMessage> {
+export async function openStream(url: string, signal: AbortSignal, log?: Log): Promise<IncomingMessage> {
+  try {
+    return await openStreamWith(url, signal, false);
+  } catch (err) {
+    if (!isParserRefusal(err) || signal.aborted) throw err;
+    log?.info({ url, code: (err as { code?: string }).code }, "radio metadata: sloppy HTTP answer, read with the lenient parser");
+    return openStreamWith(url, signal, true);
+  }
+}
+/** Node's parser errors (`HPE_*`: a bare line feed, an invalid header character, ...), as opposed to a refused connection or a timeout. */
+export const isParserRefusal = (err: unknown): boolean => typeof (err as { code?: unknown })?.code === "string" && (err as { code: string }).code.startsWith("HPE_");
+function openStreamWith(url: string, signal: AbortSignal, lenient: boolean): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const req = (u.protocol === "https:" ? httpsRequest : httpRequest)(u, {
-      method: "GET", signal, insecureHTTPParser: true, lookup: publicLookup,
+      method: "GET", signal, insecureHTTPParser: lenient, lookup: publicLookup,
       headers: { "icy-metadata": "1", "user-agent": "Squorli", accept: "*/*" },
     }, resolve);
     req.on("error", reject);

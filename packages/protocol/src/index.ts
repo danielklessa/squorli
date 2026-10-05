@@ -107,23 +107,38 @@ export function sessionEndReasonOf(reason: unknown): SessionEndReason {
  * else. A request without a good proof answers 401 `device_proof_required` with `why` and the server's `serverTime`; for a
  * `stale` one the client learns its clock's offset and tries once more. On the socket the hello gets `error` `unauthorized`
  * with "device proof <why>" and the close 4003. A session without the binding (an older client, or no device) is as before.
+ *
+ * Version 2 of the proof (5 October 2026, security audit of that day, L-6) signs the body as well: the SHA-256 (hex) of
+ * the JSON body as sent, "" for a request without one or with a multipart body (the hello too). A captured proof then
+ * fits its own request with its own body and nothing else within the ten minutes. The header carries the prefix `v2:`
+ * and the hello's proof `v2: true`; a server that knows version 2 says `sessionProofV2: true` in /api/health, and the
+ * client sends version 2 only to such a server (an older one would read the header as missing). A server takes both
+ * versions until every client is on version 2 (docs/features/devices.md).
  */
 export const SESSION_PROOF_HEADER = "x-squorli-session-proof";
 export const SESSION_PROOF_MAX_SKEW_MS = 10 * 60_000;
 export const DEVICE_PROOF_REQUIRED = "device_proof_required";
-export function sessionProofMessage(domain: string, at: number, method: string, path: string): string {
-  return `community-chat-session\n${domain}\n${at}\n${method.toUpperCase()}\n${path}`;
+/** `bodyHash` undefined = version 1 (method and path alone); a string (also "") = version 2 with the body's hash. */
+export function sessionProofMessage(domain: string, at: number, method: string, path: string, bodyHash?: string): string {
+  if (bodyHash === undefined) return `community-chat-session\n${domain}\n${at}\n${method.toUpperCase()}\n${path}`;
+  return `community-chat-session-v2\n${domain}\n${at}\n${method.toUpperCase()}\n${path}\n${bodyHash}`;
 }
-/** The header's value: `<domain>:<at>:<signature>` (the domain has no port, so no colon of its own). */
-export const sessionProofHeader = (domain: string, at: number, signature: string): string => `${domain}:${at}:${signature}`;
-export type SessionProof = { domain: string; at: number; signature: string };
+/** What version 2 hashes: the body's bytes as sent (UTF-8 of the JSON text), as hex; "" for no body. Isomorphic (WebCrypto). */
+export async function sessionBodyHash(body: string | undefined): Promise<string> {
+  if (body === undefined || body === "") return "";
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+/** The header's value: `<domain>:<at>:<signature>` (the domain has no port, so no colon of its own); version 2 with the prefix `v2:`. */
+export const sessionProofHeader = (domain: string, at: number, signature: string, v2 = false): string => `${v2 ? "v2:" : ""}${domain}:${at}:${signature}`;
+export type SessionProof = { domain: string; at: number; signature: string; v2?: true | undefined };
 export function parseSessionProofHeader(value: unknown): SessionProof | null {
   if (typeof value !== "string") return null;
-  const m = /^([a-z0-9.-]{1,253}):(\d{1,16}):([0-9a-f]{128})$/i.exec(value);
-  return m ? { domain: m[1]!.toLowerCase(), at: Number(m[2]), signature: m[3]!.toLowerCase() } : null;
+  const m = /^(v2:)?([a-z0-9.-]{1,253}):(\d{1,16}):([0-9a-f]{128})$/i.exec(value);
+  return m ? { domain: m[2]!.toLowerCase(), at: Number(m[3]), signature: m[4]!.toLowerCase(), ...(m[1] ? { v2: true as const } : {}) } : null;
 }
-/** The hello's proof (the same signature, over method `WS` and path `/api/ws`). */
-export const SessionProofSchema = z.object({ domain: z.string().min(1).max(253), at: z.number().int().nonnegative(), signature: Signature });
+/** The hello's proof (the same signature, over method `WS` and path `/api/ws`, with an empty body hash in version 2). */
+export const SessionProofSchema = z.object({ domain: z.string().min(1).max(253), at: z.number().int().nonnegative(), signature: Signature, v2: z.literal(true).optional() });
 
 /** What the client signs. The domain binding prevents reuse on other servers. */
 /** The same text as `chatLoginMessage` of directory.ts (the directory checks it as the proof of a sign-in). */

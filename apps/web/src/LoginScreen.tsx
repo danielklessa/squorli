@@ -1,4 +1,4 @@
-import { BACKUP_MIN_PASSWORD, type InvitePreview } from "@squorli/protocol";
+import { BACKUP_NEW_MIN_PASSWORD, type InvitePreview } from "@squorli/protocol";
 import { useEffect, useState } from "react";
 import * as api from "./api";
 import { askConfirm } from "./dialogs";
@@ -115,10 +115,10 @@ export function LoginScreen({ store, state }: { store: Store; state: State }) {
       ) : (
         <>
           <label className="stack"><span>{t("login.setPasswordFor", { handle: saved.handle })}</span>
-            <PasswordInput value={backupPw} onChange={(e) => setBackupPw(e.target.value)} placeholder={t("login.passwordMin", { n: BACKUP_MIN_PASSWORD })} autoComplete="new-password" disabled={backupBusy}
+            <PasswordInput value={backupPw} onChange={(e) => setBackupPw(e.target.value)} placeholder={t("login.passwordMin", { n: BACKUP_NEW_MIN_PASSWORD })} autoComplete="new-password" disabled={backupBusy}
               onKeyDown={(e) => { if (e.key === "Enter") void backup(); }} />
           </label>
-          <button className="secondary" onClick={() => void backup()} disabled={backupBusy || backupPw.length < BACKUP_MIN_PASSWORD}>{backupBusy ? t("login.saving") : t("login.setPassword")}</button>
+          <button className="secondary" onClick={() => void backup()} disabled={backupBusy || backupPw.length < BACKUP_NEW_MIN_PASSWORD}>{backupBusy ? t("login.saving") : t("login.setPassword")}</button>
           <span className="muted small">{t("login.backupHint")}</span>
         </>
       )}

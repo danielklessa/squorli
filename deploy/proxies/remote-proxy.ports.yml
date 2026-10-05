@@ -1,13 +1,15 @@
 # Overlay for a reverse proxy on ANOTHER host (e.g. Nginx Proxy Manager on a second machine).
 # Publishes the app server (3000) and LiveKit signaling (7880) on a network address of this host.
 # Host ports: APP_PORT (default 3000) and LIVEKIT_HTTP_PORT (default 7880) in .env.
-#   Set PROXY_BIND_IP in .env (LAN/VPN IP of this host); if unset: 0.0.0.0 = all interfaces,
-#   then ABSOLUTELY restrict via firewall to the IP of the proxy host. Both ports speak HTTP only.
+#   PROXY_BIND_IP in .env is REQUIRED (the LAN/VPN IP of this host the proxy connects to): without it Compose refuses to
+#   start (until 5 October 2026 the ports fell back to 0.0.0.0, every interface, which Docker opens past ufw/firewalld;
+#   security audit of that day, M-6). Restrict the two ports via firewall to the IP of the proxy host anyway: both speak
+#   HTTP only. 0.0.0.0 is accepted but never a default.
 #   docker compose --env-file ../.env -f compose.yml -f proxies/remote-proxy.ports.yml --profile external up -d
 services:
   server:
     ports:
-      - "${PROXY_BIND_IP:-0.0.0.0}:${APP_PORT:-3000}:3000"
+      - "${PROXY_BIND_IP:?set PROXY_BIND_IP in .env to the LAN or VPN address of this host (the proxy's target); 3000 and 7880 speak plain HTTP}:${APP_PORT:-3000}:3000"
   livekit:
     ports:
-      - "${PROXY_BIND_IP:-0.0.0.0}:${LIVEKIT_HTTP_PORT:-7880}:7880"
+      - "${PROXY_BIND_IP:?set PROXY_BIND_IP in .env to the LAN or VPN address of this host (the proxy's target); 3000 and 7880 speak plain HTTP}:${LIVEKIT_HTTP_PORT:-7880}:7880"
