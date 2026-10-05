@@ -1,4 +1,6 @@
 # test:  typecheck + vitest + build on every push and merge request
+# audit: known vulnerabilities in the production dependencies (pnpm audit --prod) on every push, merge request and tag;
+#        a critical advisory fails the job and with it the build stage, so no image is built with one.
 # build: production image (Dockerfile, target "app") into the project registry on the default branch
 #        (tags <branch-slug>, <short-sha>, latest) and on git tags (<tag>, latest).
 #        Use it on the servers via APP_IMAGE in .env, see deploy/compose.yml.
@@ -48,20 +50,26 @@ test:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
-# Known vulnerabilities in the production dependencies (security audit of 2 October 2026, S15). Shown, never blocking: a new
-# advisory must not stop a release; read the log and update the package (docs/DEVELOPMENT.md, "Dependencies").
+# Known vulnerabilities in the production dependencies (security audit of 2 October 2026, S15; blocking since 5 October 2026,
+# recommendation 13 of that day's audit). The first command shows everything from moderate up and never fails the job; the
+# second fails it on a critical advisory, and with it the build stage (`build`, `build-tag`): no image of a branch or a
+# release is built with a critical advisory in what it ships. From moderate to high: read the log, update the package. A
+# critical advisory without a fix that does not reach the code paths here is excepted in package.json (`pnpm.auditConfig`,
+# the reason in the commit message, removed when the fix comes), never by loosening this job (docs/DEVELOPMENT.md,
+# "Dependencies").
 audit:
   stage: test
   interruptible: true
   image: node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-  allow_failure: true
   before_script:
     - corepack enable
   script:
-    - pnpm audit --prod --audit-level=moderate
+    - pnpm audit --prod --audit-level=moderate || true
+    - pnpm audit --prod --audit-level=critical
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
 
 build:
   stage: build
