@@ -296,11 +296,10 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
   const stored = [...list, ...drafts.filter((d) => !list.some((o) => keyOf(o) === keyOf(d)))];
   const entries: PermissionOverwrite[] = defaultRole && !stored.some((o) => o.targetType === "role" && o.targetId === defaultRole.id)
     ? [{ targetType: "role", targetId: defaultRole.id, allow: 0, deny: 0 }, ...stored] : stored;
+  // Roles in the hierarchy's order as the Roles tab shows it (highest first, the default role last; the user's wish of
+  // 6 October 2026, until then the default role stood at the top), then members by name.
   const ordered = [...entries].sort((a, b) => {
-    const da = defaultRole && a.targetType === "role" && a.targetId === defaultRole.id ? 0 : 1, db = defaultRole && b.targetType === "role" && b.targetId === defaultRole.id ? 0 : 1;
-    if (da !== db) return da - db;
     if (a.targetType !== b.targetType) return a.targetType === "role" ? -1 : 1;
-    // Roles in the owner's order (highest first), members by name.
     if (a.targetType === "role") return positionOf(b) - positionOf(a) || labelOf(a).localeCompare(labelOf(b));
     return labelOf(a).localeCompare(labelOf(b));
   });

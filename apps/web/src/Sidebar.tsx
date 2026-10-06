@@ -115,18 +115,19 @@ export function Sidebar({ server, api, host, currentChannelId, voice, voiceState
     const droppable = c.kind === "voice" && dragging !== null && dragging.from !== c.id;
     // Held by a sticky channel: the other voice channels are out of reach (the server refuses them; App.tsx says so on a click).
     const lockedOut = c.kind === "voice" && !!lock && lock.channelId !== c.id;
-    // Visible but not enterable (an overwrite denies "enter"): dimmed like a locked-out one, the title says why, and the
+    // Visible but not enterable (no CONNECT_VOICE there): a red lock in place of the speaker, the title says why, and the
     // click still asks the server, whose refusal comes back as the same sentence (apiErrorText.ts).
     const noEntry = c.kind === "voice" && !lockedOut && !hasPermission(permsIn(c.id), Permission.CONNECT_VOICE);
     const full = c.kind === "voice" && c.userLimit !== null && members.length >= c.userLimit && !joined;
     return (
-      <li key={c.id} className={`channel ${active ? "active" : ""} ${joined ? "joined" : ""} ${unread[c.id] && !muted[c.id] ? "unread" : ""} ${(mentions[c.id] ?? 0) > 0 ? "mentioned" : ""} ${muted[c.id] ? "muted-channel" : ""} ${droppable ? "droppable" : ""} ${dropTarget === c.id ? "drop-target" : ""} ${lockedOut || noEntry ? "locked-out" : ""}`}
+      <li key={c.id} className={`channel ${active ? "active" : ""} ${joined ? "joined" : ""} ${unread[c.id] && !muted[c.id] ? "unread" : ""} ${(mentions[c.id] ?? 0) > 0 ? "mentioned" : ""} ${muted[c.id] ? "muted-channel" : ""} ${droppable ? "droppable" : ""} ${dropTarget === c.id ? "drop-target" : ""} ${lockedOut ? "locked-out" : ""} ${noEntry ? "no-entry" : ""}`}
         onDragOver={(e) => { if (droppable) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropTarget !== c.id) setDropTarget(c.id); } }}
         onDragLeave={(e) => { if (dropTarget === c.id && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(null); }}
         onDrop={(e) => { if (droppable) { e.preventDefault(); onDrop(c.id); } }}>
         <button className="channel-btn" aria-current={active ? "page" : undefined} onClick={() => (c.kind === "text" ? onSelect(c.id) : onJoinVoice(c.id))} title={lockedOut ? t("voice.stickyBlocked") : noEntry ? t("voice.joinErr.forbidden") : full ? t("sidebar.full") : isAfkChannel ? t("sidebar.afkChannel") : c.topic ?? undefined}
           onContextMenu={(e) => { e.preventDefault(); openChannelMenu(c, e.currentTarget, e.clientX, e.clientY); }}>
-          <span className="channel-icon"><Icon name={c.kind === "text" ? "hash" : isAfkChannel ? "moon" : c.private ? "lock" : "volume-2"} /></span>
+          {/* A voice channel one sees but may not enter shows a red lock (user's wish, 6 October 2026); otherwise a lock means private. */}
+          <span className={`channel-icon${noEntry ? " no-entry" : ""}`}><Icon name={c.kind === "text" ? "hash" : isAfkChannel ? "moon" : c.private || noEntry ? "lock" : "volume-2"} /></span>
           <span className="channel-name">{c.name}</span>
           {c.private && c.kind === "text" && <span className="channel-flag" title={t("sidebar.private")}><Icon name="lock" /></span>}
           {/* A lock stands for "private" only (user's rule, 23 September 2026), so a sticky channel gets a pin. */}

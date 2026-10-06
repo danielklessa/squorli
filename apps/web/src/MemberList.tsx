@@ -8,7 +8,7 @@ import { askConfirm, askInput } from "./dialogs";
 import { Icon } from "./Icon";
 import { GameLine } from "./GameLine";
 import { t } from "./i18n";
-import { assignableRoles, canSetRolesOf, topRoleOf } from "./memberRank";
+import { assignableRoles, canSetRolesOf, rolesByRank, topRoleOf } from "./memberRank";
 import { VoiceMemberActions } from "./VoiceMemberActions";
 import { MemberProfile, type ProfileFriends } from "./MemberProfile";
 import { ReportDialog, type ReportTarget } from "./ReportDialog";
@@ -163,11 +163,14 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
             {/* Everything that acts on the whole server, not on a channel (user's wishes, 24 September 2026): roles, owner status,
                 kick and ban under one "Server" title. */}
             {(() => {
-              const canRolesOf = !!meMember && !isMe && myRoles.length > 0 && canSetRolesOf(meMember, m, roles, ownerId);
+              // One's own roles only as an owner (canSetRolesOf); everybody else sees their own roles read-only (user's wish,
+              // 6 October 2026: "damit ich weiß welche Rollen ich selbst habe").
+              const canRolesOf = !!meMember && myRoles.length > 0 && canSetRolesOf(meMember, m, roles, ownerId);
+              const ownRoles = isMe && !canRolesOf ? rolesByRank(roles.filter((r) => !r.isDefault && roleIds.includes(r.id))) : null;
               const canOwnerOf = iAmOwner && !isMe && (!m.isOwner || m.userId !== ownerId);
               const canRemove = !isMe && !m.isOwner && (canKick || canBan);
               const canReportThis = canReport && !isMe;
-              return (canRolesOf || canOwnerOf || canRemove || canReportThis) && (
+              return (canRolesOf || ownRoles || canOwnerOf || canRemove || canReportThis) && (
                 <div className="stack server-actions">
                   <span className="muted small menu-section-title" title={t("members.serverActionsHint")}><Icon name="server" /> {t("members.serverActions")}</span>
                   {canRolesOf && (
@@ -178,6 +181,18 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
                           {roleIds.includes(x.id) && <Icon name="check" />}
                         </button>
                       ))}
+                    </ContextSubmenu>
+                  )}
+                  {ownRoles && (
+                    <ContextSubmenu label={t("members.roles")}>
+                      {ownRoles.length === 0 && <span className="muted small menu-note">{t("members.noRoles")}</span>}
+                      {ownRoles.map((x) => (
+                        <button key={x.id} role="menuitemcheckbox" aria-checked disabled title={t("members.ownRolesHint")}>
+                          <span style={x.color ? { color: x.color } : undefined}>{x.name}</span>
+                          <Icon name="check" />
+                        </button>
+                      ))}
+                      <span className="muted small menu-note">{t("members.ownRolesHint")}</span>
                     </ContextSubmenu>
                   )}
                   {canOwnerOf && <button role="menuitem" className="secondary small" onClick={() => run(async () => {

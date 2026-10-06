@@ -2,7 +2,7 @@ import { CreateRoleRequest, Permission, UpdateRoleRequest } from "@squorli/proto
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { requireMember } from "../auth/session";
-import { can, canGrant, canTouchRole } from "../authz";
+import { can, canChangeGrant, canGrant, canTouchRole } from "../authz";
 import type { Db } from "../db";
 import { roles } from "../db/schema";
 import type { Hub } from "../hub";
@@ -41,7 +41,8 @@ export async function registerRoleRoutes(app: FastifyInstance, db: Db, hub: Hub,
     if (!role) return reply.code(404).send({ error: "not_found" });
     if (!canTouchRole(m.actor, role.position)) return reply.code(403).send({ error: "role_above_you" });
     if (body.data.position !== undefined && !canTouchRole(m.actor, body.data.position)) return reply.code(403).send({ error: "position_above_you" });
-    if (body.data.permissions !== undefined && !canGrant(m.actor, body.data.permissions)) return reply.code(403).send({ error: "cannot_grant" });
+    // Only the bits that change count (6 October 2026): a role may hold rights the editor lacks, those just stay as they are.
+    if (body.data.permissions !== undefined && !canChangeGrant(m.actor, role.permissions, body.data.permissions)) return reply.code(403).send({ error: "cannot_grant" });
     if (role.isDefault && body.data.position !== undefined && body.data.position !== 0) return reply.code(400).send({ error: "default_role_position_fixed" });
     const [row] = await db.update(roles).set(compact(body.data)).where(eq(roles.id, role.id)).returning();
     // Members in a voice channel: LiveKit's publish grants follow the role's new permissions (livekit/sync.ts).

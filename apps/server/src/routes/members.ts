@@ -73,8 +73,8 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const target = await targetOf(req.params.id);
     if (!target) return reply.code(404).send({ error: "not_found" });
-    // An owner's roles: only the first owner may change them (authz.ts); everyone else by rank.
-    if (!canSetRolesOf(m.actor, target, (await loadSettings(db)).ownerId)) return reply.code(403).send({ error: "target_above_you" });
+    // One's own roles only as an owner (6 October 2026); an owner's roles only by the first owner (authz.ts); everyone else by rank.
+    if (!canSetRolesOf(m.actor, target, (await loadSettings(db)).ownerId)) return reply.code(403).send({ error: target.userId === m.userId ? "own_roles" : "target_above_you" });
 
     const wanted = body.data.roleIds.length ? await db.select().from(roles).where(inArray(roles.id, body.data.roleIds)) : [];
     if (wanted.length !== new Set(body.data.roleIds).size) return reply.code(400).send({ error: "unknown_role" });

@@ -1,6 +1,6 @@
 import { Permission } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
-import { canGrant, canSetRolesOf, canTouchRole, effectivePermissions, outranks, type Actor } from "./authz";
+import { canChangeGrant, canGrant, canSetRolesOf, canTouchRole, effectivePermissions, outranks, type Actor } from "./authz";
 
 const owner: Actor = { userId: "o", isOwner: true, permissions: Permission.ADMINISTRATOR, roleIds: [], topPosition: 0 };
 const mod: Actor = { userId: "m", isOwner: false, permissions: Permission.KICK_MEMBERS | Permission.MANAGE_ROLES, roleIds: [], topPosition: 5 };
@@ -28,6 +28,15 @@ describe("authz", () => {
     expect(canGrant(mod, Permission.BAN_MEMBERS)).toBe(false);
     expect(canGrant({ ...mod, permissions: Permission.ADMINISTRATOR }, Permission.BAN_MEMBERS)).toBe(true);
   });
+  it("editing a mask: only the changed bits count, a foreign bit may stay but not go or come", () => {
+    const foreign = Permission.BAN_MEMBERS | Permission.MANAGE_SERVER;
+    expect(canChangeGrant(mod, foreign, foreign | Permission.KICK_MEMBERS)).toBe(true); // adds one's own
+    expect(canChangeGrant(mod, foreign | Permission.KICK_MEMBERS, foreign)).toBe(true); // removes one's own
+    expect(canChangeGrant(mod, foreign, foreign)).toBe(true); // nothing changed (a name edit sends the mask along)
+    expect(canChangeGrant(mod, foreign, foreign & ~Permission.BAN_MEMBERS)).toBe(false); // takes a foreign one away
+    expect(canChangeGrant(mod, 0, Permission.BAN_MEMBERS)).toBe(false); // adds a foreign one
+    expect(canChangeGrant(owner, 0, Permission.ADMINISTRATOR)).toBe(true);
+  });
   it("owner is administrator regardless of roles", () => {
     expect(effectivePermissions(true, [])).toBe(Permission.ADMINISTRATOR);
     expect(effectivePermissions(false, [1, 4])).toBe(5);
@@ -45,8 +54,10 @@ describe("roles of owners", () => {
     expect(canSetRolesOf(admin, owner2, "f")).toBe(false);
     expect(canSetRolesOf(founder, owner2, null)).toBe(false);
   });
-  it("own roles and lower-ranked members as before", () => {
+  it("own roles only as an owner (6 October 2026), lower-ranked members by rank", () => {
     expect(canSetRolesOf(owner2, owner2, "f")).toBe(true);
+    expect(canSetRolesOf(founder, founder, "f")).toBe(true);
+    expect(canSetRolesOf(admin, admin, "f")).toBe(false);
     expect(canSetRolesOf(admin, { userId: "m", isOwner: false, topPosition: 5 }, "f")).toBe(true);
     expect(canSetRolesOf(admin, { userId: "x", isOwner: false, topPosition: 9 }, "f")).toBe(false);
   });

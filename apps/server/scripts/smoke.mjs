@@ -17,7 +17,7 @@ const OWNER_FILE = join(dirname(fileURLToPath(import.meta.url)), ".smoke-owner.j
 const hex = (b) => Buffer.from(b).toString("hex");
 let failures = 0;
 const check = (label, ok, detail = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${label}${detail ? " " + detail : ""}`); if (!ok) failures++; };
-const P = { ADMINISTRATOR: 1, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK_MEMBERS: 16, BAN_MEMBERS: 32, VIEW_CHANNELS: 128, SEND_MESSAGES: 256, MANAGE_MESSAGES: 512, CONNECT_VOICE: 1024, ATTACH_FILES: 2048, STREAM_VIDEO: 4096, MODERATE_VOICE: 8192, VIEW_VIDEO: 16384, CONTROL_RADIO: 32768, MOVE_MEMBERS: 65536, BYPASS_STICKY: 131072, MANAGE_REPORTS: 262144, ADD_REACTIONS: 524288 };
+const P = { ADMINISTRATOR: 1, MANAGE_SERVER: 2, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK_MEMBERS: 16, BAN_MEMBERS: 32, VIEW_CHANNELS: 128, SEND_MESSAGES: 256, MANAGE_MESSAGES: 512, CONNECT_VOICE: 1024, ATTACH_FILES: 2048, STREAM_VIDEO: 4096, MODERATE_VOICE: 8192, VIEW_VIDEO: 16384, CONTROL_RADIO: 32768, MOVE_MEMBERS: 65536, BYPASS_STICKY: 131072, MANAGE_REPORTS: 262144, ADD_REACTIONS: 524288 };
 
 async function api(method, path, body, token, raw = false, extraHeaders = {}) {
   const headers = { ...extraHeaders };
@@ -529,11 +529,31 @@ check("revoke owner -> back to role permissions", so3 === 200 && stOwn2.members.
   const [, banner] = await api("POST", "/api/roles", { name: "Smoke-Banner", permissions: P.BAN_MEMBERS }, owner.token);
   const [, kicker] = await api("POST", "/api/roles", { name: "Smoke-Kicker", permissions: P.KICK_MEMBERS }, owner.token);
   await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id] }, owner.token);
-  const [sg1, rg1] = await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id, banner.id] }, B.token);
-  const [sg2] = await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id, kicker.id] }, B.token);
+  const [, invC] = await api("POST", "/api/invites", {}, owner.token);
+  const C = await login(await newKey(), invC.code); // a member below the helper
+  await api("PUT", `/api/members/${C.userId}/roles`, { roleIds: [memberRole.id] }, owner.token);
+  const [sg1, rg1] = await api("PUT", `/api/members/${C.userId}/roles`, { roleIds: [memberRole.id, banner.id] }, B.token);
+  const [sg2] = await api("PUT", `/api/members/${C.userId}/roles`, { roleIds: [memberRole.id, kicker.id] }, B.token);
   const [, stG] = await api("GET", "/api/state", undefined, B.token);
-  check("roles: a helper cannot give themselves a role with permissions they lack, one with their own they can", sg1 === 403 && rg1.error === "cannot_grant" && sg2 === 200
-    && (stG.myPermissions & P.BAN_MEMBERS) === 0 && stG.members.find((m) => m.userId === B.userId)?.roleIds.includes(kicker.id), `${sg1} ${rg1.error ?? ""} ${sg2}`);
+  check("roles: a helper cannot give a role with permissions they lack, one with their own they can", sg1 === 403 && rg1.error === "cannot_grant" && sg2 === 200
+    && (stG.myPermissions & P.BAN_MEMBERS) === 0 && stG.members.find((m) => m.userId === C.userId)?.roleIds.includes(kicker.id), `${sg1} ${rg1.error ?? ""} ${sg2}`);
+  // One's own roles only as an owner (6 October 2026): the helper is refused, the owner gives themselves a role and takes it back.
+  const ownerRoles = stG.members.find((m) => m.userId === owner.userId)?.roleIds ?? [];
+  const [sg3, rg3] = await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id, helper.id, kicker.id] }, B.token);
+  const [sg4] = await api("PUT", `/api/members/${owner.userId}/roles`, { roleIds: [...ownerRoles, kicker.id] }, owner.token);
+  const [, stO] = await api("GET", "/api/state", undefined, owner.token);
+  const [sg5] = await api("PUT", `/api/members/${owner.userId}/roles`, { roleIds: ownerRoles }, owner.token);
+  check("roles: one's own roles only as an owner (helper 403 own_roles, owner 200 and back)", sg3 === 403 && rg3.error === "own_roles" && sg4 === 200 && stO.members.find((m) => m.userId === owner.userId)?.roleIds.includes(kicker.id) && sg5 === 200,
+    `${sg3} ${rg3.error ?? ""} ${sg4} ${sg5}`);
+  await api("DELETE", `/api/members/${C.userId}`, undefined, owner.token);
+  // Editing a role that holds a right the helper lacks (6 October 2026, the user's report from a Discord-imported server): only
+  // the bits that change count. A name edit sends the mask along and must get through; a foreign bit may neither go nor come.
+  const [se1] = await api("PATCH", `/api/roles/${banner.id}`, { name: "Smoke-Banner-2", permissions: P.BAN_MEMBERS }, B.token);
+  const [se2] = await api("PATCH", `/api/roles/${banner.id}`, { permissions: P.BAN_MEMBERS | P.KICK_MEMBERS }, B.token);
+  const [se3, re3] = await api("PATCH", `/api/roles/${banner.id}`, { permissions: P.KICK_MEMBERS }, B.token);
+  const [se4, re4] = await api("PATCH", `/api/roles/${banner.id}`, { permissions: P.BAN_MEMBERS | P.KICK_MEMBERS | P.ADMINISTRATOR }, B.token);
+  check("roles: a role with a right one lacks can be edited, that right stays as it is (name 200, own bit added 200, foreign bit removed 403, foreign bit added 403)",
+    se1 === 200 && se2 === 200 && se3 === 403 && re3.error === "cannot_grant" && se4 === 403 && re4.error === "cannot_grant", `${se1} ${se2} ${se3} ${re3.error ?? ""} ${se4} ${re4.error ?? ""}`);
   await api("PUT", `/api/members/${B.userId}/roles`, { roleIds: [memberRole.id, modRole.id] }, owner.token);
   for (const r of [helper, banner, kicker]) await api("DELETE", `/api/roles/${r.id}`, undefined, owner.token);
 }
@@ -1416,6 +1436,14 @@ ${chF.nonce}`), keyF.priv));
   const [sw5] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 }, { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS | P.SEND_MESSAGES, deny: 0 }] }, B.token);
   check("channel perms: write rules (403 without the right, 400 not_channel_permission, 400 allow&deny, 403 cannot_grant, 409 would_lock_out, 200 within one's rights)",
     sw0 === 403 && sw1 === 400 && rw1.error === "not_channel_permission" && sw2 === 400 && sw3 === 403 && rw3.error === "cannot_grant" && sw4 === 409 && rw4.error === "would_lock_out" && sw5 === 200, `${sw0} ${sw1} ${sw2} ${sw3} ${sw4} ${sw5}`);
+  // An entry that holds a right one lacks here may stay in the list untouched (6 October 2026): only the bits that change
+  // against the stored row count, a dropped entry in every bit it had.
+  await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 }, { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS | P.CONTROL_RADIO, deny: 0 }] }, owner.token);
+  const [sw6] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 }, { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS | P.CONTROL_RADIO | P.SEND_MESSAGES, deny: 0 }] }, B.token);
+  const [sw7, rw7] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 }, { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS | P.SEND_MESSAGES, deny: 0 }] }, B.token);
+  const [sw8, rw8] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 }] }, B.token);
+  check("channel perms: an entry with a right one lacks stays untouched (own bit added 200, foreign bit removed 403, entry dropped 403)",
+    sw6 === 200 && sw7 === 403 && rw7.error === "cannot_grant" && sw8 === 403 && rw8.error === "cannot_grant", `${sw6} ${sw7} ${rw7.error ?? ""} ${sw8} ${rw8.error ?? ""}`);
   // ---- Read-only by the everyone deny; slowmode with the exemption.
   await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS | P.SEND_MESSAGES), { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS, deny: 0 }] }, owner.token);
   const [sro] = await api("POST", `/api/channels/${privCh.id}/messages`, { content: "darf ich?" }, G.token);

@@ -38,6 +38,7 @@
 .ic-key-round::before { content: "\e4a3"; }
 .ic-keyboard::before { content: "\e284"; }
 .ic-languages::before { content: "\e0fe"; }
+.ic-layers::before { content: "\e529"; }
 .ic-leaf::before { content: "\e2de"; }
 .ic-lightbulb::before { content: "\e1c2"; }
 .ic-link::before { content: "\e102"; }

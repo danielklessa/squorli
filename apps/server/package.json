@@ -1,6 +1,6 @@
 {
   "name": "@squorli/server",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "private": true,
   "squorli": {
     "autoUpdateFrom": "0.6.0"

@@ -29,11 +29,13 @@ export function topPositionOf(m: Pick<Member, "roleIds" | "isOwner">, roles: rea
 }
 
 /**
- * May `me` change the roles of `target` at all? An owner's roles only by the first owner (`ownerId`); otherwise by an owner or by
- * someone whose highest role stands above the target's. The permission MANAGE_ROLES is checked by the caller.
+ * May `me` change the roles of `target` at all? One's own only as an owner (user's decision, 6 October 2026: the menu shows
+ * one's own roles, somebody above changes them); an owner's roles only by the first owner (`ownerId`); otherwise by an owner or
+ * by someone whose highest role stands above the target's. The permission MANAGE_ROLES is checked by the caller.
  */
 export function canSetRolesOf(me: Pick<Member, "userId" | "roleIds" | "isOwner">, target: Pick<Member, "userId" | "roleIds" | "isOwner">, roles: readonly Role[], ownerId: string | null): boolean {
-  if (target.isOwner) return me.userId === ownerId && target.userId !== me.userId;
+  if (target.userId === me.userId) return me.isOwner;
+  if (target.isOwner) return me.userId === ownerId;
   return me.isOwner || topPositionOf(me, roles) > topPositionOf(target, roles);
 }
 

@@ -28,9 +28,15 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
   type Row = { roleId: string | null; userId: string | null; allow: number; deny: number };
   const toWire = (rows: Row[]): PermissionOverwrite[] => rows.map((r) => ({ targetType: r.roleId ? "role" : "member", targetId: r.roleId ?? r.userId!, allow: r.allow, deny: r.deny }));
 
-  /** null = accepted; otherwise the error the client gets. */
-  async function check(actor: Actor, perms: number, list: PermissionOverwrite[], scope: { id: string; kind: "channel" | "category"; categoryId: string | null }): Promise<{ code: number; error: string } | null> {
+  /**
+   * null = accepted; otherwise the error the client gets. `before` = the rows the list replaces: only the bits an entry
+   * changes against its row need canGrant (6 October 2026, as for editing a role), so an entry that holds a right the editor
+   * lacks here may stay in the list untouched; a dropped entry counts as changed in every bit it had.
+   */
+  async function check(actor: Actor, perms: number, list: PermissionOverwrite[], before: Row[], scope: { id: string; kind: "channel" | "category"; categoryId: string | null }): Promise<{ code: number; error: string } | null> {
     const ids = { role: list.filter((o) => o.targetType === "role").map((o) => o.targetId), member: list.filter((o) => o.targetType === "member").map((o) => o.targetId) };
+    const keyOf = (o: { targetType: "role" | "member"; targetId: string }) => `${o.targetType}:${o.targetId}`;
+    const old = new Map(toWire(before).map((o) => [keyOf(o), o]));
     if (new Set(list.map((o) => `${o.targetType}:${o.targetId}`)).size !== list.length) return { code: 400, error: "bad_request" };
     for (const o of list) {
       if ((o.allow & o.deny) !== 0) return { code: 400, error: "bad_request" };
@@ -41,7 +47,8 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
     if (roleRows.length !== ids.role.length || memberRows.length !== ids.member.length) return { code: 400, error: "unknown_target" };
     const actorIn: Actor = { ...actor, permissions: perms };
     for (const o of list) {
-      if (!canGrant(actorIn, o.allow | o.deny)) return { code: 403, error: "cannot_grant" };
+      const was = old.get(keyOf(o)) ?? { allow: 0, deny: 0 };
+      if (!canGrant(actorIn, (o.allow ^ was.allow) | (o.deny ^ was.deny))) return { code: 403, error: "cannot_grant" };
       if (o.targetType === "role") {
         const role = roleRows.find((r) => r.id === o.targetId)!;
         if (!canTouchRole(actor, role.position)) return { code: 403, error: "role_above_you" };
@@ -50,6 +57,8 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
         if (!target || !outranks(actor, target)) return { code: 403, error: "target_above_you" };
       }
     }
+    const kept = new Set(list.map(keyOf));
+    for (const [key, o] of old) if (!kept.has(key) && !canGrant(actorIn, o.allow | o.deny)) return { code: 403, error: "cannot_grant" };
     // The lock-out guard: what would the actor resolve to with this list in place?
     if (!actor.isOwner && !hasPermission(actor.permissions, Permission.ADMINISTRATOR)) {
       const ctx = await visibility.refresh(db);
@@ -78,7 +87,8 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
     if (!hasPermission(c.perms, Permission.MANAGE_CHANNELS)) return reply.code(403).send({ error: "forbidden" });
     const body = SetOverwritesRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
-    const refused = await check(c.actor, c.perms, body.data.overwrites, { id: c.channel.id, kind: "channel", categoryId: c.channel.categoryId });
+    const before = await db.select().from(channelOverwrites).where(eq(channelOverwrites.channelId, c.channel.id));
+    const refused = await check(c.actor, c.perms, body.data.overwrites, before, { id: c.channel.id, kind: "channel", categoryId: c.channel.categoryId });
     if (refused) return reply.code(refused.code).send({ error: refused.error });
     await db.transaction(async (tx) => {
       await tx.delete(channelOverwrites).where(eq(channelOverwrites.channelId, c.channel.id));
@@ -117,7 +127,8 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
     if (!c) return;
     const body = SetOverwritesRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
-    const refused = await check(c.actor, c.perms, body.data.overwrites, { id: c.category.id, kind: "category", categoryId: null });
+    const before = await db.select().from(categoryOverwrites).where(eq(categoryOverwrites.categoryId, c.category.id));
+    const refused = await check(c.actor, c.perms, body.data.overwrites, before, { id: c.category.id, kind: "category", categoryId: null });
     if (refused) return reply.code(refused.code).send({ error: refused.error });
     await db.transaction(async (tx) => {
       await tx.delete(categoryOverwrites).where(eq(categoryOverwrites.categoryId, c.category.id));

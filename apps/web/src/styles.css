@@ -624,6 +624,20 @@ button.dock-stage:hover { background: var(--sel); }
 .role-edit { min-width: 0; }
 .role-edit > .row > input:not([type=color]) { width: 100%; min-width: 0; flex: 1; }
 .role-edit .perm-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+/* The combination check of Verwaltung > Rollen (6 October 2026): the button under the role list, the view in the editor's place. */
+.roles-list .combo-btn { width: 100%; margin-top: 0.75rem; display: inline-flex; gap: 0.4rem; align-items: center; justify-content: center; }
+.roles-list .combo-btn.active { background: var(--sel); border-color: var(--brand); }
+.role-combo { min-width: 0; }
+.role-combo .combo-roles { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
+.role-combo .perm-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+.combo-perm { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: 0.4rem; align-items: baseline; color: var(--muted); }
+.combo-perm.has { color: var(--text); }
+.combo-perm.has .combo-mark { color: var(--ok); }
+.combo-perm small { grid-column: 2; display: block; }
+/* A note inside a context submenu (the own roles of the member menu, 6 October 2026). */
+.menu-note { display: block; padding: 0.25rem 0.6rem; max-width: 16rem; white-space: normal; }
+/* A voice channel one sees but may not enter: a red lock in place of the speaker (6 October 2026). */
+.channel-icon.no-entry { color: var(--danger); opacity: 1; }
 @media (max-width: 600px) {
   .roles { grid-template-columns: minmax(7rem, 0.8fr) minmax(0, 1fr); gap: 0.5rem; }
 }

@@ -20,6 +20,11 @@ describe("member rank", () => {
     expect(canSetRolesOf(owner2, m("owner3", [], true), roles, "founder")).toBe(false);
     expect(canSetRolesOf(admin, owner2, roles, "founder")).toBe(false);
   });
+  it("one's own roles only as an owner (6 October 2026)", () => {
+    expect(canSetRolesOf(founder, founder, roles, "founder")).toBe(true);
+    expect(canSetRolesOf(owner2, owner2, roles, "founder")).toBe(true);
+    expect(canSetRolesOf(admin, admin, roles, "founder")).toBe(false);
+  });
   it("otherwise needs an owner or a higher role than the target's", () => {
     expect(canSetRolesOf(owner2, admin, roles, "founder")).toBe(true);
     expect(canSetRolesOf(admin, mod, roles, "founder")).toBe(true);

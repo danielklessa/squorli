@@ -294,6 +294,7 @@ function DoctorSection({ api, run }: { api: ServerApi; run: RunFn }) {
 
 function RolesTab({ api, server, myUserId, run, save }: { api: ServerApi; server: ServerState; myUserId: string; run: RunFn; save: RunFn }) {
   const [sel, setSel] = useState<string | null>(server.roles.find((r) => !r.isDefault)?.id ?? server.roles[0]?.id ?? null);
+  const [combo, setCombo] = useState(false);
   const [newName, setNewName] = useState("");
   const role = server.roles.find((r) => r.id === sel) ?? null;
   const [name, setName] = useState(role?.name ?? "");
@@ -348,7 +349,7 @@ function RolesTab({ api, server, myUserId, run, save }: { api: ServerApi; server
               onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", r.id); if (e.currentTarget.parentElement) e.dataTransfer.setDragImage(e.currentTarget.parentElement, 16, 16); setDragId(r.id); }}
               onDragEnd={() => { setDragId(null); setDrop(null); }}
               onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); moveRole(r.id, e.key === "ArrowUp" ? -1 : 1); } }}><Icon name="grip-vertical" /></button> : <span className="role-fixed" title={t("admin.roleFixed")}><Icon name="lock" /></span>}
-            <button className="role-select" title={r.name} aria-pressed={r.id === sel} style={r.color ? { color: r.color } : undefined} onClick={() => setSel(r.id)}>{r.name}{r.isDefault && <span className="muted small"> {t("admin.defaultRole")}</span>}</button>
+            <button className="role-select" title={r.name} aria-pressed={r.id === sel && !combo} style={r.color ? { color: r.color } : undefined} onClick={() => { setSel(r.id); setCombo(false); }}>{r.name}{r.isDefault && <span className="muted small"> {t("admin.defaultRole")}</span>}</button>
             {index >= 0 && <div className="role-sort-actions">
               <button className="icon" disabled={saving || index === 0} title={t("admin.up")} aria-label={`${r.name}: ${t("admin.up")}`} onClick={() => moveRole(r.id, -1)}><Icon name="chevron-up" /></button>
               <button className="icon" disabled={saving || index === editable.length - 1} title={t("admin.down")} aria-label={`${r.name}: ${t("admin.down")}`} onClick={() => moveRole(r.id, 1)}><Icon name="chevron-down" /></button>
@@ -358,10 +359,12 @@ function RolesTab({ api, server, myUserId, run, save }: { api: ServerApi; server
         <p className="muted small" role="status">{saving ? t("admin.orderSaving") : notice}</p>
         <div className="row">
           <input value={newName} placeholder={t("admin.newRole")} onChange={(e) => setNewName(e.target.value)} />
-          <button disabled={saving || !newName.trim()} aria-label={t("admin.newRole")} onClick={() => run(() => api.createRole({ name: newName.trim() }).then((r) => { setNewName(""); setSel(r.id); }))}>+</button>
+          <button disabled={saving || !newName.trim()} aria-label={t("admin.newRole")} onClick={() => run(() => api.createRole({ name: newName.trim() }).then((r) => { setNewName(""); setSel(r.id); setCombo(false); }))}>+</button>
         </div>
+        {/* The combination check (user's wish, 6 October 2026): what a set of roles adds up to, in the editor's place. */}
+        <button className={`secondary combo-btn${combo ? " active" : ""}`} aria-pressed={combo} onClick={() => setCombo(!combo)}><Icon name="layers" /> {t("admin.combo")}</button>
       </div>
-      {role && (
+      {combo ? <RoleCombo server={server} /> : role && (
         <div className="stack role-edit">
           <div className="row">
             <input value={name} maxLength={32} onChange={(e) => setName(e.target.value)} disabled={role.isDefault} />
@@ -372,12 +375,16 @@ function RolesTab({ api, server, myUserId, run, save }: { api: ServerApi; server
             <fieldset key={g.id} className="perm-group">
               <legend>{t(`permGroup.${g.id}`)}</legend>
               <div className="perm-grid">
-                {g.permissions.map((n) => (
-                  <label key={n} className="check">
-                    <input type="checkbox" checked={(perms & Permission[n]) !== 0} onChange={(e) => setPerms(e.target.checked ? perms | Permission[n] : perms & ~Permission[n])} />
-                    {t(`perm.${n}`)}
-                  </label>
-                ))}
+                {g.permissions.map((n) => {
+                  // A right one does not hold stays as it is (the server's canChangeGrant): the box shows it, locked, with the reason.
+                  const ok = hasPermission(server.myPermissions, Permission[n]);
+                  return (
+                    <label key={n} className="check" title={ok ? undefined : t("admin.notGrantable")}>
+                      <input type="checkbox" checked={(perms & Permission[n]) !== 0} disabled={!ok} onChange={(e) => setPerms(e.target.checked ? perms | Permission[n] : perms & ~Permission[n])} />
+                      {t(`perm.${n}`)}
+                    </label>
+                  );
+                })}
               </div>
             </fieldset>
           ))}
@@ -389,6 +396,65 @@ function RolesTab({ api, server, myUserId, run, save }: { api: ServerApi; server
           <p className="muted small">{t("admin.roleHint")}</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The combination check of Verwaltung > Rollen (user's wish, 6 October 2026, instead of allow/deny states on roles: "eine neue
+ * Ansicht wo man die Auswirkungen der Rollenkombinationen sehen kann"): tick roles, or take a member's, and read what they
+ * add up to, right by right with the roles that give it. The rule is the server's `effectivePermissions`: the default role for
+ * everybody plus the OR of the ticked roles; an owner is always an administrator.
+ */
+function RoleCombo({ server }: { server: ServerState }) {
+  const [picked, setPicked] = useState<string[]>([]);
+  const [memberId, setMemberId] = useState("");
+  const sorted = rolesByRank(server.roles);
+  const member = server.members.find((m) => m.userId === memberId) ?? null;
+  const chosen = sorted.filter((r) => r.isDefault || picked.includes(r.id));
+  const mask = member?.isOwner ? Permission.ADMINISTRATOR : chosen.reduce((m, r) => m | r.permissions, 0);
+  const admin = hasPermission(mask, Permission.ADMINISTRATOR);
+  const members = [...server.members].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const takeMember = (id: string) => { setMemberId(id); setPicked(server.members.find((m) => m.userId === id)?.roleIds ?? []); };
+  const toggle = (id: string) => { setMemberId(""); setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]); };
+  return (
+    <div className="stack role-combo">
+      <p className="muted small">{t("admin.comboHint")}</p>
+      <label className="row">
+        <span>{t("admin.comboMember")}</span>
+        <select value={memberId} onChange={(e) => takeMember(e.target.value)}>
+          <option value="">{t("admin.comboNobody")}</option>
+          {members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName}</option>)}
+        </select>
+      </label>
+      <div className="combo-roles">
+        {sorted.map((r) => (
+          <label key={r.id} className="check">
+            <input type="checkbox" checked={r.isDefault || picked.includes(r.id)} disabled={r.isDefault} onChange={() => toggle(r.id)} />
+            <span style={r.color ? { color: r.color } : undefined}>{r.name}</span>{r.isDefault && <span className="muted small"> {t("admin.defaultRole")}</span>}
+          </label>
+        ))}
+      </div>
+      {member?.isOwner && <p className="muted small">{t("admin.comboOwner")}</p>}
+      {admin && !member?.isOwner && <p className="muted small">{t("admin.comboAdmin")}</p>}
+      {PERMISSION_GROUPS.map((g) => (
+        <fieldset key={g.id} className="perm-group">
+          <legend>{t(`permGroup.${g.id}`)}</legend>
+          <div className="perm-grid">
+            {g.permissions.map((n) => {
+              const has = hasPermission(mask, Permission[n]);
+              const via = admin ? [] : chosen.filter((r) => (r.permissions & Permission[n]) !== 0).map((r) => r.name);
+              return (
+                <div key={n} className={`combo-perm${has ? " has" : ""}`}>
+                  <span className="combo-mark">{has ? <Icon name="check" /> : <Icon name="x" />}</span>
+                  <span>{t(`perm.${n}`)}</span>
+                  {via.length > 0 && <small className="muted">{via.join(", ")}</small>}
+                </div>
+              );
+            })}
+          </div>
+        </fieldset>
+      ))}
     </div>
   );
 }
