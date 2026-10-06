@@ -12,6 +12,9 @@ describe("protocol", () => {
   it("carries read states and the event for my other devices", () => {
     expect(ReadStateResponse.safeParse({ channels: [{ channelId: U1, lastReadSeq: null, latestSeq: null, unread: false, mentions: 0 }, { channelId: U1, lastReadSeq: 4, latestSeq: 9, unread: true, mentions: 2 }] }).success).toBe(true);
     expect(ReadStateResponse.safeParse({ channels: [{ channelId: U1, lastReadSeq: 4, latestSeq: 9, unread: true, mentions: -1 }] }).success).toBe(false);
+    // The number of unread messages (collapsed categories): optional, never negative.
+    expect(ReadStateResponse.safeParse({ channels: [{ channelId: U1, lastReadSeq: 4, latestSeq: 9, unread: true, unreadCount: 5, mentions: 2 }] }).success).toBe(true);
+    expect(ReadStateResponse.safeParse({ channels: [{ channelId: U1, lastReadSeq: 4, latestSeq: 9, unread: true, unreadCount: -1, mentions: 2 }] }).success).toBe(false);
     expect(MarkReadRequest.safeParse({ seq: 12 }).success).toBe(true);
     expect(MarkReadRequest.safeParse({ seq: -1 }).success).toBe(false);
     expect(MarkReadRequest.safeParse({ seq: 1.5 }).success).toBe(false);
@@ -20,6 +23,7 @@ describe("protocol", () => {
     const old = ReadStateResponse.parse({ channels: [{ channelId: U1, lastReadSeq: 4, latestSeq: 9, unread: true, mentions: 0 }] });
     expect(old.serverMuted).toBe(false);
     expect(old.channels[0]?.muted).toBe(false);
+    expect(old.channels[0]?.unreadCount).toBeUndefined();
     expect(ServerEvent.safeParse({ type: "mute.update", serverMuted: true, channelIds: [U1] }).success).toBe(true);
     expect(MuteRequest.safeParse({ muted: "ja" }).success).toBe(false);
   });
@@ -136,8 +140,13 @@ describe("permissions", () => {
     expect(Permission.BYPASS_STICKY).toBe(131072);
     // Reports (26 September 2026): migration 0036 gives MANAGE_REPORTS to every role with MANAGE_MESSAGES.
     expect(Permission.MANAGE_REPORTS).toBe(262144);
+    // Reactions (6 October 2026): migration 0042 gives ADD_REACTIONS to every role with SEND_MESSAGES; guests stay without.
+    expect(Permission.ADD_REACTIONS).toBe(524288);
+    expect(CHANNEL_OVERRIDABLE & Permission.ADD_REACTIONS).toBe(Permission.ADD_REACTIONS);
+    expect(CHANNEL_OVERRIDABLE & Permission.MANAGE_NOTICES).toBe(Permission.MANAGE_NOTICES);
+    expect(hasPermission(DEFAULT_EVERYONE_PERMISSIONS, Permission.ADD_REACTIONS)).toBe(false);
     expect(DEFAULT_EVERYONE_PERMISSIONS).toBe(1152);
-    expect(DEFAULT_MEMBER_PERMISSIONS).toBe(7616 | 16384);
+    expect(DEFAULT_MEMBER_PERMISSIONS).toBe(7616 | 16384 | 524288);
     expect(permissionNames(Permission.KICK_MEMBERS | Permission.BAN_MEMBERS)).toEqual(["KICK_MEMBERS", "BAN_MEMBERS"]);
   });
 });

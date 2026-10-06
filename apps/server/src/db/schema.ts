@@ -318,6 +318,8 @@ export const messages = pgTable(
      * with `removed` the ones the author took away (kept so that an edit does not bring them back). null = none looked up.
      */
     previews: jsonb("previews").$type<(LinkPreview & { removed?: boolean })[]>(),
+    /** A notice (docs/features/notices.md): shown without its author. Set with MANAGE_NOTICES in the channel. */
+    notice: boolean("notice").notNull().default(false),
     createdAt: ts("created_at").notNull().defaultNow(),
     editedAt: ts("edited_at"),
   },
@@ -416,3 +418,41 @@ export const attachments = pgTable("attachments", {
   mimeType: text("mime_type").notNull(),
   createdAt: ts("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Emoji reactions on channel messages (docs/features/reactions.md, 6 October 2026). `emoji_key` = the emoji without the
+ * selector U+FE0F (the protocol's `emojiKey`), the identity a member reacts with once; `emoji` = as the first sender wrote it,
+ * what clients draw. A deleted message or user takes the rows along.
+ */
+export const messageReactions = pgTable(
+  "message_reactions",
+  {
+    messageId: uuid("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    emojiKey: text("emoji_key").notNull(),
+    emoji: text("emoji").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.messageId, t.userId, t.emojiKey] }), byMessage: index("message_reactions_message_idx").on(t.messageId, t.createdAt) }),
+);
+
+/**
+ * Reaction roles (docs/features/reactions.md): "this emoji on this message gives that role". `channel_id` is the message's,
+ * kept here for the overview and the visibility check without a join. A deleted role, message or channel takes its rules
+ * along; the reactions themselves stay. `remove_on_unreact` = take the role away again when the reaction goes (default off).
+ */
+export const reactionRoles = pgTable(
+  "reaction_roles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+    channelId: uuid("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    emojiKey: text("emoji_key").notNull(),
+    emoji: text("emoji").notNull(),
+    roleId: uuid("role_id").notNull().references(() => roles.id, { onDelete: "cascade" }),
+    removeOnUnreact: boolean("remove_on_unreact").notNull().default(false),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({ uq: uniqueIndex("reaction_roles_message_emoji_uq").on(t.messageId, t.emojiKey), byRole: index("reaction_roles_role_idx").on(t.roleId) }),
+);

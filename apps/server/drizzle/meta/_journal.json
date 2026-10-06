@@ -288,6 +288,34 @@
       "when": 1791116710322,
       "tag": "0040_tense_thunderbird",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791276714749,
+      "tag": "0041_yellow_post",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1791276723216,
+      "tag": "0042_add_reactions_permission",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791309460744,
+      "tag": "0043_woozy_wallflower",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1791309461744,
+      "tag": "0044_add_notices_permission",
+      "breakpoints": true
     }
   ]
 }

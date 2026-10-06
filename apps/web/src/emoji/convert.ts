@@ -1,3 +1,4 @@
+import { EMOJI_SOURCE } from "@squorli/protocol";
 import { SHORTCODES } from "./shortcodes";
 
 /**
@@ -7,13 +8,9 @@ import { SHORTCODES } from "./shortcodes";
  * spans, code blocks and addresses never pass through here, and a backslash keeps a form literal (`\:)`).
  */
 
-// One emoji as a user perceives it: flag, keycap, tag sequence (England, Scotland, Wales) or a pictograph with optional
-// variation selector and skin tone, joined by ZWJ into families, professions and the like. Characters whose default is
-// text presentation (©, ™, ↔, ☺ ...) only count with the emoji selector U+FE0F or a skin tone, so plain typography stays text.
-const PART = String.raw`(?:\p{Emoji_Presentation}️?|\p{Extended_Pictographic}️|\p{Emoji_Modifier_Base}(?=\p{Emoji_Modifier}))\p{Emoji_Modifier}?`;
-const JOINED = String.raw`‍\p{Extended_Pictographic}️?\p{Emoji_Modifier}?`;
-const EMOJI = String.raw`\p{Regional_Indicator}{2}|[#*0-9]️?⃣|\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}|${PART}(?:${JOINED})*`;
-const emojiRe = new RegExp(EMOJI, "gu");
+// One emoji as a user perceives it: the rule lives in the protocol (`EMOJI_SOURCE` in primitives.ts, since 6 October 2026 shared
+// with the server's reaction check and the direct messages' reaction control), so text and reactions agree on what one emoji is.
+const emojiRe = new RegExp(EMOJI_SOURCE, "gu");
 
 export type TextPiece = { emoji: boolean; text: string };
 

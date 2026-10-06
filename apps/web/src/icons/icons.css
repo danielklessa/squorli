@@ -3,6 +3,7 @@
 .ic { font-family: "lucide" !important; font-style: normal; font-weight: normal; line-height: 1; display: inline-block; vertical-align: -0.125em; -webkit-font-smoothing: antialiased; }
 .ic-activity::before { content: "\e038"; }
 .ic-app-window::before { content: "\e426"; }
+.ic-arrow-right::before { content: "\e049"; }
 .ic-audio-lines::before { content: "\e55a"; }
 .ic-ban::before { content: "\e051"; }
 .ic-bell::before { content: "\e059"; }
@@ -45,6 +46,7 @@
 .ic-log-out::before { content: "\e10e"; }
 .ic-maximize::before { content: "\e112"; }
 .ic-megaphone::before { content: "\e235"; }
+.ic-megaphone-off::before { content: "\e370"; }
 .ic-message-circle::before { content: "\e116"; }
 .ic-mic::before { content: "\e118"; }
 .ic-mic-off::before { content: "\e119"; }
@@ -70,9 +72,11 @@
 .ic-server::before { content: "\e153"; }
 .ic-settings::before { content: "\e154"; }
 .ic-shield::before { content: "\e158"; }
+.ic-shield-plus::before { content: "\e519"; }
 .ic-skip-back::before { content: "\e15f"; }
 .ic-skip-forward::before { content: "\e160"; }
 .ic-smile::before { content: "\e164"; }
+.ic-smile-plus::before { content: "\e301"; }
 .ic-square::before { content: "\e167"; }
 .ic-thumbs-down::before { content: "\e189"; }
 .ic-thumbs-up::before { content: "\e18a"; }

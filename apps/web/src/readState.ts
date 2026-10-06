@@ -9,7 +9,7 @@ import { mentionsUser } from "./mentions";
  */
 export type ReadState = Record<string, number>;
 
-export type CatchUp = { unread: boolean; mentions: number; latest: number | null };
+export type CatchUp = { unread: boolean; count: number; mentions: number; latest: number | null };
 
 /**
  * State of one channel from its newest messages. `lastRead` undefined = this device has never seen the channel: nothing
@@ -18,9 +18,9 @@ export type CatchUp = { unread: boolean; mentions: number; latest: number | null
  */
 export function catchUp(messages: readonly Message[], lastRead: number | undefined, myUserId: string, ignoreAuthors?: ReadonlySet<string>): CatchUp {
   const latest = messages.reduce<number | null>((max, m) => (max === null || m.seq > max ? m.seq : max), null);
-  if (lastRead === undefined) return { unread: false, mentions: 0, latest };
+  if (lastRead === undefined) return { unread: false, count: 0, mentions: 0, latest };
   const fresh = messages.filter((m) => m.seq > lastRead && m.authorId !== myUserId && !ignoreAuthors?.has(m.authorId));
-  return { unread: fresh.length > 0, mentions: fresh.filter((m) => mentionsUser(m.content, myUserId)).length, latest };
+  return { unread: fresh.length > 0, count: fresh.length, mentions: fresh.filter((m) => mentionsUser(m.content, myUserId)).length, latest };
 }
 
 /** Read state after showing `messages` of a channel; unchanged (same object) when nothing newer was shown. */

@@ -176,6 +176,8 @@ export async function loadState(db: Db, hub: Hub, userId: string): Promise<Serve
     myChannelPermissions: visibleMasks(masks), myVoiceLock: visibility.voiceLockOf(userId),
     // Reports (docs/features/reports.md): the open count only for whoever handles them; the field's presence tells the client the server takes reports.
     openReports: actor && hasPermission(actor.permissions, Permission.MANAGE_REPORTS) ? await openReportCount(db) : 0,
+    // Reactions and reaction roles (docs/features/reactions.md): the flag tells the client the routes exist.
+    reactions: true,
   };
 }
 

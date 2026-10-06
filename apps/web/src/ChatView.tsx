@@ -1,13 +1,16 @@
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Avatar } from "./Avatar";
-import { Permission, hasPermission, type Channel, type Member, type Message } from "@squorli/protocol";
+import { Permission, hasPermission, type Channel, type Member, type Message, type Role } from "@squorli/protocol";
 import { ApiError } from "./api";
+import { reactionErrorText } from "./apiErrorText";
 import type { BlockControls } from "./blocked";
 import { slowmodeLabel, slowmodeRemaining } from "./channelPerms";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { askConfirm } from "./dialogs";
-import { EmojiButton } from "./EmojiPicker";
+import { EmojiButton, EmojiPicker } from "./EmojiPicker";
 import { Icon } from "./Icon";
+import { Reactions } from "./Reactions";
+import { ReactionRolesDialog } from "./ReactionRolesDialog";
 import { LinkPreviews } from "./LinkPreviews";
 import { MentionContext, MessageText } from "./MessageText";
 import { useMentionSuggest } from "./MentionSuggest";
@@ -37,6 +40,10 @@ type Props = {
    * the directory, and this server's host there. null = not offered (no directory account, or the directory takes none).
    */
   passOn?: (Omit<DirectorySide, "passOn"> & { serverHost: string }) | null;
+  /** Reaction roles (docs/features/reactions.md): the shield in a message's toolbar, MANAGE_ROLES against a server that does reactions. */
+  canReactionRoles?: boolean;
+  /** The server's roles, for the chips' tooltips and the rules dialog. */
+  roles?: readonly Role[];
 };
 
 const GROUP_MS = 5 * 60_000;
@@ -60,8 +67,11 @@ function PendingFile({ file, onRemove }: { file: File; onRemove: () => void }) {
   );
 }
 
-export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null, passOn = null }: Props) {
+export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null, passOn = null, canReactionRoles = false, roles = [] }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  // Reactions (docs/features/reactions.md): the picker opened from a message's toolbar, and the rules dialog of a message.
+  const [pickerFor, setPickerFor] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const [rulesFor, setRulesFor] = useState<Message | null>(null);
   /** The reported message as it shows here, in case the report is passed on to the directory's operator. */
   const [reportedMessage, setReportedMessage] = useState<{ text: string; authorName: string; authorKey: string | null; channelName: string; sentAt: string } | null>(null);
   const [draft, setDraft] = useState("");
@@ -83,6 +93,16 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
   const canSend = hasPermission(myPermissions, Permission.SEND_MESSAGES);
   const canAttach = hasPermission(myPermissions, Permission.ATTACH_FILES);
   const canManage = hasPermission(myPermissions, Permission.MANAGE_MESSAGES);
+  const canReact = hasPermission(myPermissions, Permission.ADD_REACTIONS);
+  // Notices (docs/features/notices.md): the megaphone in a message's toolbar turns it into a notice and back.
+  const canNotice = hasPermission(myPermissions, Permission.MANAGE_NOTICES);
+  const me = useMemo(() => members.find((m) => m.userId === myUserId), [members, myUserId]);
+  const react = (m: Message, emoji: string, on: boolean) => conn.react(channel.id, m.id, emoji, on).catch((e) => { setErr(reactionErrorText(e)); throw e; });
+  /** Who reacted with one emoji, as names: me as "Du", a former member by that name. */
+  const whoOf = (messageId: string) => async (emoji: string) => {
+    const r = await conn.api.reactionUsers(messageId, emoji);
+    return { names: r.userIds.map((id) => (id === myUserId ? t("chat.reactionYou") : nameOf.get(id) ?? t("chat.formerMember"))), more: r.total - r.userIds.length };
+  };
   // Slowmode (docs/features/channel-permissions.md): the wait since my last message here, counted down only while it runs;
   // whoever manages messages in the channel is exempt, as on the server. A 429 from the server sets the clock right.
   const slowmode = canManage ? 0 : channel.slowmodeSeconds;
@@ -96,7 +116,7 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
   }, [waitLeft]);
 
   // Stay at the bottom when switching channels and on new messages, unless the user has scrolled up.
-  useEffect(() => { stickToBottom.current = true; setDraft(""); setFiles([]); setEditing(null); setLastSentAt(null); mention.picked.clear(); mention.close(); editMention.close(); }, [channel.id]);
+  useEffect(() => { stickToBottom.current = true; setDraft(""); setFiles([]); setEditing(null); setLastSentAt(null); setPickerFor(null); setRulesFor(null); mention.picked.clear(); mention.close(); editMention.close(); }, [channel.id]);
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
@@ -190,7 +210,8 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
         {messages.loaded && !messages.hasMore && <p className="muted center">{t("chat.beginning", { name: channel.name })}</p>}
         {messages.list.map((m, i) => {
           const prev = messages.list[i - 1];
-          const grouped = prev && prev.authorId === m.authorId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
+          // A notice never groups: it carries no author, and the message after it needs its head again.
+          const grouped = prev && !prev.notice && !m.notice && prev.authorId === m.authorId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
           const newDay = !prev || fmtDay(prev.createdAt) !== fmtDay(m.createdAt);
           const mine = m.authorId === myUserId;
           const fromBlocked = blockedAuthors.has(m.authorId);
@@ -208,8 +229,10 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
           return (
             <div key={m.id}>
               {newDay && <div className="day-sep"><span>{fmtDay(m.createdAt)}</span></div>}
-              <article className={`msg ${grouped && !newDay ? "grouped" : ""} ${mentioned ? "mentions-me" : ""}`}>
-                {!(grouped && !newDay) && (
+              <article className={`msg ${m.notice ? "notice" : ""} ${grouped && !newDay ? "grouped" : ""} ${mentioned ? "mentions-me" : ""} ${pickerFor?.id === m.id ? "picker-open" : ""}`}>
+                {/* A notice shows no author: only the time, where the avatar normally stands (user's wish, 6 October 2026). */}
+                {m.notice && <time className="muted notice-time" dateTime={m.createdAt} title={t("chat.notice")}>{fmtTime(m.createdAt)}</time>}
+                {!m.notice && !(grouped && !newDay) && (
                   <div className="msg-head">
                     <Avatar name={nameOf.get(m.authorId) ?? t("chat.formerMember")} src={avatarOf.get(m.authorId)} />
                     <strong>{nameOf.get(m.authorId) ?? t("chat.formerMember")}</strong>
@@ -238,11 +261,17 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
                           : <a key={a.id} className="attachment" href={safeHref(conn.api.abs(a.url))} target="_blank" rel="noreferrer"><Icon name="paperclip" /> {a.name} <span className="muted">({fmtSize(a.size)})</span></a>
                       ))}
                       {m.previews && <LinkPreviews messageId={m.id} previews={m.previews} mine={mine} conn={conn} onError={setErr} />}
+                      {m.reactions && m.reactions.length > 0 && <Reactions chips={m.reactions} canReact={canReact} roles={roles} onToggle={(emoji, on) => react(m, emoji, on)} whoOf={whoOf(m.id)} onError={setErr} />}
                     </>
                   )}
                 </div>
-                {(mine || canManage || canReport || fromBlocked) && editing?.id !== m.id && (
+                {(mine || canManage || canNotice || canReport || fromBlocked || (m.reactions && (canReact || canReactionRoles))) && editing?.id !== m.id && (
                   <div className="msg-actions">
+                    {canNotice && (m.notice
+                      ? <button className="icon" title={t("chat.unmakeNotice")} onClick={() => conn.api.setNotice(m.id, false).catch((e: unknown) => setErr(String(e)))}><Icon name="megaphone-off" /></button>
+                      : <button className="icon" title={t("chat.makeNotice")} onClick={() => conn.api.setNotice(m.id, true).catch((e: unknown) => setErr(String(e)))}><Icon name="megaphone" /></button>)}
+                    {m.reactions && canReact && !m.reactions.some((c) => c.roleId) && <button className="icon" title={t("chat.react")} aria-haspopup="dialog" aria-expanded={pickerFor?.id === m.id} onClick={(e) => setPickerFor((cur) => (cur?.id === m.id ? null : { id: m.id, anchor: e.currentTarget }))}><Icon name="smile-plus" /></button>}
+                    {m.reactions && canReactionRoles && me && <button className="icon" title={t("chat.reactionRoles")} onClick={() => setRulesFor(m)}><Icon name="shield-plus" /></button>}
                     {fromBlocked && <button className="icon" title={t("block.hide")} onClick={() => setRevealed((prev) => { const next = new Set(prev); next.delete(m.id); return next; })}><Icon name="eye-off" /></button>}
                     {!mine && canReport && <button className="icon" title={t("report.reportMessage")} onClick={() => {
                       const text = m.content ? decodeMentions(m.content, members).text : t("chat.attachments", { n: m.attachments.length });
@@ -259,6 +288,8 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
         })}
       </div>
       </MentionContext.Provider>
+      {pickerFor && <EmojiPicker anchor={pickerFor.anchor} onPick={(emoji) => { const m = messages.list.find((x) => x.id === pickerFor.id); setPickerFor(null); if (m) void react(m, emoji, true).catch(() => undefined); }} onClose={() => setPickerFor(null)} onDismiss={() => setPickerFor(null)} />}
+      {rulesFor && me && <ReactionRolesDialog message={messages.list.find((x) => x.id === rulesFor.id) ?? rulesFor} roles={roles} me={me} api={conn.api} onClose={() => setRulesFor(null)} />}
       {reportTarget && <ReportDialog target={reportTarget} onClose={() => setReportTarget(null)}
         directory={passOn && reportedMessage ? { store: passOn.store, host: passOn.host, passOn: { serverHost: passOn.serverHost, evidence: reportEvidence(reportedMessage) } } : null}
         server={{ api: conn.api, name: serverName, block: (() => { const a = blocked && reportTarget.kind === "message" ? members.find((x) => x.userId === reportTarget.authorId) : null; return a && blocked && !blocked.has(a.publicKey) ? { name: a.displayName, onBlock: () => blocked.onBlock(a.publicKey, a.displayName, !!a.handle) } : null; })() }} />}

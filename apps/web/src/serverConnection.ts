@@ -8,6 +8,7 @@ import { showNotice } from "./dialogs";
 import { mentionsUser } from "./mentions";
 import { catchUp, loadReadState, markRead, pruneReadState, saveReadState, type ReadState } from "./readState";
 import { redactForLog } from "./logRedact";
+import { applyReactionEvent, keepMe, withReactions } from "./reactionState";
 
 /**
  * Connection to exactly one chat server (multi-server client): session, WebSocket with reconnect, server state,
@@ -64,6 +65,12 @@ export type ServerConnState = {
   currentChannelId: string | null;
   /** Channel with unread messages (since it was last viewed; also from before this session, see readState.ts). */
   unread: Record<string, boolean>;
+  /**
+   * How many messages of other people are unread per channel (the sum on a collapsed category, 6 October 2026): the
+   * server's count when it sends one, else counted here (live messages, the per-device catch-up; an older server's flag
+   * counts as one).
+   */
+  unreadCount: Record<string, number>;
   /** Messages that mention me per channel, since it was last viewed (like `unread`, also from before this session). */
   mentions: Record<string, number>;
   /** Channels I have muted and whether I have muted this whole server: no unread marks for them (mentions still show). Kept by the server. */
@@ -200,7 +207,7 @@ export class ServerConnection {
     this.api.setProver(() => { const id = this.identity(); const signer = id ? deviceSignerOf(id) : null; return id && signer ? { signer, accountPublicKey: id.publicKey } : null; });
     this.state = {
       host, base, me: null, userId: null, deviceList: false, connection: "idle", error: null, removed: null, waiting: null, retryAt: null, retryPaused: false, server: null,
-      voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
+      voice: {}, voteKickAllowed: {}, voteKick: null, voteKickResult: null, radioTitles: {}, clockOffset: 0, messages: {}, typing: {}, currentChannelId: null, unread: {}, unreadCount: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, log: [],
       serverName: null, iconUrl: null, serverDomain: null, requireAccount: false, localAccounts: false, accountNeeded: false, inviteRequired: false, ownerSetup: false, privacyPolicyUrl: null, serverVersion: null, directoryUrl: null,
       refused: false, suspendedUntil: null,
     };
@@ -235,7 +242,7 @@ export class ServerConnection {
     if (this.state.server || this.ws) this.hooks.onRemoved();
     this.close();
     this.voiceChannelId = null;
-    this.set({ refused: true, connection: "error", error: t("refused.short"), waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {} });
+    this.set({ refused: true, connection: "error", error: t("refused.short"), waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, unreadCount: {}, mentions: {} });
     return true;
   }
 
@@ -378,7 +385,7 @@ export class ServerConnection {
     this.hooks.onRemoved();
     this.close();
     this.voiceChannelId = null;
-    this.set({ suspendedUntil: until, connection: "error", error: suspendedText(until || null), waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {} });
+    this.set({ suspendedUntil: until, connection: "error", error: suspendedText(until || null), waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, unreadCount: {}, mentions: {} });
   }
 
   /** Sign out: end the session on the server side too (M6c, best effort) and close the connection. */
@@ -424,7 +431,7 @@ export class ServerConnection {
     this.ackTimers.clear(); this.acked = {}; this.liveLatest = {}; this.serverRead = false;
     if (this.recountTimer !== null) { clearTimeout(this.recountTimer); this.recountTimer = null; }
     this.voiceChannelId = null;
-    this.set({ me: null, userId: null, accountNeeded: false, suspendedUntil: null, connection: "idle", waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, removed: null, error });
+    this.set({ me: null, userId: null, accountNeeded: false, suspendedUntil: null, connection: "idle", waiting: null, server: null, messages: {}, voice: {}, currentChannelId: null, unread: {}, unreadCount: {}, mentions: {}, muted: {}, serverMuted: false, readSync: false, removed: null, error });
   }
 
   /** Close the connection without forgetting the session (e.g. on an identity switch). */
@@ -568,7 +575,7 @@ export class ServerConnection {
     const gone = before.filter((c) => !now.has(c.id)).map((c) => c.id);
     if (gone.length) {
       const drop = <T>(rec: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([id]) => now.has(id)));
-      this.set({ messages: drop(this.state.messages), typing: drop(this.state.typing), unread: drop(this.state.unread), mentions: drop(this.state.mentions), muted: drop(this.state.muted), radioTitles: drop(this.state.radioTitles), voice: drop(this.state.voice), voteKickAllowed: drop(this.state.voteKickAllowed) });
+      this.set({ messages: drop(this.state.messages), typing: drop(this.state.typing), unread: drop(this.state.unread), unreadCount: drop(this.state.unreadCount), mentions: drop(this.state.mentions), muted: drop(this.state.muted), radioTitles: drop(this.state.radioTitles), voice: drop(this.state.voice), voteKickAllowed: drop(this.state.voteKickAllowed) });
       this.liveLatest = drop(this.liveLatest);
       this.acked = drop(this.acked);
       if (this.state.userId) { this.read = pruneReadState(this.read, [...now]); saveReadState(this.state.host, this.state.userId, this.read); }
@@ -670,14 +677,22 @@ export class ServerConnection {
         this.set({
           typing: { ...this.state.typing, [e.message.channelId]: typing },
           unread: unread ? { ...this.state.unread, [e.message.channelId]: true } : this.state.unread,
+          unreadCount: unread ? { ...this.state.unreadCount, [e.message.channelId]: (this.state.unreadCount[e.message.channelId] ?? 0) + 1 } : this.state.unreadCount,
           mentions: mentioned ? { ...this.state.mentions, [e.message.channelId]: (this.state.mentions[e.message.channelId] ?? 0) + 1 } : this.state.mentions,
         });
         break;
       }
       case "message.update": {
         const ch = this.state.messages[e.message.channelId];
-        if (ch) this.set({ messages: { ...this.state.messages, [e.message.channelId]: { ...ch, list: ch.list.map((m) => (m.id === e.message.id ? e.message : m)) } } });
+        // A broadcast carries nobody's reaction flag: mine stays what it was (reactions.ts).
+        if (ch) this.set({ messages: { ...this.state.messages, [e.message.channelId]: { ...ch, list: ch.list.map((m) => (m.id === e.message.id ? { ...e.message, reactions: keepMe(e.message.reactions, m.reactions) } : m)) } } });
         this.recountMarks(e.message.channelId, false);
+        break;
+      }
+      // Reactions (docs/features/reactions.md): the whole list of one message; my own flag from `by`/`emoji`/`added`.
+      case "message.reactions": {
+        const ch = this.state.messages[e.channelId];
+        if (ch?.loaded) this.set({ messages: { ...this.state.messages, [e.channelId]: { ...ch, list: applyReactionEvent(ch.list, e, this.state.userId) } } });
         break;
       }
       case "message.delete": {
@@ -711,7 +726,7 @@ export class ServerConnection {
         if (e.channelId === this.state.currentChannelId) break;
         const list = this.state.messages[e.channelId]?.list ?? [];
         const newest = Math.max(this.liveLatest[e.channelId] ?? -1, list[list.length - 1]?.seq ?? -1);
-        if (newest <= e.lastReadSeq) this.set({ unread: { ...this.state.unread, [e.channelId]: false }, mentions: { ...this.state.mentions, [e.channelId]: 0 } });
+        if (newest <= e.lastReadSeq) this.set({ unread: { ...this.state.unread, [e.channelId]: false }, unreadCount: { ...this.state.unreadCount, [e.channelId]: 0 }, mentions: { ...this.state.mentions, [e.channelId]: 0 } });
         else void this.syncReadState();   // read only in part over there: let the server count what is left
         break;
       }
@@ -761,7 +776,7 @@ export class ServerConnection {
   private applyMutes(m: { serverMuted: boolean; channelIds: string[] }) { this.set({ serverMuted: m.serverMuted, muted: Object.fromEntries(m.channelIds.map((id) => [id, true])) }); }
 
   selectChannel(channelId: string) {
-    this.set({ currentChannelId: channelId, unread: { ...this.state.unread, [channelId]: false }, mentions: { ...this.state.mentions, [channelId]: 0 } });
+    this.set({ currentChannelId: channelId, unread: { ...this.state.unread, [channelId]: false }, unreadCount: { ...this.state.unreadCount, [channelId]: 0 }, mentions: { ...this.state.mentions, [channelId]: 0 } });
     this.rememberRead(channelId, this.state.messages[channelId]?.list ?? []);
     if (!this.state.messages[channelId]?.loaded) void this.loadHistory(channelId);
   }
@@ -795,7 +810,7 @@ export class ServerConnection {
     const ch = this.state.messages[channelId];
     if (!ch?.loaded) return;
     const result = catchUp(ch.list, this.read[channelId], userId, this.blockedAuthors());
-    this.set({ unread: { ...this.state.unread, [channelId]: result.unread }, mentions: { ...this.state.mentions, [channelId]: result.mentions } });
+    this.set({ unread: { ...this.state.unread, [channelId]: result.unread }, unreadCount: { ...this.state.unreadCount, [channelId]: result.count }, mentions: { ...this.state.mentions, [channelId]: result.mentions } });
   }
 
   /** The members this user has blocked, by user id, for the counters (`hooks.isBlocked` knows them by public key). */
@@ -839,15 +854,17 @@ export class ServerConnection {
     if (this.state.userId !== userId) return;
     this.serverRead = true;
     this.lastReadSync = Date.now();
-    const unread = { ...this.state.unread }, mentions = { ...this.state.mentions };
+    const unread = { ...this.state.unread }, unreadCount = { ...this.state.unreadCount }, mentions = { ...this.state.mentions };
     for (const c of remote.channels) {
       this.acked = { ...this.acked, [c.channelId]: Math.max(this.acked[c.channelId] ?? -1, c.lastReadSeq ?? -1) };
       if (c.channelId === this.state.currentChannelId) continue;   // on screen = read, acknowledged below
       if ((this.liveLatest[c.channelId] ?? -1) > (c.latestSeq ?? -1)) continue;   // a live message is newer than this answer
       unread[c.channelId] = c.unread;
+      // A server from before the count sends only the flag: an unread channel counts at least one, what was counted here stays.
+      unreadCount[c.channelId] = c.unreadCount ?? (c.unread ? Math.max(1, unreadCount[c.channelId] ?? 0) : 0);
       mentions[c.channelId] = c.mentions;
     }
-    this.set({ unread, mentions, readSync: true, serverMuted: remote.serverMuted, muted: Object.fromEntries(remote.channels.filter((c) => c.muted).map((c) => [c.channelId, true])) });
+    this.set({ unread, unreadCount, mentions, readSync: true, serverMuted: remote.serverMuted, muted: Object.fromEntries(remote.channels.filter((c) => c.muted).map((c) => [c.channelId, true])) });
     const current = this.state.currentChannelId;
     if (current) this.rememberRead(current, this.state.messages[current]?.list ?? []);
   }
@@ -877,6 +894,7 @@ export class ServerConnection {
           messages,
           unread: { ...this.state.unread, [c.id]: (this.state.unread[c.id] ?? false) || result.unread },
           // Messages that came in live since the welcome are part of the page too: the larger number is the right one.
+          unreadCount: { ...this.state.unreadCount, [c.id]: Math.max(this.state.unreadCount[c.id] ?? 0, result.count) },
           mentions: { ...this.state.mentions, [c.id]: Math.max(this.state.mentions[c.id] ?? 0, result.mentions) },
         });
       } catch { /* not allowed or not reachable: no mark */ }
@@ -911,6 +929,13 @@ export class ServerConnection {
   }
 
   typing(channelId: string) { this.send({ type: "typing", channelId }); }
+
+  /** Put an emoji on a message or take my own away; the answer (with my flag) goes into the cache, the event may come first or second, both are idempotent. */
+  async react(channelId: string, messageId: string, emoji: string, on: boolean) {
+    const answer = on ? await this.api.react(messageId, emoji) : await this.api.unreact(messageId, emoji);
+    const ch = this.state.messages[channelId];
+    if (ch?.loaded) this.set({ messages: { ...this.state.messages, [channelId]: { ...ch, list: withReactions(ch.list, answer) } } });
+  }
 
   clearError() { this.set({ error: null }); }
 }

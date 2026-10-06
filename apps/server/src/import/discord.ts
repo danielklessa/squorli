@@ -47,15 +47,15 @@ const CATEGORY_TYPE = 4;
 /** Discord's permission bits as shift amounts (https://discord.com/developers/docs/topics/permissions). */
 const D = {
   CREATE_INSTANT_INVITE: 0n, KICK_MEMBERS: 1n, BAN_MEMBERS: 2n, ADMINISTRATOR: 3n, MANAGE_CHANNELS: 4n, MANAGE_GUILD: 5n,
-  STREAM: 9n, VIEW_CHANNEL: 10n, SEND_MESSAGES: 11n, MANAGE_MESSAGES: 13n, ATTACH_FILES: 15n, CONNECT: 20n,
+  ADD_REACTIONS: 6n, STREAM: 9n, VIEW_CHANNEL: 10n, SEND_MESSAGES: 11n, MANAGE_MESSAGES: 13n, ATTACH_FILES: 15n, CONNECT: 20n,
   MUTE_MEMBERS: 22n, DEAFEN_MEMBERS: 23n, MOVE_MEMBERS: 24n, MANAGE_ROLES: 28n,
 } as const;
 
 /**
  * Discord permission -> Squorli permission. Discord's Administrator becomes ours (which includes everything). Connecting
  * to a voice channel on Discord lets you watch streams, so CONNECT brings VIEW_VIDEO along; muting, deafening or moving
- * members are all our MODERATE_VOICE. Nothing maps to CONTROL_RADIO (no Discord counterpart). Reactions, threads,
- * emojis, nicknames, history, webhooks, events and the like have no counterpart and fall away.
+ * members are all our MODERATE_VOICE. Nothing maps to CONTROL_RADIO (no Discord counterpart). Threads, emojis, nicknames,
+ * history, webhooks, events and the like have no counterpart and fall away (reactions have one since 6 October 2026).
  */
 const PERMISSION_MAP: readonly [bigint, number][] = [
   [D.ADMINISTRATOR, Permission.ADMINISTRATOR],
@@ -69,6 +69,7 @@ const PERMISSION_MAP: readonly [bigint, number][] = [
   [D.SEND_MESSAGES, Permission.SEND_MESSAGES],
   [D.MANAGE_MESSAGES, Permission.MANAGE_MESSAGES],
   [D.ATTACH_FILES, Permission.ATTACH_FILES],
+  [D.ADD_REACTIONS, Permission.ADD_REACTIONS],
   [D.CONNECT, Permission.CONNECT_VOICE | Permission.VIEW_VIDEO],
   [D.STREAM, Permission.STREAM_VIDEO],
   [D.MUTE_MEMBERS, Permission.MODERATE_VOICE],

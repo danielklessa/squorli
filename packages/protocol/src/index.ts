@@ -22,7 +22,9 @@ export * from "./votekick";
 export * from "./channelBlocks";
 export * from "./localAccounts";
 export * from "./reports";
-export { Iso, PublicKey, REPORT_REASONS, REPORT_TEXT_MAX, ReportReason, Signature, Uuid } from "./primitives";
+export * from "./reactions";
+export { EMOJI_SOURCE, Iso, PublicKey, REACTION_EMOJI_MAX_CHARS, REPORT_REASONS, REPORT_TEXT_MAX, ReactionEmoji, ReportReason, Signature, Uuid, emojiKey, isSingleEmoji } from "./primitives";
+import { ReactionChip } from "./reactions";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
 import { DeviceProofFields, DisplayName } from "./directory";
 import { GamePresence } from "./friends";
@@ -632,6 +634,16 @@ export const Message = z.object({
    * They arrive after the message itself, with a `message.update` once the server has looked the links up.
    */
   previews: z.array(LinkPreview).optional(),
+  /**
+   * Emoji reactions (reactions.ts, docs/features/reactions.md): the chips under the message, `me` for the viewer the message
+   * was loaded for (a broadcast carries nobody's). Optional = feature flag: a server from before reactions sends none.
+   */
+  reactions: z.array(ReactionChip).optional(),
+  /**
+   * A notice (docs/features/notices.md, 6 October 2026): shown without its author, the time where the avatar stands, the
+   * text from the far left. Set and taken back with MANAGE_NOTICES in the channel. Default for servers from before.
+   */
+  notice: z.boolean().default(false),
   createdAt: Iso,
   editedAt: Iso.nullable(),
 });
@@ -640,6 +652,8 @@ export const CreateMessageRequest = z.object({
   attachmentIds: z.array(Uuid).max(10).optional(),
 }).refine((m) => m.content.length > 0 || (m.attachmentIds?.length ?? 0) > 0, "content or attachment required");
 export const UpdateMessageRequest = z.object({ content: MessageContent });
+/** PUT /api/messages/:id/notice (docs/features/notices.md): show the message as a notice, or as a normal message again. MANAGE_NOTICES in the channel. */
+export const SetNoticeRequest = z.object({ notice: z.boolean() });
 export const MessagePage = z.object({ messages: z.array(Message), hasMore: z.boolean() });
 
 /**
@@ -654,6 +668,11 @@ export const ChannelReadState = z.object({
   /** Newest message in the channel, null = empty. */
   latestSeq: z.number().int().nullable(),
   unread: z.boolean(),
+  /**
+   * How many messages of other people are newer than the read state (6 October 2026: the sum of a collapsed category in
+   * the sidebar). Optional: a server from before leaves it out, the client then counts for itself.
+   */
+  unreadCount: z.number().int().min(0).optional(),
   mentions: z.number().int().min(0),
   /** The member has muted this channel: clients show no unread mark for it (mentions still count). Default for servers from before mutes. */
   muted: z.boolean().default(false),
@@ -695,6 +714,11 @@ export const ServerState = z.object({
    * Present = the server takes reports (the client offers "Melden" only then); missing = a server from before.
    */
   openReports: z.number().int().nonnegative().optional(),
+  /**
+   * Reactions and reaction roles (reactions.ts): present (true) = this server does them, the client offers the picker button
+   * on a message, the rules dialog and Verwaltung > Reaktionsrollen only then; missing = a server from before.
+   */
+  reactions: z.boolean().optional(),
 });
 
 // ---------- REST: status API (docs/features/status-api.md) ----------
@@ -812,6 +836,16 @@ export const ServerMessageUpdate = z.object({ type: z.literal("message.update"),
 export const ServerMessageDelete = z.object({ type: z.literal("message.delete"), channelId: Uuid, id: Uuid });
 /** Many messages of one channel at once (a ban with "delete messages of the last ...", a report closed that way); older clients drop the event and catch up on reload. */
 export const ServerMessageBulkDelete = z.object({ type: z.literal("message.bulkDelete"), channelId: Uuid, ids: z.array(Uuid) });
+/**
+ * The reactions of one message changed (reactions.ts, docs/features/reactions.md): the whole list, never a delta, without
+ * anybody's `me` (one JSON for everybody who sees the channel). `by`, `emoji` and `added` say who did what, so the client that
+ * is `by` sets its own flag from it; everybody else keeps theirs. No PROTOCOL_VERSION bump: a client from before drops the
+ * event and sees the reactions on its next history load.
+ */
+export const ServerMessageReactions = z.object({
+  type: z.literal("message.reactions"), channelId: Uuid, messageId: Uuid, reactions: z.array(ReactionChip.omit({ me: true })),
+  by: Uuid, emoji: z.string(), added: z.boolean(),
+});
 /** The open reports changed; only members with MANAGE_REPORTS get it (a count, never content). */
 export const ServerReportsCount = z.object({ type: z.literal("reports.count"), open: z.number().int().nonnegative() });
 /** A moderator removed something of the recipient's after a report (decision 4): the reason, never the reporter. */
@@ -870,7 +904,7 @@ export const ServerError = z.object({
 
 export const ServerEvent = z.discriminatedUnion("type", [
   ServerWelcome, ServerPong, ServerVoiceState, ServerStructure, ServerMe,
-  ServerMessageCreate, ServerMessageUpdate, ServerMessageDelete, ServerMessageBulkDelete, ServerTyping, ServerReadUpdate, ServerMuteUpdate, ServerRadioMeta, ServerRadioPlayback, ServerVoiceMoved, ServerVoiceStop, ServerVoteKick, ServerVoteKickResult, ServerReportsCount, ServerModerationNotice, ServerRemoved, ServerError,
+  ServerMessageCreate, ServerMessageUpdate, ServerMessageDelete, ServerMessageBulkDelete, ServerMessageReactions, ServerTyping, ServerReadUpdate, ServerMuteUpdate, ServerRadioMeta, ServerRadioPlayback, ServerVoiceMoved, ServerVoiceStop, ServerVoteKick, ServerVoteKickResult, ServerReportsCount, ServerModerationNotice, ServerRemoved, ServerError,
 ]);
 
 export type ClientEvent = z.infer<typeof ClientEvent>;

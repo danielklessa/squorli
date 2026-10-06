@@ -8,6 +8,8 @@ import { roles } from "../db/schema";
 import type { Hub } from "../hub";
 import type { LivekitAdmin } from "../livekit/admin";
 import { syncVoiceAccessOf } from "../livekit/sync";
+import { broadcastReactions, pruneForeignReactions } from "../reactions";
+import { messagesWithRulesOf } from "./reactions";
 import { broadcastStructure } from "../state";
 import { compact } from "../util";
 import type { VoicePresence } from "../voice/presence";
@@ -56,9 +58,11 @@ export async function registerRoleRoutes(app: FastifyInstance, db: Db, hub: Hub,
     if (!role) return reply.code(404).send({ error: "not_found" });
     if (role.isDefault) return reply.code(400).send({ error: "default_role_undeletable" });
     if (!canTouchRole(m.actor, role.position)) return reply.code(403).send({ error: "role_above_you" });
+    const ruled = await messagesWithRulesOf(db, role.id); // reaction roles of this role go with it (cascade); their chips leave live below
     await db.delete(roles).where(eq(roles.id, role.id));
     await syncVoiceAccessOf(db, hub, presence, lk);
     await broadcastStructure(db, hub, ["roles", "members"]);
+    for (const msg of ruled) { await pruneForeignReactions(db, msg.id); await broadcastReactions(db, hub, msg, m.userId, "", false); }
     return { ok: true };
   });
 }

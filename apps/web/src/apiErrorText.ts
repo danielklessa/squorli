@@ -45,6 +45,16 @@ export function voteKickErrorText(err: unknown): string {
   }, "votekick.err.generic");
 }
 
+/** PUT /api/messages/:id/reactions (a chip, the picker). */
+export function reactionErrorText(err: unknown): string {
+  return explain(err, { forbidden: "chat.reactForbidden", too_many_reactions: "chat.reactionsFull", reaction_roles_only: "chat.reactionRolesOnly", not_found: "chat.reactionGone", rate_limited: "chat.reactionRateLimited" }, "chat.reactionErr");
+}
+
+/** PUT /api/messages/:id/reaction-roles and DELETE /api/reaction-roles/:id (the rules dialog, Verwaltung > Reaktionsrollen). */
+export function reactionRuleErrorText(err: unknown): string {
+  return explain(err, { forbidden: "rr.err.forbidden", cannot_grant: "rr.err.cannot_grant", role_above_you: "rr.err.role_above_you", default_role: "rr.err.default_role", unknown_role: "rr.err.unknown_role", too_many_reactions: "chat.reactionsFull", not_found: "chat.reactionGone" }, "rr.err.generic");
+}
+
 function explain(err: unknown, keys: Record<string, Key>, generic: Key): string {
   if (!(err instanceof ApiError)) return err instanceof Error ? err.message : String(err);
   const key = err.code ? keys[err.code] : undefined;

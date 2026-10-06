@@ -17,7 +17,7 @@ const OWNER_FILE = join(dirname(fileURLToPath(import.meta.url)), ".smoke-owner.j
 const hex = (b) => Buffer.from(b).toString("hex");
 let failures = 0;
 const check = (label, ok, detail = "") => { console.log(`${ok ? "ok  " : "FAIL"} ${label}${detail ? " " + detail : ""}`); if (!ok) failures++; };
-const P = { ADMINISTRATOR: 1, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK_MEMBERS: 16, BAN_MEMBERS: 32, VIEW_CHANNELS: 128, SEND_MESSAGES: 256, MANAGE_MESSAGES: 512, CONNECT_VOICE: 1024, ATTACH_FILES: 2048, STREAM_VIDEO: 4096, MODERATE_VOICE: 8192, VIEW_VIDEO: 16384, CONTROL_RADIO: 32768, MOVE_MEMBERS: 65536, BYPASS_STICKY: 131072, MANAGE_REPORTS: 262144 };
+const P = { ADMINISTRATOR: 1, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK_MEMBERS: 16, BAN_MEMBERS: 32, VIEW_CHANNELS: 128, SEND_MESSAGES: 256, MANAGE_MESSAGES: 512, CONNECT_VOICE: 1024, ATTACH_FILES: 2048, STREAM_VIDEO: 4096, MODERATE_VOICE: 8192, VIEW_VIDEO: 16384, CONTROL_RADIO: 32768, MOVE_MEMBERS: 65536, BYPASS_STICKY: 131072, MANAGE_REPORTS: 262144, ADD_REACTIONS: 524288 };
 
 async function api(method, path, body, token, raw = false, extraHeaders = {}) {
   const headers = { ...extraHeaders };
@@ -809,6 +809,16 @@ const evUpdate = await wsA.waitFor((e) => e.type === "message.update" && e.messa
 check("message edit by author", sm2 === 200 && evUpdate?.message.editedAt !== null);
 const [sm3] = await api("PATCH", `/api/messages/${msg1.id}`, { content: "x" }, owner.token);
 check("edit foreign message rejected", sm3 === 403);
+// Notices (docs/features/notices.md): the owner turns B's message into one (MANAGE_NOTICES), B may not; the history carries the flag.
+const [sn1, notice1] = await api("PUT", `/api/messages/${msg1.id}/notice`, { notice: true }, owner.token);
+const evNotice = await wsB.waitFor((e) => e.type === "message.update" && e.message?.id === msg1.id && e.message.notice === true).catch(() => null);
+const [sn2] = await api("PUT", `/api/messages/${msg1.id}/notice`, { notice: true }, B.token);
+const [, pageN] = await api("GET", `/api/channels/${textCh.id}/messages`, undefined, B.token);
+const [sn3, notice0] = await api("PUT", `/api/messages/${msg1.id}/notice`, { notice: false }, owner.token);
+const [sn4] = await api("PUT", `/api/messages/${msg1.id}/notice`, { notice: "ja" }, owner.token);
+check("notices: set with MANAGE_NOTICES and broadcast, refused without it, in the history, taken back, valid input",
+  sn1 === 200 && notice1?.notice === true && !!evNotice && sn2 === 403 && pageN?.messages?.some((x) => x.id === msg1.id && x.notice === true) === true && sn3 === 200 && notice0?.notice === false && sn4 === 400 && (memberRole.permissions & P.MANAGE_NOTICES) === 0,
+  `${sn1} ${sn2} ${sn3} ${sn4} ${JSON.stringify(notice1)}`);
 const [sm4] = await api("POST", `/api/channels/${voiceCh.id}/messages`, { content: "x" }, B.token);
 check("no text in voice channel", sm4 === 404);
 const [smEmpty] = await api("POST", `/api/channels/${textCh.id}/messages`, { content: "   " }, B.token);
@@ -856,15 +866,15 @@ check("history paging", sh === 200 && page1.messages.length === 2 && page1.hasMo
 // Read states (all devices of a member): B joined in this run and has never opened the channel, so the owner's messages count
 const readOf = async (token) => { const [s, body] = await api("GET", "/api/read-state", undefined, token); return [s, body?.channels?.find((c) => c.channelId === textCh.id)]; };
 const [srs1, rs1] = await readOf(B.token);
-check("read state: unread since joining, own messages do not count", srs1 === 200 && rs1?.lastReadSeq === null && rs1.unread === true && rs1.mentions === 0 && rs1.latestSeq === page1.messages[1].seq, JSON.stringify(rs1));
+check("read state: unread since joining, own messages do not count", srs1 === 200 && rs1?.lastReadSeq === null && rs1.unread === true && rs1.unreadCount > 0 && rs1.mentions === 0 && rs1.latestSeq === page1.messages[1].seq, JSON.stringify(rs1));
 const [, mention] = await api("POST", `/api/channels/${textCh.id}/messages`, { content: `Hallo <@${B.userId}>, schau mal` }, owner.token);
 const [, rs2] = await readOf(B.token);
-check("read state: mention counted", rs2?.unread === true && rs2.mentions === 1 && rs2.latestSeq === mention.seq, JSON.stringify(rs2));
+check("read state: mention counted, the count grows by one", rs2?.unread === true && rs2.unreadCount === rs1.unreadCount + 1 && rs2.mentions === 1 && rs2.latestSeq === mention.seq, JSON.stringify(rs2));
 const [sack, ack] = await api("POST", `/api/channels/${textCh.id}/read`, { seq: mention.seq }, B.token);
 const evRead = await wsB.waitFor((e) => e.type === "read.update" && e.channelId === textCh.id).catch(() => null);
 const [, rs3] = await readOf(B.token);
 check("mark read: clears marks, tells my own connections only", sack === 200 && ack.lastReadSeq === mention.seq && evRead?.lastReadSeq === mention.seq
-  && rs3?.unread === false && rs3.mentions === 0 && rs3.lastReadSeq === mention.seq && !wsA.events.some((e) => e.type === "read.update"), JSON.stringify(rs3));
+  && rs3?.unread === false && rs3.unreadCount === 0 && rs3.mentions === 0 && rs3.lastReadSeq === mention.seq && !wsA.events.some((e) => e.type === "read.update"), JSON.stringify(rs3));
 const [, ackBack] = await api("POST", `/api/channels/${textCh.id}/read`, { seq: 0 }, B.token);
 const [, ackFuture] = await api("POST", `/api/channels/${textCh.id}/read`, { seq: 2 ** 40 }, B.token);
 check("mark read: never backwards, never beyond the newest message", ackBack.lastReadSeq === mention.seq && ackFuture.lastReadSeq === mention.seq, `${ackBack.lastReadSeq} ${ackFuture.lastReadSeq}`);
@@ -874,7 +884,7 @@ const [sackAnon] = await api("GET", "/api/read-state");
 check("mark read: text channels only, valid input, signed in", sackVoice === 404 && sackBad === 400 && sackAnon === 401, `${sackVoice} ${sackBad} ${sackAnon}`);
 await api("POST", `/api/channels/${textCh.id}/messages`, { content: "danach" }, owner.token);
 const [, rs4] = await readOf(B.token);
-check("read state: a newer message marks the channel again", rs4?.unread === true && rs4.mentions === 0);
+check("read state: a newer message marks the channel again, counted as one", rs4?.unread === true && rs4.unreadCount === 1 && rs4.mentions === 0, JSON.stringify(rs4));
 // No false alarms: a token inside code or behind a backslash is no mention, and an edited-away mention stops counting
 const fence = "```";
 await api("POST", `/api/channels/${textCh.id}/messages`, { content: `so sieht das aus: \`<@${B.userId}>\` und \\<@${B.userId}>\n${fence}\n<@${B.userId}>\n${fence}` }, owner.token);
@@ -994,6 +1004,130 @@ check("mod deletes foreign message", sd1 === 200 && !!evDel);
 const [sd2] = await api("DELETE", `/api/messages/${msg2.id}`, undefined, B.token);
 const dlGone = await api("GET", att.url, undefined, undefined, true);
 check("delete own message removes attachment", sd2 === 200 && dlGone.status === 404);
+
+// ---------- Reactions and reaction roles (docs/features/reactions.md): chips, identity, the right, the cap, rules that
+// give a role, the guest's exception, removal, the overview, cascades. B holds "Mitglied" (ADD_REACTIONS by migration).
+{
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const react = (id, emoji, token) => api("PUT", `/api/messages/${id}/reactions`, { emoji }, token);
+  const unreact = (id, emoji, token) => api("POST", `/api/messages/${id}/reactions/remove`, { emoji }, token);
+  const [, stR] = await api("GET", "/api/state", undefined, B.token);
+  check("reactions: the state says the server does reactions, Mitglied may react", stR.reactions === true && (memberRole.permissions & P.ADD_REACTIONS) !== 0);
+  const [, invR] = await api("POST", "/api/invites", {}, owner.token);
+  const R = await login(await newKey(), invR.code); // a third member with "Mitglied"
+  await api("PUT", `/api/members/${R.userId}/roles`, { roleIds: [memberRole.id] }, owner.token);
+  const [, rm] = await api("POST", `/api/channels/${textCh.id}/messages`, { content: "Reagiert mal" }, B.token);
+  check("reactions: a fresh message carries an empty list", Array.isArray(rm.reactions) && rm.reactions.length === 0);
+  const evR1 = waitNew(wsA, (e) => e.type === "message.reactions" && e.messageId === rm.id && e.by === B.userId).catch(() => null);
+  const [sr1, rr1] = await react(rm.id, "👍", B.token);
+  const er1 = await evR1;
+  check("reactions: Mitglied adds one; the answer carries me, the channel gets the event with by and added", sr1 === 200 && rr1.reactions.length === 1 && rr1.reactions[0].emoji === "👍" && rr1.reactions[0].count === 1 && rr1.reactions[0].me === true
+    && er1 !== null && er1.added === true && er1.emoji === "👍" && er1.reactions[0].count === 1 && er1.reactions[0].me === undefined, `${sr1} ${JSON.stringify(rr1.reactions)} ${JSON.stringify(er1)}`);
+  const [sr2, rr2] = await react(rm.id, "👍", B.token);
+  const [sr3, rr3] = await react(rm.id, "👍", owner.token);
+  check("reactions: the same emoji twice is one reaction; a second member makes count 2", sr2 === 200 && rr2.reactions[0].count === 1 && sr3 === 200 && rr3.reactions[0].count === 2 && rr3.reactions[0].me === true);
+  const [, hB] = await api("GET", `/api/channels/${textCh.id}/messages`, undefined, B.token);
+  const [, hC] = await api("GET", `/api/channels/${textCh.id}/messages`, undefined, R.token);
+  const hmB = hB.messages.find((m) => m.id === rm.id), hmC = hC.messages.find((m) => m.id === rm.id);
+  check("reactions: the history carries me per viewer", hmB?.reactions[0]?.me === true && hmC?.reactions[0]?.me === false && hmC?.reactions[0]?.count === 2);
+  await react(rm.id, "❤️", B.token);
+  const [, rr4] = await react(rm.id, "❤", owner.token);
+  const [, rr5] = await react(rm.id, "👍🏽", owner.token);
+  const heart = rr4.reactions.find((c) => c.emoji === "❤️"), thumbs = rr5.reactions.filter((c) => c.emoji.startsWith("👍"));
+  check("reactions: ❤ and ❤️ are one chip drawn as first typed, 👍🏽 is another", rr4.reactions.length === 2 && heart?.count === 2 && rr5.reactions.length === 3 && thumbs.length === 2, JSON.stringify(rr5.reactions));
+  const [su1, ru1] = await api("GET", `/api/messages/${rm.id}/reactions/users?emoji=${encodeURIComponent("👍")}`, undefined, R.token);
+  check("reactions: who reacted, oldest first", su1 === 200 && JSON.stringify(ru1.userIds) === JSON.stringify([B.userId, owner.userId]) && ru1.total === 2, JSON.stringify(ru1));
+  const [sb1] = await react(rm.id, "ab", B.token);
+  const [sb2] = await react(rm.id, "😀😀", B.token);
+  const [sb3] = await react(rm.id, "", B.token);
+  const [sb4] = await api("GET", `/api/messages/${rm.id}/reactions/users?emoji=x`, undefined, B.token);
+  check("reactions: text, two emoji, nothing -> 400", sb1 === 400 && sb2 === 400 && sb3 === 400 && sb4 === 400, `${sb1} ${sb2} ${sb3} ${sb4}`);
+  // The cap: 20 distinct emoji per message, one already there always passes.
+  const many = ["😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "🙃", "😉", "😊", "😇", "🥰", "😍", "🤩", "😘", "😗", "☺️", "😚", "😙"];
+  let capOk = true;
+  for (const e of many.slice(0, 17)) { const [s] = await react(rm.id, e, owner.token); if (s !== 200) capOk = false; } // 3 + 17 = 20
+  const [sc1, rc1] = await react(rm.id, many[17], owner.token);
+  const [sc2] = await react(rm.id, "👍", R.token);
+  check("reactions: at most 20 distinct emoji per message, an existing one still passes", capOk && sc1 === 409 && rc1.error === "too_many_reactions" && sc2 === 200, `${sc1} ${rc1.error ?? ""} ${sc2}`);
+  for (const e of many.slice(0, 17)) await unreact(rm.id, e, owner.token);
+  // A guest: no ADD_REACTIONS, so no reaction of their own choosing; taking an own one away always works.
+  const G = await login(await newKey(), invR.code);
+  const wsG = await connectWs(G.token);
+  const [sg1, rg1] = await react(rm.id, "👍", G.token);
+  const [sg2] = await unreact(rm.id, "👍", G.token);
+  check("reactions: a guest without ADD_REACTIONS gets 403, removing is always allowed", sg1 === 403 && rg1.error === "forbidden" && sg2 === 200, `${sg1} ${sg2}`);
+  // Reaction roles: a rule by the owner on a rules message; the count-0 chip reaches everybody who sees the channel.
+  const [, rules] = await api("POST", `/api/channels/${textCh.id}/messages`, { content: "Regeln: sei nett. Mit ✅ reagieren = Mitglied" }, owner.token);
+  await react(rules.id, "👍", B.token); // a reaction from before the rule: it goes with the rule (the user's decision: only the configured emoji)
+  const evRule = waitNew(wsB, (e) => e.type === "message.reactions" && e.messageId === rules.id && e.added === false).catch(() => null);
+  const [sq1, rq1] = await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "✅", roleId: memberRole.id }, owner.token);
+  const eq1 = await evRule;
+  const [sq2] = await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "🎉", roleId: memberRole.id }, B.token);
+  const [sq3, rq3] = await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "🎉", roleId: defaultRole.id }, owner.token);
+  const [sq4] = await api("GET", `/api/messages/${rules.id}/reaction-roles`, undefined, B.token);
+  check("reaction roles: a rule needs MANAGE_ROLES, never the default role; the chip with count 0 and the role goes out, the 👍 from before is gone", sq1 === 200 && rq1.rules.length === 1 && rq1.rules[0].removeOnUnreact === false && eq1 !== null && eq1.added === false
+    && eq1.reactions.length === 1 && eq1.reactions[0].count === 0 && eq1.reactions[0].roleId === memberRole.id && sq2 === 403 && sq3 === 400 && rq3.error === "default_role" && sq4 === 403, `${sq1} ${sq2} ${sq3} ${rq3.error ?? ""} ${sq4} ${JSON.stringify(eq1)}`);
+  const [, hG] = await api("GET", `/api/channels/${textCh.id}/messages`, undefined, G.token);
+  const gRules = hG.messages.find((m) => m.id === rules.id);
+  check("reaction roles: the guest's history shows the chip with 0 and the role", gRules?.reactions?.[0]?.count === 0 && gRules?.reactions?.[0]?.roleId === memberRole.id);
+  const evMem = waitNew(wsG, (e) => e.type === "structure" && e.members?.some((m) => m.userId === G.userId && m.roleIds.includes(memberRole.id))).catch(() => null);
+  const [sg3, rg3] = await react(rules.id, "✅", G.token);
+  const gotRole = await evMem;
+  const [, stG] = await api("GET", "/api/state", undefined, G.token);
+  check("reaction roles: the guest adds the configured emoji without the right and gets the role", sg3 === 200 && rg3.reactions[0].me === true && rg3.reactions[0].count === 1 && gotRole !== null && (stG.myPermissions & P.SEND_MESSAGES) !== 0, `${sg3} ${gotRole ? "role" : "no structure"} ${stG.myPermissions}`);
+  const [sg4] = await react(rm.id, "👍", G.token);
+  const [sg5, rg5] = await react(rules.id, "👍", G.token);
+  const [sg6, rg6] = await react(rules.id, "🎉", owner.token);
+  check("reaction roles: with the role the guest may react freely elsewhere; a message with rules takes only the configured emoji, whatever the right", sg4 === 200 && sg5 === 409 && rg5.error === "reaction_roles_only" && sg6 === 409 && rg6.error === "reaction_roles_only", `${sg4} ${sg5} ${rg5.error ?? ""} ${sg6} ${rg6.error ?? ""}`);
+  await unreact(rules.id, "✅", G.token);
+  await sleep(200);
+  const [, stG2] = await api("GET", "/api/state", undefined, G.token);
+  check("reaction roles: removing the reaction keeps the role by default", stG2.members.find((m) => m.userId === G.userId)?.roleIds.includes(memberRole.id) === true);
+  const [sq5, rq5] = await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "✅", roleId: memberRole.id, removeOnUnreact: true }, owner.token);
+  await react(rules.id, "✅", G.token);
+  const evLost = waitNew(wsG, (e) => e.type === "structure" && e.members?.some((m) => m.userId === G.userId && !m.roleIds.includes(memberRole.id))).catch(() => null);
+  await unreact(rules.id, "✅", G.token);
+  const lost = await evLost;
+  check("reaction roles: with removeOnUnreact (an upsert, still one rule) the role goes with the reaction", sq5 === 200 && rq5.rules.length === 1 && rq5.rules[0].removeOnUnreact === true && lost !== null, `${sq5} ${rq5.rules?.length} ${lost ? "lost" : "kept"}`);
+  // The hierarchy at save time: a helper with MANAGE_ROLES but without ADMINISTRATOR may not hand out what they do not hold or what is above them.
+  const [, helperRole] = await api("POST", "/api/roles", { name: "Smoke-RR-Helper", permissions: P.MANAGE_ROLES }, owner.token);
+  await api("PATCH", `/api/roles/${helperRole.id}`, { position: 40 }, owner.token);
+  const [, adminRole] = await api("POST", "/api/roles", { name: "Smoke-RR-Admin", permissions: P.ADMINISTRATOR }, owner.token);
+  const [, highRole] = await api("POST", "/api/roles", { name: "Smoke-RR-High", permissions: 0 }, owner.token);
+  await api("PATCH", `/api/roles/${highRole.id}`, { position: 60 }, owner.token);
+  await api("PUT", `/api/members/${R.userId}/roles`, { roleIds: [memberRole.id, helperRole.id] }, owner.token);
+  const [sq6, rq6] = await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "🛡️", roleId: adminRole.id }, R.token);
+  const [sq7, rq7] = await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "🛡️", roleId: highRole.id }, R.token);
+  check("reaction roles: canGrant and canTouchRole as for assigning roles", sq6 === 403 && rq6.error === "cannot_grant" && sq7 === 403 && rq7.error === "role_above_you", `${sq6} ${rq6.error ?? ""} ${sq7} ${rq7.error ?? ""}`);
+  await api("PUT", `/api/members/${R.userId}/roles`, { roleIds: [memberRole.id] }, owner.token);
+  // The overview, deleting a rule (the reactions stay), deleting a role (its rules go, the chip leaves live).
+  const [so1, ro1] = await api("GET", "/api/reaction-roles", undefined, owner.token);
+  const [so2] = await api("GET", "/api/reaction-roles", undefined, B.token);
+  const entry = ro1.rules?.find((r) => r.messageId === rules.id);
+  check("reaction roles: the overview lists the rule with channel, excerpt and author; MANAGE_ROLES only", so1 === 200 && !!entry && entry.channelName === textCh.name && entry.excerpt.startsWith("Regeln") && entry.authorId === owner.userId && so2 === 403, `${so1} ${so2} ${JSON.stringify(entry)}`);
+  await react(rules.id, "✅", B.token);
+  const evDelRule = waitNew(wsB, (e) => e.type === "message.reactions" && e.messageId === rules.id).catch(() => null);
+  const [sx1] = await api("DELETE", `/api/reaction-roles/${entry.id}`, undefined, owner.token);
+  const ex1 = await evDelRule;
+  const tick = ex1?.reactions.find((c) => c.emoji === "✅");
+  check("reaction roles: deleting the last rule keeps its reactions, the chip loses its role", sx1 === 200 && ex1 !== null && ex1.reactions.length === 1 && tick?.count === 1 && tick?.roleId === undefined, `${sx1} ${JSON.stringify(ex1?.reactions)}`);
+  const evGame = waitNew(wsB, (e) => e.type === "message.reactions" && e.messageId === rules.id && e.reactions.some((c) => c.emoji === "🎮")).catch(() => null);
+  await api("PUT", `/api/messages/${rules.id}/reaction-roles`, { emoji: "🎮", roleId: highRole.id }, owner.token);
+  const eg = await evGame;
+  check("reaction roles: a new rule removes the reactions of other emoji again", eg !== null && eg.reactions.length === 1 && eg.reactions[0].emoji === "🎮" && eg.reactions[0].count === 0, JSON.stringify(eg?.reactions));
+  const evDelRole = waitNew(wsB, (e) => e.type === "message.reactions" && e.messageId === rules.id && !e.reactions.some((c) => c.emoji === "🎮")).catch(() => null);
+  const [sx2] = await api("DELETE", `/api/roles/${highRole.id}`, undefined, owner.token);
+  const ex2 = await evDelRole;
+  const [, rq8] = await api("GET", `/api/messages/${rules.id}/reaction-roles`, undefined, owner.token);
+  check("reaction roles: deleting the role takes its rules along and the count-0 chip leaves live", sx2 === 200 && ex2 !== null && rq8.rules.length === 0, `${sx2} ${ex2 ? "event" : "no event"} ${rq8.rules?.length}`);
+  await api("DELETE", `/api/roles/${helperRole.id}`, undefined, owner.token);
+  await api("DELETE", `/api/roles/${adminRole.id}`, undefined, owner.token);
+  await api("DELETE", `/api/messages/${rules.id}`, undefined, owner.token);
+  await api("DELETE", `/api/messages/${rm.id}`, undefined, B.token);
+  await api("DELETE", `/api/members/${G.userId}`, undefined, owner.token);
+  await api("DELETE", `/api/members/${R.userId}`, undefined, owner.token);
+  await wsG.close();
+}
 
 // Typing + voice channel
 wsB.send({ type: "typing", channelId: textCh.id });

@@ -1,9 +1,10 @@
 import { platform } from "./platform";
 import { Avatar } from "./Avatar";
 import { Permission, hasPermission, type Channel, type ServerState, type VoiceMember } from "@squorli/protocol";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { ServerApi } from "./api";
 import { moveErrorText } from "./apiErrorText";
+import { categorySummary, loadCollapsed, pruneCollapsed, saveCollapsed, toggleCollapsed } from "./collapsedCategories";
 import { ContextMenu, ContextSubmenu, type MenuAnchor } from "./ContextMenu";
 import { askConfirm, askInput } from "./dialogs";
 import type { ChannelDialogTarget } from "./ChannelDialog";
@@ -15,6 +16,8 @@ import { VoiceMemberMenu } from "./VoiceMemberMenu";
 type Props = {
   server: ServerState;
   api: ServerApi;
+  /** The server's key in the store: the collapsed categories are kept per server and user on this device (collapsedCategories.ts). */
+  host: string;
   /** The channel shown in the main area (text channel or the voice channel's stage): only it is highlighted. */
   currentChannelId: string | null;
   voice: Record<string, VoiceMember[]>;
@@ -23,6 +26,8 @@ type Props = {
   /** For the per-person playback volume in the voice members' context menu. */
   client: VoiceClient;
   unread: Record<string, boolean>;
+  /** How many unread messages per channel (the sum on a collapsed category's heading). */
+  unreadCount: Record<string, number>;
   /** Unseen messages that mention me, per channel. */
   mentions: Record<string, number>;
   /** Channels I have muted; `canMute` = the server keeps mutes (offers the context menu). */
@@ -45,13 +50,21 @@ type Props = {
   onVoteKick: (userId: string, channelId: string) => void;
 };
 
-export function Sidebar({ server, api, currentChannelId, voice, voiceState, client, unread, mentions, muted, radioTitles, canMute, onMuteChannel, onOpenChannelDialog, connection, onSelect, onJoinVoice, onOpenAdmin, myUserId, onOpenMembers, voteKickAllowed, onVoteKick }: Props) {
+export function Sidebar({ server, api, host, currentChannelId, voice, voiceState, client, unread, unreadCount, mentions, muted, radioTitles, canMute, onMuteChannel, onOpenChannelDialog, connection, onSelect, onJoinVoice, onOpenAdmin, myUserId, onOpenMembers, voteKickAllowed, onVoteKick }: Props) {
   // Right-click on a voice member: how loud to play them back (not for yourself).
   const [menu, setMenu] = useState<({ userId: string } & MenuAnchor) | null>(null);
   // Right-click on a channel: mute it for myself, edit or delete it (with the right in that channel).
   const [channelMenu, setChannelMenu] = useState<({ channelId: string } & MenuAnchor) | null>(null);
   // Right-click (or a click) on a category's heading: edit, create a channel inside, delete.
   const [categoryMenu, setCategoryMenu] = useState<({ categoryId: string } & MenuAnchor) | null>(null);
+  // Collapsed categories (collapsedCategories.ts, 6 October 2026): this device's choice per server and user; the tick makes
+  // the memo read the storage again after a toggle, so a switch to another server shows that server's choice at once.
+  const [collapsedTick, setCollapsedTick] = useState(0);
+  const collapsed = useMemo(() => loadCollapsed(host, myUserId), [host, myUserId, collapsedTick]);
+  const toggleCategory = (id: string) => {
+    saveCollapsed(host, myUserId, pruneCollapsed(toggleCollapsed(collapsed, id), server.categories.map((k) => k.id)));
+    setCollapsedTick((n) => n + 1);
+  };
   const menuChannel = channelMenu ? server.channels.find((c) => c.id === channelMenu.channelId) ?? null : null;
   const menuCategory = categoryMenu ? server.categories.find((k) => k.id === categoryMenu.categoryId) ?? null : null;
   const menuMember = menu ? server.members.find((m) => m.userId === menu.userId) ?? null : null;
@@ -183,18 +196,37 @@ export function Sidebar({ server, api, currentChannelId, voice, voiceState, clie
         voteKickAllowed={voteKickAllowed} onVoteKick={onVoteKick} onClose={() => setMenu(null)} onError={setDragErr} />}
       {dragErr && <p className="error small" style={{ padding: "0 0.9rem" }}>{dragErr}</p>}
       <div className="channel-list">
-        {groups.map((g) => (
-          <section key={g.id ?? "none"}>
-            {g.id !== null && (dialogOffered && canManage(g.id)
-              // A button inside the heading keeps its semantics and makes the category reachable by keyboard (context menu key,
-              // Shift+F10). Context menus open on a right-click only (user's rule, 24 September 2026); a phone has none, a tap opens it there.
-              ? <h3><button className="category-btn" aria-haspopup="menu" aria-label={t("sidebar.categoryMenu", { name: g.name })} title={t("sidebar.categoryMenu", { name: g.name })}
-                  onClick={platform.mobile ? (e) => { const r = e.currentTarget.getBoundingClientRect(); setCategoryMenu({ categoryId: g.id!, trigger: e.currentTarget, x: r.left, y: r.bottom }); } : undefined}
-                  onContextMenu={(e) => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setCategoryMenu({ categoryId: g.id!, trigger: e.currentTarget, x: e.clientX || r.left, y: e.clientY || r.bottom }); }}>{g.name}</button></h3>
-              : <h3>{g.name}</h3>)}
-            <ul>{g.channels.map(renderChannel)}</ul>
-          </section>
-        ))}
+        {groups.map((g) => {
+          const isCollapsed = g.id !== null && collapsed.has(g.id);
+          // Collapsed: the heading sums up what the folded channels would show; only the channel on screen stays in the list.
+          const sum = isCollapsed ? categorySummary(g.channels, { unread, unreadCount, mentions, muted, voice, afkChannelId: server.settings.afkChannelId ?? null }) : null;
+          const shown = isCollapsed ? g.channels.filter((c) => c.id === currentChannelId) : g.channels;
+          const menuOffered = g.id !== null && dialogOffered && canManage(g.id);
+          const openCategoryMenu = (trigger: HTMLElement, x: number, y: number) => setCategoryMenu({ categoryId: g.id!, trigger, x, y });
+          return (
+            <section key={g.id ?? "none"} className={isCollapsed ? "collapsed" : undefined}>
+              {g.id !== null && (
+                // A button inside the heading keeps its semantics and makes the category reachable by keyboard: Enter folds it,
+                // the context menu key (Shift+F10) opens the menu. Context menus open on a right-click only (user's rule,
+                // 24 September 2026); a phone has none, so there the menu has a button of its own at the right.
+                <h3 className={`category-head${isCollapsed ? " collapsed" : ""}${sum && sum.unread > 0 ? " unread" : ""}${sum && sum.mentions > 0 ? " mentioned" : ""}`}>
+                  <button className="category-btn" aria-expanded={!isCollapsed} title={isCollapsed ? t("sidebar.expandCategory") : t("sidebar.collapseCategory")}
+                    onClick={() => toggleCategory(g.id!)}
+                    onContextMenu={menuOffered ? (e) => { e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); openCategoryMenu(e.currentTarget, e.clientX || r.left, e.clientY || r.bottom); } : undefined}>
+                    <Icon name="chevron-down" className="category-chevron" />
+                    <span className="category-name">{g.name}</span>
+                    {sum && sum.voice > 0 && <span className="category-voice" title={t("sidebar.categoryVoice", { n: sum.voice })} aria-label={t("sidebar.categoryVoice", { n: sum.voice })}><Icon name="volume-2" />{sum.voice}</span>}
+                    {sum && sum.unread > 0 && <span className="category-unread" title={t("sidebar.categoryUnread", { n: sum.unread })} aria-label={t("sidebar.categoryUnread", { n: sum.unread })}>{sum.unread}</span>}
+                    {sum && sum.mentions > 0 && <span className="mention-badge" title={t("sidebar.mentions", { n: sum.mentions })} aria-label={t("sidebar.mentions", { n: sum.mentions })}>{sum.mentions}</span>}
+                  </button>
+                  {menuOffered && platform.mobile && <button className="icon category-menu-btn" aria-haspopup="menu" aria-label={t("sidebar.categoryMenu", { name: g.name })} title={t("sidebar.categoryMenu", { name: g.name })}
+                    onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); openCategoryMenu(e.currentTarget, r.left, r.bottom); }}><Icon name="ellipsis-vertical" /></button>}
+                </h3>
+              )}
+              <ul>{shown.map(renderChannel)}</ul>
+            </section>
+          );
+        })}
       </div>
     </nav>
   );

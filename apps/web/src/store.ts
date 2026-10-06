@@ -1287,6 +1287,17 @@ export class Store {
     const sealed = await sealDm(await this.dmKey(peer), id.publicKey, peer, msgId, { text: "", control: { type: "preview.remove", id: messageId, url } });
     if (!this.link?.send({ type: "dm.send", to: peer, id: msgId, ...sealed, sentAt: new Date().toISOString() })) throw new Error(t("dir.noLink"));
   }
+  /**
+   * Put an emoji on a friend's or my own message, or take my reaction away (docs/features/reactions.md): an encrypted
+   * instruction like the preview's removal, shown as nothing; both sides fold the thread into chips (dmReactions.ts).
+   */
+  async reactDm(peer: string, messageId: string, emoji: string, on: boolean) {
+    const id = this.state.identity;
+    if (!id) return;
+    const msgId = crypto.randomUUID();
+    const sealed = await sealDm(await this.dmKey(peer), id.publicKey, peer, msgId, { text: "", control: { type: "reaction", id: messageId, emoji, on } });
+    if (!this.link?.send({ type: "dm.send", to: peer, id: msgId, ...sealed, sentAt: new Date().toISOString() })) throw new Error(t("dir.noLink"));
+  }
   /** Ciphertext of a preview's picture from the directory's blob store. */
   fetchDmBlob(blobId: string): Promise<Uint8Array> {
     const url = this.state.directoryUrl;

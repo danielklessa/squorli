@@ -19,7 +19,7 @@ This README explains how to run your own Squorli server. Working on the code: [d
 - Categories, roles with permissions and hierarchy, invite links, kick and ban, admin panel in the browser.
 - Optional connection to a Squorli Directory for global handles, friends and end-to-end encrypted direct messages.
 
-Not yet: a desktop app for macOS, reactions, audit log. Current status of the implementation: [AGENTS.md](AGENTS.md).
+Not yet: a desktop app for macOS, audit log. Current status of the implementation: [AGENTS.md](AGENTS.md).
 
 Third-party software, fonts and data inside the client are listed with their licenses in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and in the client under Settings > Licenses; see also [NOTICE](NOTICE).
 

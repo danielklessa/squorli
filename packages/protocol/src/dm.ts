@@ -26,6 +26,7 @@
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { z } from "zod";
 import { base64ToBytes, bytesToBase64, bytesToHex, hexToBytes, randomHex } from "./backup";
+import { ReactionEmoji } from "./primitives";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 const subtle = () => globalThis.crypto.subtle;
@@ -50,8 +51,18 @@ export const DmPreview = z.object({
 });
 export type DmPreview = z.infer<typeof DmPreview>;
 export const DM_MAX_PREVIEWS = 3;
-/** A message that is an instruction, not text: the author of message `id` takes the preview of `url` away, for both sides. */
-export const DmControl = z.object({ type: z.literal("preview.remove"), id: z.string().uuid(), url: z.string().max(2100) });
+/**
+ * A message that is an instruction, not text; clients show it as nothing, count it as nothing unread and play no sound.
+ * `preview.remove`: the author of message `id` takes the preview of `url` away, for both sides (clients apply it only when it
+ * comes from that message's author). `reaction` (6 October 2026, docs/features/reactions.md): the sender puts the emoji on
+ * message `id` (`on`) or takes their own reaction away again; the newest instruction per sender, message and emoji counts,
+ * either side may react to either side's messages. A client from before a kind drops the control (`openDm`) and shows an
+ * empty message: accepted when previews came, and again for reactions.
+ */
+export const DmControl = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("preview.remove"), id: z.string().uuid(), url: z.string().max(2100) }),
+  z.object({ type: z.literal("reaction"), id: z.string().uuid(), emoji: ReactionEmoji, on: z.boolean() }),
+]);
 export type DmControl = z.infer<typeof DmControl>;
 /** Plaintext of a message; deliberately an object so fields (reply-to, attachments) can be added later. */
 export type DmPlaintext = { text: string; previews?: DmPreview[]; control?: DmControl };

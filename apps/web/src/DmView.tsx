@@ -1,12 +1,14 @@
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Avatar } from "./Avatar";
-import { DM_DELETE_BOTH_MS, type Friend } from "@squorli/protocol";
+import { DM_DELETE_BOTH_MS, emojiKey, type Friend } from "@squorli/protocol";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { askConfirm } from "./dialogs";
 import { ContextMenu, type MenuAnchor } from "./ContextMenu";
 import { askBlockFriend, askRemoveFriend } from "./friendActions";
-import { EmojiButton } from "./EmojiPicker";
+import { EmojiButton, EmojiPicker } from "./EmojiPicker";
 import { GameLine } from "./GameLine";
+import { dmReactionsOf } from "./dmReactions";
+import { Reactions } from "./Reactions";
 import { friendName } from "./Home";
 import { Icon } from "./Icon";
 import { DmPreviews } from "./LinkPreviews";
@@ -38,6 +40,11 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
   const previewsOn = useVoiceSettings().dmLinkPreviews;
   // Instructions (a preview taken away) are no messages, and what their author removed is not shown.
   const list = useMemo(() => visibleDms(thread.list), [thread.list]);
+  // Reactions (docs/features/reactions.md): folded out of the instructions in the thread; the names are the two of us.
+  const reactions = useMemo(() => dmReactionsOf(thread.list, myKey, friend.publicKey), [thread.list, myKey, friend.publicKey]);
+  const [pickerFor, setPickerFor] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const react = (messageId: string, emoji: string, on: boolean) => store.reactDm(friend.publicKey, messageId, emoji, on).catch((e) => { setErr(e instanceof Error ? e.message : String(e)); throw e; });
+  const whoOf = (messageId: string) => async (emoji: string) => ({ names: (reactions.get(messageId)?.who.get(emojiKey(emoji)) ?? []).map((k) => (k === myKey ? t("dm.you") : name)), more: 0 });
 
   useEffect(() => {
     const el = listRef.current;
@@ -104,7 +111,7 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
           return (
             <div key={m.id}>
               {newDay && <div className="day-sep"><span>{fmtDay(m.sentAt)}</span></div>}
-              <article className={`msg ${grouped && !newDay ? "grouped" : ""}`}>
+              <article className={`msg ${grouped && !newDay ? "grouped" : ""} ${pickerFor?.id === m.id ? "picker-open" : ""}`}>
                 {!(grouped && !newDay) && (
                   <div className="msg-head">
                     <Avatar name={mine ? t("dm.you") : name} src={mine ? myAvatarUrl : avatarUrl} />
@@ -117,8 +124,10 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
                     ? <p className="muted"><Icon name="lock" /> {t("dm.undecryptable")}</p>
                     : <MessageText text={m.text} />}
                   {previewsOn && <DmPreviews messageId={m.id} peer={friend.publicKey} previews={m.shown} mine={mine} store={store} onError={setErr} />}
+                  {reactions.has(m.id) && <Reactions chips={reactions.get(m.id)!.chips} canReact roles={[]} onToggle={(emoji, on) => react(m.id, emoji, on)} whoOf={whoOf(m.id)} onError={setErr} />}
                 </div>
                 <div className="msg-actions">
+                  {m.text !== null && <button className="icon" title={t("chat.react")} aria-haspopup="dialog" aria-expanded={pickerFor?.id === m.id} onClick={(e) => setPickerFor((cur) => (cur?.id === m.id ? null : { id: m.id, anchor: e.currentTarget }))}><Icon name="smile-plus" /></button>}
                   {!mine && m.text !== null && reportHost && <button className="icon" title={t("report.reportMessage")} onClick={() => setReportTarget({ kind: "dm", peer: friend.publicKey, name, messageId: m.id, excerpt: m.text?.slice(0, 200) ?? "" })}><Icon name="flag" /></button>}
                   <button className="icon" title={both ? t("dm.deleteBoth") : t("dm.deleteMine")} onClick={() => {
                     void askConfirm({ title: both ? t("dm.deleteBothTitle") : t("dm.deleteMineTitle"), text: both ? t("dm.deleteBothText") : t("dm.deleteMineText"), confirmLabel: t("common.delete"), danger: true })
@@ -131,6 +140,7 @@ export function DmView({ friend, thread, myKey, store, avatarUrl, myAvatarUrl, r
         })}
       </div>
 
+      {pickerFor && <EmojiPicker anchor={pickerFor.anchor} onPick={(emoji) => { const id = pickerFor.id; setPickerFor(null); void react(id, emoji, true).catch(() => undefined); }} onClose={() => setPickerFor(null)} onDismiss={() => setPickerFor(null)} />}
       {reportTarget && reportHost && <ReportDialog target={reportTarget} directory={{ store, host: reportHost }} onClose={() => setReportTarget(null)} />}
       <footer className="composer">
         {err && <p className="error">{err}</p>}

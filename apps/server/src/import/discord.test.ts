@@ -39,7 +39,8 @@ describe("Discord permission mapping", () => {
     expect(mapDiscordPermissions(String((1n << 20n) | (1n << 9n)))).toBe(Permission.CONNECT_VOICE | Permission.VIEW_VIDEO | Permission.STREAM_VIDEO);
     expect(mapDiscordPermissions(String((1n << 22n) | (1n << 23n)))).toBe(Permission.MODERATE_VOICE);
     expect(mapDiscordPermissions(String(1n << 24n))).toBe(Permission.MOVE_MEMBERS);
-    expect(mapDiscordPermissions(String((1n << 6n) | (1n << 16n) | (1n << 34n)))).toBe(0); // reactions, history, threads
+    expect(mapDiscordPermissions(String((1n << 16n) | (1n << 34n)))).toBe(0); // history, threads
+    expect(mapDiscordPermissions(String(1n << 6n))).toBe(Permission.ADD_REACTIONS); // reactions, since 6 October 2026
     expect(mapDiscordPermissions(String((1n << 5n) | (1n << 0n) | (1n << 15n)))).toBe(Permission.MANAGE_SERVER | Permission.CREATE_INVITES | Permission.ATTACH_FILES);
     expect(mapDiscordPermissions("nonsense")).toBe(0);
     expect(mapDiscordPermissions("-1")).toBe(0);

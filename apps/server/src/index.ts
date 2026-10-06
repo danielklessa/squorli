@@ -31,6 +31,7 @@ import { registerVoteKickRoutes } from "./routes/votekick";
 import { registerChannelBlockRoutes } from "./routes/channelBlocks";
 import { channelBlockStore, dbBlockStorage } from "./voice/channelBlocks";
 import { loadMessages, registerMessageRoutes } from "./routes/messages";
+import { registerReactionRoutes } from "./routes/reactions";
 import { registerOverwriteRoutes } from "./routes/overwrites";
 import { registerPreviewRoutes } from "./routes/previews";
 import { LinkPreviews } from "./previews/service";
@@ -313,6 +314,8 @@ async function main() {
   await previews.init();
   app.addHook("onClose", async () => previews.close());
   await registerMessageRoutes(app, db, hub, previews);
+  // Reactions and reaction roles (docs/features/reactions.md): routes about one message, same visibility rules as the messages'.
+  await registerReactionRoutes(app, db, hub, presence, lk);
   await registerPreviewRoutes(app, previews);
   await registerReadStateRoutes(app, db, hub);
   await registerRadioRoutes(app, db, hub, presence, syncRadioMeta);

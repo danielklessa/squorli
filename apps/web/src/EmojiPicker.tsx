@@ -66,8 +66,12 @@ export function EmojiButton({ inputRef, value, onChange, disabled = false }: {
   );
 }
 
-/** `onClose`: closed from inside (Escape, picked), the input gets the focus. `onDismiss`: a click elsewhere, the focus stays where the user put it. */
-function EmojiPicker({ anchor, onPick, onClose, onDismiss }: { anchor: HTMLElement; onPick: (emoji: string, keepOpen: boolean) => void; onClose: () => void; onDismiss: () => void }) {
+/**
+ * `onClose`: closed from inside (Escape, picked), the input gets the focus. `onDismiss`: a click elsewhere, the focus stays where
+ * the user put it. Exported since 6 October 2026 for the reactions (Reactions.tsx, ReactionRolesDialog.tsx): the same picker
+ * opens from a message's toolbar and from the rules dialog, anchored at that button, above it with the right edges aligned.
+ */
+export function EmojiPicker({ anchor, onPick, onClose, onDismiss }: { anchor: HTMLElement; onPick: (emoji: string, keepOpen: boolean) => void; onClose: () => void; onDismiss: () => void }) {
   const [groups, setGroups] = useState<EmojiGroup[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");

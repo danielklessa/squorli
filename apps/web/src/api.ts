@@ -3,6 +3,7 @@ import {
   AvatarUpdateResponse, avatarDigest, directoryAvatarPayload,
   BackupBlob, BackupParamsResponse, challengeMessage, deriveBackupKeys, directoryActionMessage, directoryBackupMessage, directoryDmReportPayload, DmReportResponse, type DmReportContent, directoryProfilePayload,
   directoryRegisterMessage, directorySoundSettingsPayload, openBackup, type AccountSettings, type SealedSettings, type SoundSettings,
+  MessageReactions, ReactionRoleOverviewResponse, ReactionRolesResponse, ReactionUsersResponse, REACTION_USERS_PAGE, type SetReactionRoleRequest,
   MuteState, ReadStateResponse, StatusApiKeyResponse, DoctorReport, LimitsReport, ReportsResponse, ModLogResponse, type CreateReportRequest, type CloseReportRequest, type DeleteRecentHours, type Attachment, type Category, type Channel, type RadioStation, type Role, type StatusApiMode,
   type DiscordImportRequest, type DiscordImportResult, type ImportPlan,
   LocalBackupBlob, LocalBackupParamsResponse, LocalHandle, LocalHandleResponse, localRegisterMessage,
@@ -267,8 +268,18 @@ export class ServerApi {
   }
   editMessage(id: string, content: string) { return this.request<Message>("PATCH", `/api/messages/${id}`, { content }).then((m) => Message.parse(m)); }
   deleteMessage(id: string) { return this.request("DELETE", `/api/messages/${id}`); }
+  /** Notices (docs/features/notices.md): show a message without its author, or as a normal message again (MANAGE_NOTICES in the channel). */
+  setNotice(id: string, notice: boolean) { return this.request<Message>("PUT", `/api/messages/${id}/notice`, { notice }); }
   /** The author takes one link preview of their message away; the change arrives as `message.update`. */
   removePreview(id: string, url: string) { return this.request("POST", `/api/messages/${id}/previews/remove`, { url }); }
+  // ---------- Reactions and reaction roles (docs/features/reactions.md): the answer is the message's whole list with `me` for me; the event follows for everybody.
+  react(id: string, emoji: string) { return this.request<MessageReactions>("PUT", `/api/messages/${id}/reactions`, { emoji }).then((r) => MessageReactions.parse(r)); }
+  unreact(id: string, emoji: string) { return this.request<MessageReactions>("POST", `/api/messages/${id}/reactions/remove`, { emoji }).then((r) => MessageReactions.parse(r)); }
+  reactionUsers(id: string, emoji: string) { return this.request<ReactionUsersResponse>("GET", `/api/messages/${id}/reactions/users?emoji=${encodeURIComponent(emoji)}&limit=${REACTION_USERS_PAGE}`).then((r) => ReactionUsersResponse.parse(r)); }
+  reactionRules(id: string) { return this.request<ReactionRolesResponse>("GET", `/api/messages/${id}/reaction-roles`).then((r) => ReactionRolesResponse.parse(r)); }
+  setReactionRule(id: string, rule: SetReactionRoleRequest) { return this.request<ReactionRolesResponse>("PUT", `/api/messages/${id}/reaction-roles`, rule).then((r) => ReactionRolesResponse.parse(r)); }
+  deleteReactionRule(ruleId: string) { return this.request("DELETE", `/api/reaction-roles/${ruleId}`); }
+  reactionRoleOverview() { return this.request<ReactionRoleOverviewResponse>("GET", "/api/reaction-roles").then((r) => ReactionRoleOverviewResponse.parse(r)); }
   async uploadAttachment(file: File): Promise<Attachment> {
     const form = new FormData();
     form.append("file", file, file.name);

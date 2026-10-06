@@ -23,6 +23,7 @@ Code: `apps/server/src/rateLimits.ts` (the limits, the `onRequest` hook, `Window
 | `POST /api/channels/:id/messages` | session | 15 / 10 seconds (over all channels; slowmode stays per channel) |
 | `POST /api/attachments` | session | 30 / minute |
 | `POST /api/reports` (docs/features/reports.md, 26 September 2026) | session | 10 / hour |
+| reactions and reaction roles (`PUT /api/messages/:id/reactions`, `.../reactions/remove`, `.../reaction-roles`, `DELETE /api/reaction-roles/:id`; docs/features/reactions.md, 6 October 2026) | session | the write rule above, no rule of their own (one toggle is one write) |
 | events on one WebSocket (before and after `hello`) | connection | 60 / 10 seconds, then close **4008** `rate limited` |
 
 - *WebSocket:* the close code only, no `error` event: the protocol's `ServerEvent` error codes have no `rate_limited`, and an older client would fail to parse a new one. The client reconnects with its usual backoff (a code it does not know).

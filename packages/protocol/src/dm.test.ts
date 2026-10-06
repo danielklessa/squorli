@@ -57,6 +57,12 @@ describe("dm: link previews inside the plaintext", () => {
     const control = { type: "preview.remove" as const, id: ID, url: "https://example.org/a" };
     expect(await open({ text: "", control })).toEqual({ text: "", control });
     expect(await open({ text: "", control: { type: "message.delete", id: ID } })).toEqual({ text: "" });
+    // A reaction (6 October 2026): the emoji is normalized and must be exactly one; anything else drops the control, not the message.
+    const reaction = { type: "reaction" as const, id: ID, emoji: "👍🏽", on: true };
+    expect(await open({ text: "", control: reaction })).toEqual({ text: "", control: reaction });
+    expect(await open({ text: "", control: { ...reaction, on: false } })).toEqual({ text: "", control: { ...reaction, on: false } });
+    expect(await open({ text: "", control: { ...reaction, emoji: "ab" } })).toEqual({ text: "" });
+    expect(await open({ text: "", control: { ...reaction, emoji: "😀😀" } })).toEqual({ text: "" });
   });
 
   it("a picture for the blob store opens only with its key and unchanged", async () => {

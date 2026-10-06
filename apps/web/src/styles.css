@@ -509,6 +509,43 @@ button.dock-stage:hover { background: var(--sel); }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 .attachment { display: inline-block; margin: 0.2rem 0; padding: 0.35rem 0.7rem; background: var(--bg2); border-radius: var(--r); }
 .attachment-img { max-width: min(28rem, 100%); max-height: 20rem; border-radius: var(--r); margin: 0.3rem 0; display: block; }
+/* Reactions (Reactions.tsx, docs/features/reactions.md): chips under a message; mine in the selection colour with the brand's edge, a configured emoji nobody used yet dimmed. */
+.reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.35rem 0 0.1rem; }
+.reaction { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 1.75rem; padding: 0.1rem 0.6rem; border-radius: 999px; border: 1px solid transparent; background: var(--bg4); color: var(--text); font-size: 0.875rem; font-weight: 500; line-height: 1; }
+.reaction:hover { border-color: var(--line); background: var(--bg4); }
+.reaction.mine { background: var(--sel); border-color: var(--brand); }
+.reaction.empty { opacity: 0.7; }
+.reaction[aria-disabled="true"]:not(.mine) { cursor: default; }
+.reaction .emoji { font-size: 1.1rem; line-height: 1; }
+.reaction-count { font-variant-numeric: tabular-nums; }
+.reaction-who { position: fixed; z-index: 9; pointer-events: none; width: max-content; max-width: min(20rem, calc(100vw - 16px)); padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg2); color: var(--text); box-shadow: 0 12px 40px rgba(0,0,0,.4); font-size: 0.875rem; }
+.reaction-who-head { display: flex; align-items: center; gap: 0.5rem; }
+.reaction-who-head .emoji { font-size: 1.5rem; line-height: 1; }
+.reaction-who p { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+/* The toolbar stays while the picker (a body portal) is open, or the pointer leaving the message would take it away. */
+.msg.picker-open .msg-actions { opacity: 1; pointer-events: auto; }
+/* The rules dialog (ReactionRolesDialog.tsx) and Verwaltung > Reaktionsrollen (ReactionRolesTab.tsx). */
+.rr-dialog.modal { width: min(40rem, 100%); }
+.rr-dialog .dialog-body { padding: 0.9rem; overflow-y: auto; }
+.rr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+/* One rule per row: emoji (or the pick button), the role, the switch, the trash (or the save button); stacked on a phone. */
+.rr-row { display: grid; grid-template-columns: auto minmax(7rem, 1fr) minmax(10rem, 1.6fr) auto; align-items: center; gap: 0.6rem; }
+.rr-row .rr-emoji { font-size: 1.5rem; line-height: 1; min-width: 2rem; text-align: center; }
+.rr-row .rr-role { min-width: 0; }
+.rr-row .check { margin: 0; }
+@media (max-width: 700px) { .rr-row { grid-template-columns: auto 1fr auto; } .rr-row .check { grid-column: 1 / -1; } }
+.rr-row .rr-pick { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.5rem; white-space: nowrap; }
+/* The add row: the save button (with its answer) on a line of its own, right-aligned, so the row never overflows the dialog. */
+.rr-add .rr-row { grid-template-columns: auto minmax(7rem, 1fr) minmax(8rem, 1.4fr); }
+.rr-add .save-answer { grid-column: 1 / -1; justify-self: end; }
+.rr-row .rr-pick .emoji { font-size: 1.4rem; line-height: 1; }
+.rr-add legend { font-weight: 600; }
+.rr-channel h4 { display: flex; align-items: center; gap: 0.35rem; margin: 0.5rem 0 0; }
+.rr-overview .rr-arrow { display: inline-flex; color: var(--muted); }
+.rr-overview .rr-rolename { font-weight: 600; }
+.rr-overview .rr-excerpt { flex: 1 1 100%; quotes: "„" "“"; }
+.rr-overview .badge { background: var(--bg4); color: var(--muted); text-transform: none; letter-spacing: 0; margin: 0; }
+
 /* Link previews (LinkPreviews.tsx). Every picture has its box before it loads, so a preview never moves the chat when it arrives. */
 .previews { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.35rem 0 0.2rem; }
 .preview-row { display: flex; align-items: flex-start; gap: 0.25rem; max-width: 100%; }
@@ -1106,7 +1143,8 @@ button.icon.on { color: var(--brand); }
 button.emoji-open { flex: none; width: 2.5rem; height: 2.5rem; padding: 0; background: transparent; font-size: 1.5rem; }
 button.emoji-open:hover:not(:disabled) { background: transparent; color: var(--text); }
 button.emoji-open[aria-expanded="true"] { color: var(--brand); }
-.emoji-picker { position: fixed; z-index: 9; display: flex; flex-direction: column; width: min(23rem, calc(100vw - 16px)); height: min(27rem, calc(100dvh - 16px)); border: 1px solid var(--line); border-radius: var(--r); background: var(--bg2); color: var(--text); box-shadow: 0 12px 40px rgba(0,0,0,.4); overflow: hidden; }
+/* Above the dialogs (30): the reaction roles dialog opens the picker from inside (the user's report of 6 October 2026: it sat behind the backdrop). */
+.emoji-picker { position: fixed; z-index: 31; display: flex; flex-direction: column; width: min(23rem, calc(100vw - 16px)); height: min(27rem, calc(100dvh - 16px)); border: 1px solid var(--line); border-radius: var(--r); background: var(--bg2); color: var(--text); box-shadow: 0 12px 40px rgba(0,0,0,.4); overflow: hidden; }
 .emoji-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.6rem 0.6rem 0.4rem; }
 .emoji-search { flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.4rem; padding: 0 0.6rem; border-radius: var(--r); background: var(--bg4); color: var(--muted); }
 .emoji-search:focus-within { outline: 2px solid var(--brand); }
@@ -1146,6 +1184,10 @@ button.emoji-open[aria-expanded="true"] { color: var(--brand); }
    belongs to the voice marker). */
 .mention { padding: 0 0.25em; border-radius: 6px; background: rgba(99, 151, 255, 0.18); color: var(--brand); font-weight: 600; white-space: nowrap; }
 .mention.me { background: rgba(255, 197, 104, 0.22); color: var(--warn); }
+/* Notices (docs/features/notices.md, 6 October 2026): no author; the time stands where the avatar normally is, the text starts next to it at the far left. */
+.msg.notice { display: flex; gap: 0.75rem; align-items: baseline; padding-left: 0.75rem; }
+.msg.notice > .notice-time { flex: none; width: 3rem; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.msg.notice > .msg-body { flex: 1; min-width: 0; }
 .msg.mentions-me { background: rgba(255, 197, 104, 0.07); box-shadow: inset 3px 0 0 var(--warn); }
 .msg.mentions-me:hover { background: rgba(255, 197, 104, 0.11); }
 .mention-badge { margin-left: auto; flex: none; min-width: 1.25rem; padding: 0 0.4rem; border-radius: 999px; background: var(--danger); color: var(--on-light); font-size: 0.75rem; font-weight: 700; text-align: center; }
@@ -1277,8 +1319,21 @@ button.link { background: transparent; color: var(--accent); padding: 0; font: i
 .channel-btn .count.full { color: var(--warn); }
 .channel.locked-out .channel-btn { opacity: 0.5; }
 .channel-menu-btn { display: inline-flex; padding: 0 0.2rem; color: var(--muted); }
-h3 > .category-btn { background: transparent; color: inherit; font: inherit; padding: 0; text-align: left; width: 100%; cursor: default; }
+/* Collapsible categories (docs/features/mentions-unread.md, 6 October 2026): the heading is the toggle, a collapsed one sums up its channels. */
+.channel-list h3.category-head { display: flex; align-items: center; gap: 0.25rem; }
+h3 > .category-btn { background: transparent; color: inherit; font: inherit; padding: 0; text-align: left; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 h3 > .category-btn:hover { color: var(--text); }
+.category-chevron { flex: none; font-size: 0.8rem; opacity: 0.7; transition: transform 0.15s; }
+.category-head.collapsed .category-chevron { transform: rotate(-90deg); }
+.category-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-head.unread > .category-btn { color: var(--text); font-weight: 700; }
+.category-head.mentioned > .category-btn { color: var(--warn); }
+.category-unread { flex: none; min-width: 1.2rem; padding: 0 0.4rem; border-radius: 999px; background: var(--text); color: var(--bg); font-size: 0.7rem; font-weight: 700; line-height: 1.2rem; text-align: center; }
+.category-voice { flex: none; display: inline-flex; align-items: center; gap: 0.2rem; color: var(--ok); font-size: 0.75rem; font-weight: 600; }
+.category-voice .ic { font-size: 0.85rem; }
+.category-head > .category-menu-btn { flex: none; width: 1.75rem; height: 1.75rem; padding: 0; }
+.channel-list section.collapsed { margin-bottom: 1rem; }
+.channel-list section.collapsed > ul:empty { display: none; }
 .channel-title { display: flex; align-items: center; gap: 0.35rem; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .channel-title svg, .channel-title i { color: var(--muted); font-size: 0.85em; }
 .hangup.locked, .bar-btn.leave.locked { opacity: 0.6; cursor: not-allowed; }

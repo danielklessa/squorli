@@ -21,7 +21,7 @@ const MAX_MENTION_CANDIDATES = 500;
  * on all their devices. Only messages of other people count; a channel never opened counts from the day of joining.
  */
 export async function registerReadStateRoutes(app: FastifyInstance, db: Db, hub: Hub) {
-  /** One query for all text channels: read state, newest message, number of unread messages and of those that mention me. */
+  /** One query for all text channels: read state, newest message, number of unread messages (flag and count) and of those that mention me. */
   app.get("/api/read-state", async (req, reply) => {
     const m = await requireMember(db, req, reply);
     if (!m) return;
@@ -63,7 +63,7 @@ export async function registerReadStateRoutes(app: FastifyInstance, db: Db, hub:
     }
     const [me] = await db.select({ muted: members.muted }).from(members).where(eq(members.userId, m.userId)).limit(1);
     const out: ReadStateResponse = {
-      channels: rows.map((r) => ({ channelId: r.channel_id, lastReadSeq: num(r.last_read_seq), latestSeq: num(r.latest_seq), unread: Number(r.unread) > 0, mentions: mentions.get(r.channel_id) ?? 0, muted: r.muted === true })),
+      channels: rows.map((r) => ({ channelId: r.channel_id, lastReadSeq: num(r.last_read_seq), latestSeq: num(r.latest_seq), unread: Number(r.unread) > 0, unreadCount: Number(r.unread), mentions: mentions.get(r.channel_id) ?? 0, muted: r.muted === true })),
       serverMuted: me?.muted ?? false,
     };
     return out;

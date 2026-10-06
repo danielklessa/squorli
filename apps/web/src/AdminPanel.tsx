@@ -12,11 +12,12 @@ import { formatDeepLink, parseDeepLink } from "./platform/deepLink";
 import { RadioTab } from "./RadioTab";
 import { ImportTab } from "./ImportTab";
 import { ReportsTab } from "./ReportsTab";
+import { ReactionRolesTab } from "./ReactionRolesTab";
 import { Icon } from "./Icon";
 import { fmtDateTime, locale, t } from "./i18n";
 import { runMediaCheck, type MediaCheckResult } from "./doctorMedia";
 
-type Tab = "server" | "channels" | "radio" | "roles" | "invites" | "bans" | "reports" | "import";
+type Tab = "server" | "channels" | "radio" | "roles" | "reactionRoles" | "invites" | "bans" | "reports" | "import";
 
 /** Admin area: server, categories/channels, radio stations, roles, invites, bans. Changes come back via the structure event. */
 export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEditChannel }: { api: ServerApi; server: ServerState; myUserId: string; directoryUrl: string | null; onClose: () => void; onEditChannel: (target: ChannelDialogTarget) => void }) {
@@ -28,6 +29,8 @@ export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEdi
     // Only against a server that knows the radio (older servers send no station list).
     { id: "radio", label: t("admin.tab.radio"), icon: "radio", ok: hasPermission(p, Permission.MANAGE_SERVER) && server.radioStations !== undefined },
     { id: "roles", label: t("admin.tab.roles"), icon: "shield", ok: hasPermission(p, Permission.MANAGE_ROLES) },
+    // Reaction roles (docs/features/reactions.md): only against a server that does reactions (the flag).
+    { id: "reactionRoles", label: t("admin.tab.reactionRoles"), icon: "shield-plus", ok: hasPermission(p, Permission.MANAGE_ROLES) && server.reactions === true },
     { id: "invites", label: t("admin.tab.invites"), icon: "link", ok: hasPermission(p, Permission.CREATE_INVITES) },
     { id: "bans", label: t("admin.tab.bans"), icon: "ban", ok: hasPermission(p, Permission.BAN_MEMBERS) },
     // Reports (docs/features/reports.md): only against a server that takes them (the count field is the flag).
@@ -61,6 +64,7 @@ export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEdi
             {tab === "channels" && <ChannelsTab api={api} server={server} run={run} onEdit={onEditChannel} />}
             {tab === "radio" && <RadioTab api={api} server={server} run={run} />}
             {tab === "roles" && <RolesTab api={api} server={server} myUserId={myUserId} run={run} save={save} />}
+            {tab === "reactionRoles" && <ReactionRolesTab api={api} server={server} run={run} />}
             {tab === "invites" && <InvitesTab api={api} run={run} canManage={hasPermission(p, Permission.MANAGE_SERVER)} />}
             {tab === "bans" && <BansTab api={api} run={run} />}
             {tab === "reports" && <ReportsTab api={api} myPermissions={p} run={run} openCount={server.openReports ?? 0} />}

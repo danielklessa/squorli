@@ -1,4 +1,4 @@
-import { CreateMessageRequest, Permission, RemovePreviewRequest, UpdateMessageRequest, type Attachment, type Message, type MessagePage } from "@squorli/protocol";
+import { CreateMessageRequest, Permission, RemovePreviewRequest, SetNoticeRequest, UpdateMessageRequest, type Attachment, type Message, type MessagePage } from "@squorli/protocol";
 import { signAttachment } from "../attachmentLinks";
 import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -9,6 +9,7 @@ import { attachments, channels, messages } from "../db/schema";
 import type { Hub } from "../hub";
 import { visiblePreviews, type LinkPreviews } from "../previews/service";
 import { recordModLog, userNameOf } from "../modLog";
+import { reactionsOf } from "../reactions";
 import { displayNameOf } from "@squorli/protocol";
 
 const PAGE = 50;
@@ -19,10 +20,16 @@ export function attachmentUrl(a: { id: string; name: string }): string {
   return `/api/attachments/${a.id}/${encodeURIComponent(a.name)}?${signAttachment(a.id)}`;
 }
 
-/** `withPreviews` false = link previews are turned off: the field is left out, which is what tells clients so. */
-export async function loadMessages(db: Db, rows: (typeof messages.$inferSelect)[], withPreviews = true): Promise<Message[]> {
+/**
+ * `withPreviews` false = link previews are turned off: the field is left out, which is what tells clients so. `viewerId` =
+ * whom the reactions' `me` is for (the history's reader); null for a broadcast, where the client keeps its own flag.
+ */
+export async function loadMessages(db: Db, rows: (typeof messages.$inferSelect)[], withPreviews = true, viewerId: string | null = null): Promise<Message[]> {
   const ids = rows.map((r) => r.id);
-  const atts = ids.length ? await db.select().from(attachments).where(inArray(attachments.messageId, ids)) : [];
+  const [atts, reactions] = await Promise.all([
+    ids.length ? db.select().from(attachments).where(inArray(attachments.messageId, ids)) : [],
+    reactionsOf(db, ids, viewerId),
+  ]);
   const byMsg = new Map<string, Attachment[]>();
   for (const a of atts) {
     const list = byMsg.get(a.messageId!) ?? [];
@@ -32,12 +39,13 @@ export async function loadMessages(db: Db, rows: (typeof messages.$inferSelect)[
   return rows.map((r) => ({
     id: r.id, seq: r.seq, channelId: r.channelId, authorId: r.authorId, content: r.content,
     attachments: byMsg.get(r.id) ?? [], ...(withPreviews ? { previews: visiblePreviews(r.previews) } : {}),
+    reactions: reactions.get(r.id) ?? [], notice: r.notice,
     createdAt: r.createdAt.toISOString(), editedAt: r.editedAt?.toISOString() ?? null,
   }));
 }
 
 export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: Hub, previews: LinkPreviews) {
-  const load = (rows: (typeof messages.$inferSelect)[]) => loadMessages(db, rows, previews.enabled);
+  const load = (rows: (typeof messages.$inferSelect)[], viewerId: string | null = null) => loadMessages(db, rows, previews.enabled, viewerId);
   /** Every route here goes by the member's permissions in the channel (channelGuard.ts): an invisible channel is a 404. */
 
   /** History, loaded newest-first and returned oldest-first. ?before=<seq> pages backwards. */
@@ -52,7 +60,7 @@ export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: H
         .where(before !== null && Number.isFinite(before) ? and(eq(messages.channelId, ch.id), lt(messages.seq, before)) : eq(messages.channelId, ch.id))
         .orderBy(desc(messages.seq)).limit(limit + 1);
       const hasMore = rows.length > limit;
-      const page = await load(rows.slice(0, limit).reverse());
+      const page = await load(rows.slice(0, limit).reverse(), c.userId);
       const out: MessagePage = { messages: page, hasMore };
       return out;
     });
@@ -101,6 +109,26 @@ export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: H
     const [msg] = await load([updated!]);
     hub.broadcastToChannel(row.channelId, { type: "message.update", message: msg! });
     previews.schedule(row.id);
+    return msg;
+  });
+
+  /**
+   * Notices (docs/features/notices.md): show a message without its author, or as a normal message again. MANAGE_NOTICES in
+   * the channel; the author's own rights do not matter. The whole channel sees the change as a `message.update`.
+   */
+  app.put<{ Params: { id: string } }>("/api/messages/:id/notice", { schema: { params: Params } }, async (req, reply) => {
+    const m = await requireMember(db, req, reply);
+    if (!m) return;
+    const body = SetNoticeRequest.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    const [row] = await db.select().from(messages).where(eq(messages.id, req.params.id)).limit(1);
+    const r = row ? await resolveChannel(db, m.userId, row.channelId) : null;
+    if (!row || !r) return reply.code(404).send({ error: "not_found" });
+    if (!canIn(r.perms, Permission.MANAGE_NOTICES)) return reply.code(403).send({ error: "forbidden" });
+    if (row.notice === body.data.notice) return (await load([row]))[0];
+    const [updated] = await db.update(messages).set({ notice: body.data.notice }).where(eq(messages.id, row.id)).returning();
+    const [msg] = await load([updated!]);
+    hub.broadcastToChannel(row.channelId, { type: "message.update", message: msg! });
     return msg;
   });
 

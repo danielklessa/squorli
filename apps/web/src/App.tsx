@@ -802,8 +802,8 @@ export function App() {
         onReport={reportServer ? (host, name) => { setShowBrowser(false); reportServer(host, name); } : null} />}
       <div className="left" id="app-navigation">
         {homeOpen ? <HomeSidebar state={state} store={store} members={server?.members ?? []} onOpenChat={() => setMobileContent(true)} onReportAccount={reportAccount(null)} /> : view ? <Sidebar
-          server={view.server} api={view.conn.api} currentChannelId={(showStage || stageAway) && voiceChannel ? voiceChannel.id : view.active.currentChannelId} voice={view.active.voice}
-          voiceState={voiceHost === activeHost ? voice : null} client={client} radioTitles={view.active.radioTitles} unread={view.active.unread} mentions={view.active.mentions} muted={view.active.muted} canMute={view.active.readSync}
+          server={view.server} api={view.conn.api} host={view.active.host} currentChannelId={(showStage || stageAway) && voiceChannel ? voiceChannel.id : view.active.currentChannelId} voice={view.active.voice}
+          voiceState={voiceHost === activeHost ? voice : null} client={client} radioTitles={view.active.radioTitles} unread={view.active.unread} unreadCount={view.active.unreadCount} mentions={view.active.mentions} muted={view.active.muted} canMute={view.active.readSync}
           onMuteChannel={(id, muted) => { void view.conn.setChannelMuted(id, muted).catch(() => {}); }} onOpenChannelDialog={setChannelEdit}
           connection={view.active.connection} onSelect={(id) => { view.conn.selectChannel(id); setStageOpen(false); setMobileContent(true); }}
           onJoinVoice={(id) => { if (mobile) setVoicePreview(id); else void joinVoiceAsked(view.active.host, id).catch(reportJoinError); }} onOpenAdmin={() => setShowAdmin(true)} myUserId={view.active.userId ?? ""}
@@ -849,6 +849,7 @@ export function App() {
             members={view.server.members} myUserId={view.active.userId!} myPermissions={permsIn(view.server, current.id)}
             typing={view.active.typing[current.id] ?? {}} conn={view.conn}
             canReport={view.server.openReports !== undefined} serverName={view.server.settings.name} blocked={blockControlsFor(view.active.host)}
+            canReactionRoles={view.server.reactions === true && hasPermission(view.server.myPermissions, Permission.MANAGE_ROLES)} roles={view.server.roles}
             passOn={mayReport("server", view.active.host) && directoryHost ? { store, host: directoryHost, serverHost: view.active.host === state.homeHost ? homeDirHost : view.active.serverDomain ?? view.active.host } : null}
           />
         ) : (

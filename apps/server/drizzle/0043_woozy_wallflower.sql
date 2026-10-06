@@ -1,0 +1,1 @@
+ALTER TABLE "messages" ADD COLUMN "notice" boolean DEFAULT false NOT NULL;
