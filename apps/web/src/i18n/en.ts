@@ -1464,6 +1464,7 @@ export const en: Messages = {
   "chan.addEntry": "Add a role or member",
   "chan.removeEntry": "Remove entry",
   "chan.everyone": "everyone",
+  "chan.rankLocked": "This role is at or above your highest role. Its entry stays as it is; you can change the other entries.",
   "chan.everyoneFixed": "Applies to every member (the default role) and always stays in the list",
   "chan.role": "Role",
   "chan.member": "Member",

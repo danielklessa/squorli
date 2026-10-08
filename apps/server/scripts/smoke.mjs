@@ -1444,6 +1444,16 @@ ${chF.nonce}`), keyF.priv));
   const [sw8, rw8] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 }] }, B.token);
   check("channel perms: an entry with a right one lacks stays untouched (own bit added 200, foreign bit removed 403, entry dropped 403)",
     sw6 === 200 && sw7 === 403 && rw7.error === "cannot_grant" && sw8 === 403 && rw8.error === "cannot_grant", `${sw6} ${sw7} ${rw7.error ?? ""} ${sw8} ${rw8.error ?? ""}`);
+  // The rank rules go by the changed entries too (8 October 2026): B holds Smoke-Mod, so an entry for that role is at B's rank.
+  // Unchanged it passes through (the user's imported channel carried one for their own role and could not be edited at all).
+  const bEntry = { targetType: "member", targetId: B.userId, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS, deny: 0 };
+  const modEntry = { targetType: "role", targetId: modRole.id, allow: P.VIEW_CHANNELS, deny: 0 };
+  await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), bEntry, modEntry] }, owner.token);
+  const [sw9] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), bEntry, modEntry, { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS | P.SEND_MESSAGES, deny: 0 }] }, B.token);
+  const [sw10, rw10] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), bEntry, { ...modEntry, allow: P.VIEW_CHANNELS | P.MANAGE_CHANNELS }] }, B.token);
+  const [sw11, rw11] = await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS), bEntry] }, B.token);
+  check("channel perms: an entry for a role at one's own rank stays untouched (other entry changed 200, its bits changed 403 role_above_you, dropped 403 role_above_you)",
+    sw9 === 200 && sw10 === 403 && rw10.error === "role_above_you" && sw11 === 403 && rw11.error === "role_above_you", `${sw9} ${sw10} ${rw10.error ?? ""} ${sw11} ${rw11.error ?? ""}`);
   // ---- Read-only by the everyone deny; slowmode with the exemption.
   await api("PUT", `/api/channels/${privCh.id}/overwrites`, { overwrites: [everyoneDeny(P.VIEW_CHANNELS | P.SEND_MESSAGES), { targetType: "member", targetId: G.userId, allow: P.VIEW_CHANNELS, deny: 0 }] }, owner.token);
   const [sro] = await api("POST", `/api/channels/${privCh.id}/messages`, { content: "darf ich?" }, G.token);

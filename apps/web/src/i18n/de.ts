@@ -1465,6 +1465,7 @@ export const de = {
   "chan.addEntry": "Rolle oder Mitglied hinzufügen",
   "chan.removeEntry": "Eintrag entfernen",
   "chan.everyone": "alle",
+  "chan.rankLocked": "Diese Rolle steht auf oder über deiner höchsten Rolle. Ihr Eintrag bleibt, wie er ist; die übrigen Einträge kannst du ändern.",
   "chan.everyoneFixed": "Gilt für alle Mitglieder (Standardrolle) und bleibt immer in der Liste",
   "chan.role": "Rolle",
   "chan.member": "Mitglied",

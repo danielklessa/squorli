@@ -22,7 +22,10 @@ const Params = { type: "object", properties: { id: { type: "string", format: "uu
  * never share a bit; only CHANNEL_OVERRIDABLE bits (a server-wide right is refused, not silently dropped); targets must
  * exist; one may only hand out what one holds in that channel (canGrant over the channel-resolved mask); a role only below
  * one's own rank; a deny for a member only when one outranks them; and never a list that would take one's own view or
- * management of the channel away (owners and administrators cannot lock themselves out anyway).
+ * management of the channel away (owners and administrators cannot lock themselves out anyway). The rank rules, like
+ * canGrant, apply to the entries the list changes only (8 October 2026): an entry for a role at or above the editor's rank
+ * that stays as stored is passed through, so the rest of the list can still be edited (until then an imported entry for
+ * the editor's own role made the whole channel uneditable for them, user's report).
  */
 export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub: Hub, presence: VoicePresence, lk: LivekitAdmin) {
   type Row = { roleId: string | null; userId: string | null; allow: number; deny: number };
@@ -31,7 +34,8 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
   /**
    * null = accepted; otherwise the error the client gets. `before` = the rows the list replaces: only the bits an entry
    * changes against its row need canGrant (6 October 2026, as for editing a role), so an entry that holds a right the editor
-   * lacks here may stay in the list untouched; a dropped entry counts as changed in every bit it had.
+   * lacks here may stay in the list untouched; a dropped entry counts as changed in every bit it had. The same goes for the
+   * rank rules (8 October 2026): an unchanged entry is nobody's doing, so neither its role's rank nor its member's is asked.
    */
   async function check(actor: Actor, perms: number, list: PermissionOverwrite[], before: Row[], scope: { id: string; kind: "channel" | "category"; categoryId: string | null }): Promise<{ code: number; error: string } | null> {
     const ids = { role: list.filter((o) => o.targetType === "role").map((o) => o.targetId), member: list.filter((o) => o.targetType === "member").map((o) => o.targetId) };
@@ -46,19 +50,30 @@ export async function registerOverwriteRoutes(app: FastifyInstance, db: Db, hub:
     const memberRows = ids.member.length ? await db.select({ userId: members.userId }).from(members).where(inArray(members.userId, ids.member)) : [];
     if (roleRows.length !== ids.role.length || memberRows.length !== ids.member.length) return { code: 400, error: "unknown_target" };
     const actorIn: Actor = { ...actor, permissions: perms };
+    /** The rank rules for an entry the list changes: a role only below one's own rank, a deny for a member only when one outranks them. */
+    const rankCheck = async (o: { targetType: "role" | "member"; targetId: string; deny: number }, position: number | undefined): Promise<{ code: number; error: string } | null> => {
+      if (o.targetType === "role") return canTouchRole(actor, position!) ? null : { code: 403, error: "role_above_you" };
+      if (o.deny === 0 || o.targetId === actor.userId) return null;
+      const target = await actorOf(db, o.targetId);
+      return target && outranks(actor, target) ? null : { code: 403, error: "target_above_you" };
+    };
     for (const o of list) {
       const was = old.get(keyOf(o)) ?? { allow: 0, deny: 0 };
-      if (!canGrant(actorIn, (o.allow ^ was.allow) | (o.deny ^ was.deny))) return { code: 403, error: "cannot_grant" };
-      if (o.targetType === "role") {
-        const role = roleRows.find((r) => r.id === o.targetId)!;
-        if (!canTouchRole(actor, role.position)) return { code: 403, error: "role_above_you" };
-      } else if (o.deny !== 0 && o.targetId !== actor.userId) {
-        const target = await actorOf(db, o.targetId);
-        if (!target || !outranks(actor, target)) return { code: 403, error: "target_above_you" };
-      }
+      const changed = (o.allow ^ was.allow) | (o.deny ^ was.deny);
+      if (changed === 0) continue;
+      if (!canGrant(actorIn, changed)) return { code: 403, error: "cannot_grant" };
+      const refused = await rankCheck(o, roleRows.find((r) => r.id === o.targetId)?.position);
+      if (refused) return refused;
     }
     const kept = new Set(list.map(keyOf));
-    for (const [key, o] of old) if (!kept.has(key) && !canGrant(actorIn, o.allow | o.deny)) return { code: 403, error: "cannot_grant" };
+    for (const [key, o] of old) {
+      if (kept.has(key)) continue;
+      if (!canGrant(actorIn, o.allow | o.deny)) return { code: 403, error: "cannot_grant" };
+      // A dropped entry's role is not in `roleRows` (those are the list's targets); its position is read here.
+      const position = o.targetType === "role" ? (await db.select({ position: roles.position }).from(roles).where(eq(roles.id, o.targetId)).limit(1))[0]?.position ?? 0 : undefined;
+      const refused = await rankCheck(o, position);
+      if (refused) return refused;
+    }
     // The lock-out guard: what would the actor resolve to with this list in place?
     if (!actor.isOwner && !hasPermission(actor.permissions, Permission.ADMINISTRATOR)) {
       const ctx = await visibility.refresh(db);

@@ -10,6 +10,7 @@ import { EntityPicker } from "./EntityPicker";
 import { entryKey, type PickerEntry } from "./pickerEntries";
 import { Icon } from "./Icon";
 import { t, tOr } from "./i18n";
+import { topPositionOf } from "./memberRank";
 import type { MenuAnchor } from "./ContextMenu";
 import { TriState } from "./TriState";
 
@@ -334,6 +335,12 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
   const showAdvanced = advanced || hasDeny;
   const categoryName = target.kind === "channel" && categoryId ? server.categories.find((k) => k.id === categoryId)?.name ?? null : null;
   const isEveryone = (o: PermissionOverwrite) => !!defaultRole && o.targetType === "role" && o.targetId === defaultRole.id;
+  // An entry for a role at or above one's own rank is shown but not editable (the server's canTouchRole; 8 October 2026): an
+  // imported channel often carries one for the editor's own role, and until then every switch of the dialog ran into it.
+  const me = server.members.find((m) => m.userId === myUserId);
+  const myTop = me ? topPositionOf(me, server.roles) : 0;
+  const aboveMe = (o: PermissionOverwrite) => o.targetType === "role" && (server.roles.find((r) => r.id === o.targetId)?.position ?? 0) >= myTop;
+  const rankLocked = !!current && aboveMe(current);
   const privateOn = !!defaultRole && everyoneDenies(entries, defaultRole.id, SHORTCUTS.private);
   const readOnlyOn = !!defaultRole && everyoneDenies(entries, defaultRole.id, SHORTCUTS.readOnly);
 
@@ -360,6 +367,7 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
                   <span className="muted small">{isEveryone(o) ? t("chan.everyone") : o.targetType === "role" ? t("chan.role") : t("chan.member")}</span>
                 </button>
                 {isEveryone(o) ? <span className="role-fixed" title={t("chan.everyoneFixed")}><Icon name="lock" /></span>
+                  : aboveMe(o) ? <span className="role-fixed" title={t("chan.err.role_above_you")}><Icon name="lock" /></span>
                   : <button className="icon" title={t("chan.removeEntry")} aria-label={`${labelOf(o)}: ${t("chan.removeEntry")}`} onClick={() => remove(o)}><Icon name="x" /></button>}
               </li>
             );
@@ -383,6 +391,7 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
             </div>
           </header>
           {hasDeny && !advanced && <p className="muted small">{t("chan.advancedForced")}</p>}
+          {rankLocked && <p className="muted small">{t("chan.rankLocked")}</p>}
           <p className="muted small">
             {target.kind === "channel" ? (categoryName ? t("chan.inheritsFrom", { name: categoryName }) : t("chan.inheritsServer")) : t("chan.categoryInherits")}
             {target.kind === "channel" && categoryName && entries.some((o) => !emptyOverwrite(o)) && (
@@ -394,8 +403,8 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
               {SIMPLE[kind].map((n) => {
                 const perm = Permission[n];
                 const on = overwriteState(current, perm) === "allow";
-                const ok = grantableIn(myPerms, perm);
-                return <label key={n} className="check" title={ok ? undefined : t("chan.notGrantable")}><input type="checkbox" checked={on} disabled={!ok} onChange={(e) => update(current, perm, e.target.checked ? "allow" : "neutral")} />{tOr(`chanPerm.${n}`, n)}</label>;
+                const ok = grantableIn(myPerms, perm) && !rankLocked;
+                return <label key={n} className="check" title={ok ? undefined : rankLocked ? t("chan.err.role_above_you") : t("chan.notGrantable")}><input type="checkbox" checked={on} disabled={!ok} onChange={(e) => update(current, perm, e.target.checked ? "allow" : "neutral")} />{tOr(`chanPerm.${n}`, n)}</label>;
               })}
               <p className="muted small">{t("chan.simpleHint")}</p>
             </div>
@@ -405,11 +414,11 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
               {g.permissions.map((n) => {
                 const perm = Permission[n];
                 const state = overwriteState(current, perm);
-                const ok = grantableIn(myPerms, perm);
+                const ok = grantableIn(myPerms, perm) && !rankLocked;
                 const inh = state === "neutral" ? inheritedFrom(current, perm, target.kind === "channel" ? categoryList : [], subjectOf(current).base) : null;
                 const overridden = target.kind === "channel" && state !== "neutral";
                 return (
-                  <div key={n} className={`perm-row${overridden ? " overridden" : ""}`} title={ok ? undefined : t("chan.notGrantable")}>
+                  <div key={n} className={`perm-row${overridden ? " overridden" : ""}`} title={ok ? undefined : rankLocked ? t("chan.err.role_above_you") : t("chan.notGrantable")}>
                     <span className="perm-label">{tOr(`chanPerm.${n}`, n)}{overridden && <span className="sr-only"> ({t("chan.overridden")})</span>}</span>
                     <span className="perm-inherited muted small">{inh ? t(inh.state === "allow" ? "chan.inheritedAllow" : "chan.inheritedDeny", { source: t(inh.source === "category" ? "chan.sourceCategory" : "chan.sourceServer") }) : ""}</span>
                     <TriState name={`ow-${current.targetType}-${current.targetId}-${n}`} label={tOr(`chanPerm.${n}`, n)} value={state} disabled={!ok} inherited={inh?.state ?? null} onChange={(v) => update(current, perm, v)} />
