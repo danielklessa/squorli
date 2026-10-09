@@ -27,7 +27,7 @@
     "electron-updater": "6.8.9",
     "openpgp": "6.3.2",
     "tsup": "^8.3.0",
-    "typescript": "^5.6.0",
+    "typescript": "^7.0.0",
     "vitest": "^5.0.0"
   }
 }
