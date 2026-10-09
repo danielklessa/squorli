@@ -12,5 +12,5 @@ onlyBuiltDependencies:
 # package that needs it asks for the fixed version by itself.
 overrides:
   "brace-expansion@>=5.0.0 <5.0.12": "5.0.12"
-  "fast-uri@>=3.0.0 <3.1.8": "3.1.8"
+  "fast-uri@>=3.0.0 <3.1.8": "4.2.1"
   "fast-uri@>=4.0.0 <4.1.5": "4.2.1"
