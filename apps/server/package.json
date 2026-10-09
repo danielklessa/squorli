@@ -23,7 +23,7 @@
     "@fastify/multipart": "^10.0.0",
     "@fastify/static": "^10.1.5",
     "@fastify/websocket": "^11.0.0",
-    "@noble/ed25519": "^2.1.0",
+    "@noble/ed25519": "^3.0.0",
     "@squorli/link-preview": "workspace:*",
     "@squorli/protocol": "workspace:*",
     "drizzle-orm": "^0.45.3",

@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@livekit/track-processors": "0.8.1",
-    "@noble/ed25519": "^2.1.0",
+    "@noble/ed25519": "^3.0.0",
     "@squorli/protocol": "workspace:*",
     "livekit-client": "^2.22.3",
     "lucide-static": "1.52.0",

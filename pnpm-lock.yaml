@@ -64,8 +64,8 @@ importers:
         specifier: ^11.0.0
         version: 11.3.3
       '@noble/ed25519':
-        specifier: ^2.1.0
-        version: 2.3.0
+        specifier: ^3.0.0
+        version: 3.2.0
       '@squorli/link-preview':
         specifier: workspace:*
         version: link:../../packages/link-preview
@@ -119,8 +119,8 @@ importers:
         specifier: 0.8.1
         version: 0.8.1(@types/dom-mediacapture-transform@0.1.12)(livekit-client@2.22.3(@types/dom-mediacapture-record@1.0.22))
       '@noble/ed25519':
-        specifier: ^2.1.0
-        version: 2.3.0
+        specifier: ^3.0.0
+        version: 3.2.0
       '@squorli/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -1045,8 +1045,8 @@ packages:
     resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
     engines: {node: '>= 20.19.0'}
 
-  '@noble/ed25519@2.3.0':
-    resolution: {integrity: sha512-M7dvXL2B92/M7dw9+gzuydL8qn/jiqNHaoR3Q+cb1q1GHV7uwE17WCyFMG+Y+TZb5izcaXk5TdJRrDUxHXL78A==}
+  '@noble/ed25519@3.2.0':
+    resolution: {integrity: sha512-criDgRlnUA09hchYrTy/JUWPIEap5rZxQe6wDWzRx51oWWpDRcUpuNzlgPxDJaOK6AsW9c0wKcj3rKRv6t+bPQ==}
 
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
@@ -3851,7 +3851,7 @@ snapshots:
     dependencies:
       '@noble/hashes': 2.4.0
 
-  '@noble/ed25519@2.3.0': {}
+  '@noble/ed25519@3.2.0': {}
 
   '@noble/hashes@1.8.0': {}
 
