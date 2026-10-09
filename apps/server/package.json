@@ -30,7 +30,7 @@
     "fastify": "^5.12.5",
     "livekit-server-sdk": "^2.7.0",
     "postgres": "^3.4.4",
-    "zod": "^3.23.8"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
