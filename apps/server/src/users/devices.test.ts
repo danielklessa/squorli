@@ -64,7 +64,7 @@ describe("which devices a sign-out means", () => {
 
 describe("a device's proof", () => {
   it("is bound to the account and to the message the account's key signed", async () => {
-    const seed = ed.utils.randomPrivateKey();
+    const seed = ed.utils.randomSecretKey();
     const deviceKey = Buffer.from(await ed.getPublicKeyAsync(seed)).toString("hex");
     const message = "community-chat-login\nchat.example.org\nn1";
     const signature = Buffer.from(await ed.signAsync(new TextEncoder().encode(deviceProofMessage(key, message)), seed)).toString("hex");

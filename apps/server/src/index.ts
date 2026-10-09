@@ -118,7 +118,9 @@ async function main() {
   // CORS for all origins: the web client of another Squorli server talks to this server directly (multi-server client,
   // server rail). Auth runs exclusively through the bearer token in the header (no cookies), and the login signature stays bound to
   // PUBLIC_DOMAIN; so a foreign origin cannot do anything on the user's behalf without holding their token.
-  await app.register(cors, { origin: true });
+  // @fastify/cors 11 answers a preflight with GET, HEAD and POST only unless the methods are named; the desktop app (origin
+  // app://squorli) also sends PUT, PATCH and DELETE (avatar, devices, mutes, the account itself).
+  await app.register(cors, { origin: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] });
   // HSTS over https, nosniff, and a server error that says nothing of itself (httpHardening.ts).
   registerHardening(app, config.PUBLIC_DOMAIN);
   // Every JSON body's hash for the bound sessions' proofs of version 2 (auth/bodyHash.ts, security audit L-6).

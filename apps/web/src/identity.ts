@@ -229,6 +229,6 @@ export async function newIdentity(): Promise<Identity> {
     if (!publicKey) throw keyGone();
     return { publicKey, privateKey: null, device: null };
   }
-  const priv = ed.utils.randomPrivateKey();
+  const priv = ed.utils.randomSecretKey();
   return { publicKey: toHex(await ed.getPublicKeyAsync(priv)), privateKey: toHex(priv), device: null };
 }

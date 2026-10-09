@@ -104,7 +104,7 @@ export class DirectoryClient {
     const [s] = await this.db.select({ key: serverSettings.directoryPrivateKey }).from(serverSettings).where(eq(serverSettings.id, SETTINGS_ID)).limit(1);
     let hex = s?.key ?? null;
     if (!hex) {
-      hex = Buffer.from(ed.utils.randomPrivateKey()).toString("hex");
+      hex = Buffer.from(ed.utils.randomSecretKey()).toString("hex");
       await this.db.update(serverSettings).set({ directoryPrivateKey: hex }).where(eq(serverSettings.id, SETTINGS_ID));
       this.log.info("Server-Schluessel fuer das Verzeichnis erzeugt");
     }

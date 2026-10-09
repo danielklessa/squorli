@@ -588,17 +588,17 @@ export const AccountSettings = z.object({
     pttKey: z.string().min(1).max(40).default("Space"),
     vadThreshold: z.number().min(0).max(1).default(0.04),
     vadHangoverMs: z.number().int().min(100).max(1500).default(400),
-  }).default({}),
+  }).prefault({}),
   camera: z.object({
     quality: z.enum(["360p", "720p"]).default("720p"),
     /** Background blur radius, 0 = off. */
     blur: z.number().min(0).max(100).default(0),
-  }).default({}),
+  }).prefault({}),
   sounds: SoundSettings.default({ selfJoin: true, selfLeave: true, peerJoin: true, peerLeave: true, volume: 0.6 }),
   stage: z.object({
     /** Speaker view: may you yourself be shown large as the active speaker? */
     featureSelf: z.boolean().default(true),
-  }).default({}),
+  }).prefault({}),
   /**
    * Game display (21 September 2026): `enabled` = detect running games and show friends what I play (off by default),
    * `servers` = show it to the members of my chat servers too (the opt-out inside the feature). Optional without a default on

@@ -125,7 +125,7 @@ describe("the account key in the platform's vault", () => {
       dmKey: async (pk, peer) => (seeds.has(pk) ? bytesToHex(await deriveDmKeyBits(seeds.get(pk)!, pk, peer)) : null),
       settingsKey: async (pk) => (seeds.has(pk) ? bytesToHex(await deriveSettingsKeyBits(seeds.get(pk)!, pk)) : null),
       backup: async (pk, password, context) => (seeds.has(pk) ? createBackup(password, seeds.get(pk)!, { memoryKib: 8192, iterations: 1 }, context) : null),
-      generate: () => take(bytesToHex(ed.utils.randomPrivateKey())),
+      generate: () => take(bytesToHex(ed.utils.randomSecretKey())),
       import: take,
       forget: async (pk) => { seeds.delete(pk); forgotten.push(pk); },
     };
@@ -165,7 +165,7 @@ describe("the account key in the platform's vault", () => {
     const { vault, seeds, forgotten } = fakeVault();
     const { store } = fakeStore();
     setSecretStore(store); setKeyVault(vault);
-    const seed = bytesToHex(ed.utils.randomPrivateKey());
+    const seed = bytesToHex(ed.utils.randomSecretKey());
     const id = await identityFromPrivateKey(seed);
     expect(id).toEqual({ publicKey: bytesToHex(await ed.getPublicKeyAsync(hex(seed))), privateKey: null, device: null });
     expect(seeds.get(id.publicKey)).toBe(seed);
@@ -183,7 +183,7 @@ describe("the account key in the platform's vault", () => {
     const { vault } = fakeVault();
     setSecretStore(fakeStore().store); setKeyVault(vault);
     const me = await newIdentity();
-    const friendSeed = bytesToHex(ed.utils.randomPrivateKey());
+    const friendSeed = bytesToHex(ed.utils.randomSecretKey());
     const friend = bytesToHex(await ed.getPublicKeyAsync(hex(friendSeed)));
     const sealed = await sealDm(await dmKeyOf(me, friend), me.publicKey, friend, "00000000-0000-4000-8000-000000000001", { text: "hi" });
     expect(await openDm(await deriveDmKey(friendSeed, friend, me.publicKey), { from: me.publicKey, to: friend, id: "00000000-0000-4000-8000-000000000001", ...sealed })).toEqual({ text: "hi" });
@@ -196,7 +196,7 @@ describe("the account key in the platform's vault", () => {
 
   it("moves a seed left in localStorage by an older app into the vault through the store, and keeps none in the page", async () => {
     const { vault, seeds } = fakeVault();
-    const seed = bytesToHex(ed.utils.randomPrivateKey());
+    const seed = bytesToHex(ed.utils.randomSecretKey());
     const pk = bytesToHex(await ed.getPublicKeyAsync(hex(seed)));
     ls.set("chat.identity.v1", JSON.stringify({ publicKey: pk, privateKey: seed }));
     const { m, store } = strippingStore(seeds);

@@ -66,7 +66,7 @@ export async function createDevice(vault: DeviceVault | null, persist: boolean, 
     if (!persist) return { signer, stored: null };
     if (vault && await vault.put(signer.publicKey, pair).then(() => true, () => false)) return { signer, stored: { publicKey: signer.publicKey, store: "webcrypto" } };
   }
-  const privateKey = toHex(ed.utils.randomPrivateKey());
+  const privateKey = toHex(ed.utils.randomSecretKey());
   const signer = await plainSigner(privateKey);
   return { signer, stored: persist ? { publicKey: signer.publicKey, store: "plain", privateKey } : null };
 }

@@ -18,19 +18,19 @@
   },
   "dependencies": {
     "@livekit/track-processors": "0.8.1",
-    "@noble/ed25519": "^2.1.0",
+    "@noble/ed25519": "^3.0.0",
     "@squorli/protocol": "workspace:*",
     "livekit-client": "^2.22.3",
     "lucide-static": "1.52.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "zod": "^3.25.76"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/dom-mediacapture-transform": "0.1.12",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.0",
+    "@vitejs/plugin-react": "^6.0.0",
     "emojibase-data": "17.0.0",
     "typescript": "^5.6.0",
     "vite": "^8.0.0",

@@ -30,8 +30,8 @@ describe("message text rendering", () => {
   });
   it("renders task lists, highlight, subscript and superscript", () => {
     expect(html("- [x] ==fertig==\n- [ ] H~2~O^2^")).toBe(
-      `<div class="md"><ul><li class="md-task"><input type="checkbox" disabled="" readonly="" aria-label="${t("chat.taskDone")}" checked=""/><mark>fertig</mark></li>`
-      + `<li class="md-task"><input type="checkbox" disabled="" readonly="" aria-label="${t("chat.taskOpen")}"/>H<sub>2</sub>O<sup>2</sup></li></ul></div>`,
+      `<div class="md"><ul><li class="md-task"><input type="checkbox" disabled="" readOnly="" aria-label="${t("chat.taskDone")}" checked=""/><mark>fertig</mark></li>`
+      + `<li class="md-task"><input type="checkbox" disabled="" readOnly="" aria-label="${t("chat.taskOpen")}"/>H<sub>2</sub>O<sup>2</sup></li></ul></div>`,
     );
   });
   it("shows mentions with the current name, marks the own one and leaves tokens alone without a channel", () => {

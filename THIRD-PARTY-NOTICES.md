@@ -16,7 +16,7 @@ files, in `node_modules` of the container image.
 | @livekit/track-processors | 0.8.1 | Apache-2.0 | https://github.com/livekit/track-processors-js |
 | @mediapipe/tasks-vision | 0.10.14 | Apache-2.0 | http://mediapipe.dev |
 | @noble/curves | 2.4.0 | MIT | https://paulmillr.com/noble/ |
-| @noble/ed25519 | 2.3.0 | MIT | https://paulmillr.com/noble/ |
+| @noble/ed25519 | 3.2.0 | MIT | https://paulmillr.com/noble/ |
 | @noble/hashes | 2.4.0 | MIT | https://paulmillr.com/noble/ |
 | argparse (desktop app only) | 2.0.1 | Python-2.0 | https://github.com/nodeca/argparse |
 | builder-util-runtime (desktop app only) | 9.7.0 | MIT | https://github.com/electron-userland/electron-builder |
@@ -28,7 +28,6 @@ files, in `node_modules` of the container image.
 | graceful-fs (desktop app only) | 4.2.11 | ISC | https://github.com/isaacs/node-graceful-fs |
 | hash-wasm | 4.12.0 | MIT | https://github.com/Daninet/hash-wasm#readme |
 | jose | 6.2.12 | MIT | https://github.com/panva/jose |
-| js-tokens | 4.0.0 | MIT | https://github.com/lydell/js-tokens |
 | js-yaml (desktop app only) | 4.3.2 | MIT | https://github.com/nodeca/js-yaml |
 | jsonfile (desktop app only) | 6.2.1 | MIT | https://github.com/jprichardson/node-jsonfile |
 | lazy-val (desktop app only) | 1.0.5 | MIT | https://github.com/develar/lazy-val |
@@ -36,17 +35,16 @@ files, in `node_modules` of the container image.
 | lodash.escaperegexp (desktop app only) | 4.1.2 | MIT | https://lodash.com/ |
 | lodash.isequal (desktop app only) | 4.5.0 | MIT | https://lodash.com/ |
 | loglevel | 1.9.2 | MIT | https://github.com/pimterry/loglevel |
-| loose-envify | 1.4.0 | MIT | https://github.com/zertosh/loose-envify |
-| lucide-static (Icon font, only the icons in use) | 0.577.0 | ISC | https://lucide.dev |
+| lucide-static (Icon font, only the icons in use) | 1.52.0 | ISC | https://lucide.dev |
 | machina | 7.0.1 | MIT | https://machina-js.org/ |
 | MediaPipe Selfie Segmenter (model) (Camera background blur, delivered by this server) | float16, 2023-05-07 | Apache-2.0 | https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter |
 | ms (desktop app only) | 2.1.3 | MIT | https://github.com/vercel/ms |
 | Noto Color Emoji (Emoji font, delivered by this server) | v47 | OFL-1.1 | https://github.com/googlefonts/noto-emoji |
-| react | 18.3.1 | MIT | https://reactjs.org/ |
-| react-dom | 18.3.1 | MIT | https://reactjs.org/ |
+| react | 19.3.0 | MIT | https://react.dev/ |
+| react-dom | 19.3.0 | MIT | https://react.dev/ |
 | rxjs | 7.8.2 | Apache-2.0 | https://rxjs.dev |
 | sax (desktop app only) | 1.6.1 | BlueOak-1.0.0 | https://github.com/isaacs/sax-js |
-| scheduler | 0.23.2 | MIT | https://reactjs.org/ |
+| scheduler | 0.28.0 | MIT | https://react.dev/ |
 | sdp | 3.2.2 | MIT | https://github.com/fippo/sdp |
 | sdp-transform | 2.15.0 | MIT | https://github.com/clux/sdp-transform |
 | semver (desktop app only) | 7.7.4 | ISC | https://github.com/npm/node-semver |
@@ -55,7 +53,7 @@ files, in `node_modules` of the container image.
 | typed-emitter | 2.1.0 | MIT | https://github.com/andywer/typed-emitter |
 | universalify (desktop app only) | 2.0.1 | MIT | https://github.com/RyanZim/universalify#readme |
 | webrtc-adapter | 9.0.6 | BSD-3-Clause | https://github.com/webrtchacks/adapter |
-| zod | 3.25.76 | MIT | https://zod.dev |
+| zod | 4.6.5 | MIT | https://zod.dev |
 
 ## Programs in the package for Windows
 
@@ -698,7 +696,7 @@ THE SOFTWARE.
 
 ## License text 5
 
-Applies to: @noble/ed25519 2.3.0
+Applies to: @noble/ed25519 3.2.0
 
 ```text
 The MIT License (MIT)
@@ -1215,34 +1213,6 @@ SOFTWARE.
 
 ## License text 15
 
-Applies to: js-tokens 4.0.0
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2014, 2015, 2016, 2017, 2018 Simon Lydell
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-```
-
-## License text 16
-
 Applies to: js-yaml 4.3.2
 
 ```text
@@ -1269,7 +1239,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## License text 17
+## License text 16
 
 Applies to: jsonfile 6.2.1
 
@@ -1291,7 +1261,7 @@ OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHE
  ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 18
+## License text 17
 
 Applies to: lodash.escaperegexp 4.1.2
 
@@ -1345,7 +1315,7 @@ licenses; we recommend you read them, as their terms may differ from the
 terms above.
 ```
 
-## License text 19
+## License text 18
 
 Applies to: lodash.isequal 4.5.0
 
@@ -1399,7 +1369,7 @@ licenses; we recommend you read them, as their terms may differ from the
 terms above.
 ```
 
-## License text 20
+## License text 19
 
 Applies to: loglevel 1.9.2
 
@@ -1428,42 +1398,14 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 21
+## License text 20
 
-Applies to: loose-envify 1.4.0
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2015 Andres Suarez <zertosh@gmail.com>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-```
-
-## License text 22
-
-Applies to: lucide-static 0.577.0
+Applies to: lucide-static 1.52.0
 
 ```text
 ISC License
 
-Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2026 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2026.
+Copyright (c) 2026 Lucide Icons and Contributors
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted, provided that the above
@@ -1479,9 +1421,13 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ---
 
-The MIT License (MIT) (for portions derived from Feather)
+The following Lucide icons are derived from the Feather project:
 
-Copyright (c) 2013-2026 Cole Bemis
+airplay, alert-circle, alert-octagon, alert-triangle, aperture, arrow-down-circle, arrow-down-left, arrow-down-right, arrow-down, arrow-left-circle, arrow-left, arrow-right-circle, arrow-right, arrow-up-circle, arrow-up-left, arrow-up-right, arrow-up, at-sign, calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down, chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, columns, command, compass, corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down, corner-right-up, corner-up-left, corner-up-right, crosshair, database, divide-circle, divide-square, dollar-sign, download, external-link, feather, frown, hash, headphones, help-circle, info, italic, key, layout, life-buoy, link-2, link, loader, lock, log-in, log-out, maximize, meh, minimize, minimize-2, minus-circle, minus-square, minus, monitor, moon, more-horizontal, more-vertical, move, music, navigation-2, navigation, octagon, pause-circle, percent, plus-circle, plus-square, plus, power, radio, rss, search, server, share, shopping-bag, sidebar, smartphone, smile, square, table-2, tablet, target, terminal, trash-2, trash, triangle, tv, type, upload, x-circle, x-octagon, x-square, x, zoom-in, zoom-out
+
+The MIT License (MIT) (for the icons listed above)
+
+Copyright (c) 2013-present Cole Bemis
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1502,7 +1448,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 23
+## License text 21
 
 Applies to: machina 7.0.1
 
@@ -1578,7 +1524,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 24
+## License text 22
 
 Applies to: ms 2.1.3
 
@@ -1606,14 +1552,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 25
+## License text 23
 
-Applies to: react 18.3.1, react-dom 18.3.1, scheduler 0.23.2
+Applies to: react 19.3.0, react-dom 19.3.0, scheduler 0.28.0
 
 ```text
 MIT License
 
-Copyright (c) Facebook, Inc. and its affiliates.
+Copyright (c) Meta Platforms, Inc. and affiliates.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1634,7 +1580,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 26
+## License text 24
 
 Applies to: rxjs 7.8.2
 
@@ -1842,7 +1788,7 @@ Apache License
  limitations under the License.
 ```
 
-## License text 27
+## License text 25
 
 Applies to: sax 1.6.1
 
@@ -1904,7 +1850,7 @@ will be liable to anyone for any damages related to this
 software or this license, under any kind of legal claim.***
 ```
 
-## License text 28
+## License text 26
 
 Applies to: sdp 3.2.2
 
@@ -1930,7 +1876,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 29
+## License text 27
 
 Applies to: sdp-transform 2.15.0
 
@@ -1959,7 +1905,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 30
+## License text 28
 
 Applies to: semver 7.7.4
 
@@ -1981,7 +1927,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## License text 31
+## License text 29
 
 Applies to: tiny-typed-emitter 2.1.0
 
@@ -2009,7 +1955,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 32
+## License text 30
 
 Applies to: tslib 2.8.1
 
@@ -2028,7 +1974,7 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## License text 33
+## License text 31
 
 Applies to: typed-emitter 2.1.0
 
@@ -2056,7 +2002,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-## License text 34
+## License text 32
 
 Applies to: universalify 2.0.1
 
@@ -2083,7 +2029,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-## License text 35
+## License text 33
 
 Applies to: webrtc-adapter 9.0.6
 
@@ -2120,9 +2066,9 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## License text 36
+## License text 34
 
-Applies to: zod 3.25.76
+Applies to: zod 4.6.5
 
 ```text
 MIT License
@@ -2148,7 +2094,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## License text 37
+## License text 35
 
 Applies to: Noto Color Emoji v47
 
