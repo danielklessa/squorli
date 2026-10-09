@@ -40,7 +40,7 @@ jobs:
       - run: pnpm --filter @squorli/server build
       # The package (deploy/windows/build-package.ps1), in Windows PowerShell 5.1 like on an operator's machine. The
       # downloads (about 450 MB, PostgreSQL most of it) are kept between runs for as long as versions.json stays the same.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build-cache
           key: windows-package-${{ hashFiles('deploy/windows/versions.json') }}
