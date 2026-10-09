@@ -42,7 +42,7 @@ jobs:
     # Holds the signing secrets and waits for the owner's approval (Settings > Environments > signing > Required reviewers).
     environment: signing
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG || github.ref }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -131,7 +131,7 @@ jobs:
     steps:
       # The version's release notes (apps/desktop/release-notes/<version>.md, written with the `desktop-release` skill before
       # the tag is set). Checked out BEFORE the artifacts arrive: a checkout empties the folder it works in.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
           sparse-checkout: apps/desktop/release-notes
