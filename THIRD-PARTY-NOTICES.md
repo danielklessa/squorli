@@ -35,7 +35,7 @@ files, in `node_modules` of the container image.
 | lodash.escaperegexp (desktop app only) | 4.1.2 | MIT | https://lodash.com/ |
 | lodash.isequal (desktop app only) | 4.5.0 | MIT | https://lodash.com/ |
 | loglevel | 1.9.2 | MIT | https://github.com/pimterry/loglevel |
-| lucide-static (Icon font, only the icons in use) | 1.52.0 | ISC | https://lucide.dev |
+| lucide-static (Icon font, only the icons in use) | 1.53.0 | ISC | https://lucide.dev |
 | machina | 7.0.1 | MIT | https://machina-js.org/ |
 | MediaPipe Selfie Segmenter (model) (Camera background blur, delivered by this server) | float16, 2023-05-07 | Apache-2.0 | https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter |
 | ms (desktop app only) | 2.1.3 | MIT | https://github.com/vercel/ms |
@@ -1400,7 +1400,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ## License text 20
 
-Applies to: lucide-static 1.52.0
+Applies to: lucide-static 1.53.0
 
 ```text
 ISC License
