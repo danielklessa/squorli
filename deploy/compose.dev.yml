@@ -9,7 +9,7 @@ services:
     ports: ["5432:5432"]
     volumes: [pgdata-dev:/var/lib/postgresql/data]
   livekit:
-    image: livekit/livekit-server:v1.13.7  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
+    image: livekit/livekit-server:v1.13.9  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
     # --dev sets the keys devkey/secret and listens on 7880 (http), 7881 (tcp), 7882 (udp).
     # --node-ip: address that LiveKit offers browsers as an ICE candidate. Inside the container this would
     # otherwise be the internal Docker IP, which is unreachable from the host -> no media.
