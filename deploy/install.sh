@@ -737,15 +737,16 @@ write_helper() {
     printf '# setup: %s\n' "$SETUP"
     printf '# lang: %s\n' "$L"
     printf 'ARGS=(%s)\n' "${CARGS[*]}"
+    printf 'DEPLOY_FILES=(%s)\n' "${DEPLOY_FILES[*]}"
     # The signature check as the installer has it (above): the constants, then the functions word for word
     printf 'COSIGN_IMAGE=%q\nSIGNER_IDENTITY=%q\nSIGNER_ISSUER=%q\n' "$COSIGN_IMAGE" "$SIGNER_IDENTITY" "$SIGNER_ISSUER"
     declare -f signed_ref busy verify_image
     cat <<'EOF'
 set -euo pipefail
 here="$(dirname "$(readlink -f "$0")")"
+lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${lang:-en}"
 cd "$here/deploy"
 dc() { docker compose "${ARGS[@]}" "$@"; }
-lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${lang:-en}"
 t() { if [ "$lang" = de ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
 
 app_image() { sed -n 's/^APP_IMAGE=//p' ../.env | tail -n1 | tr -d "'\"" || true; }
@@ -761,12 +762,18 @@ wanted_ref() {
 # The services whose container runs another image than the one its tag names now, that is after a pull. A service
 # without a running container is left out: nobody starts what was stopped on purpose.
 changed_services() {
-  local s cid ref have want
+  local s cid ref have want cfg
+  # The rendered Compose configuration: the image each service should run, also after a refresh of the deploy files
+  cfg="$(dc config 2>/dev/null || true)"
   for s in $(dc config --services); do
     cid="$(dc ps -q "$s" 2>/dev/null | head -n1 || true)"
     [ -n "$cid" ] || continue
     have="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
     ref="$(wanted_ref "$s" "$cid")"
+    if [ "$s" != server ]; then
+      want="$(printf '%s\n' "$cfg" | awk -v s="$s" '/^  [a-z]+:$/ { c = $1; sub(":", "", c) } /^    image:/ && c == s { sub(/#.*/, ""); print $2; exit }')"
+      [ -z "$want" ] || ref="$want"
+    fi
     want="$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null || true)"
     if [ -n "$have" ] && [ -n "$want" ] && [ "$want" != "$have" ]; then printf '%s\n' "$s"; fi
   done
@@ -776,6 +783,70 @@ changed_services() {
 # carries none. Nothing when the image cannot be asked.
 server_says() {
   docker run --rm --entrypoint node "$1" -e 'const p = require("/app/package.json"); console.log(p.version + " " + ((p.squorli || {}).autoUpdateFrom || "-"));' 2>/dev/null || true
+}
+# ---- The deploy files a version brings (compose.yml with the pinned images of PostgreSQL, LiveKit and Caddy, livekit.yaml,
+# the Caddyfile, the overlays: DEPLOY_FILES above), out of the server image .env names: images since 0.10.4 carry them
+# under /app/deploy with the release's signature (deploy/AGENTS.md "Where the deploy files come from"). image_files unpacks
+# them into a folder of their own (the container is created and removed, never started) and prints it; nothing for an
+# image without them.
+image_files() {
+  local cid="" dir
+  dir="$(mktemp -d)"
+  if cid="$(docker create "$1" 2>/dev/null)" && docker cp "$cid:/app/deploy/." "$dir/" >/dev/null 2>&1 && [ -f "$dir/compose.yml" ]; then
+    docker rm "$cid" >/dev/null 2>&1 || true
+    printf '%s\n' "$dir"
+  else
+    [ -z "$cid" ] || docker rm "$cid" >/dev/null 2>&1 || true
+    rm -rf "$dir"
+    return 1
+  fi
+}
+# The images a Compose file names, "service image" per line; the server's is left out (it comes from .env).
+image_lines() { awk '/^  [a-z]+:$/ { s = $1; sub(":", "", s) } /^    image:/ && s != "server" { sub(/#.*/, ""); print s, $2 }' "$1"; }
+pg_major() { image_lines "$1" | awk '$1 == "postgres" && match($2, /postgres:[0-9]+/) { print substr($2, RSTART + 9, RLENGTH - 9) }'; }
+# The deploy files of the server image .env names against the ones in place. A file that is as the running server's
+# image brought it (or that is new) is replaced, the one in place stays as <file>.bak; a file changed by hand is kept,
+# the new one is put next to it as <file>.new. $1 = check: only look. Afterwards NEW_FILES = what is (or would be)
+# replaced, KEPT_FILES = what is kept, IMAGE_CHANGES = the images compose.yml names anew, PG_MAJOR_FROM/PG_MAJOR_TO = a
+# change of PostgreSQL's major version, FILES_REF = the image the files come from. All empty when the image carries none.
+refresh_files() {
+  local mode="$1" cid have new old="" f
+  NEW_FILES=""; KEPT_FILES=""; IMAGE_CHANGES=""; PG_MAJOR_FROM=""; PG_MAJOR_TO=""; FILES_REF=""
+  cid="$(dc ps -q server 2>/dev/null | head -n1 || true)"
+  FILES_REF="$(wanted_ref server "$cid")"
+  [ -n "$FILES_REF" ] || return 0
+  new="$(image_files "$FILES_REF")" || return 0
+  if [ -n "$cid" ]; then
+    have="$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || true)"
+    if [ -n "$have" ] && [ "$have" != "$(docker image inspect -f '{{.Id}}' "$FILES_REF" 2>/dev/null || true)" ]; then old="$(image_files "$have" || true)"; else old="$new"; fi
+  fi
+  for f in "${DEPLOY_FILES[@]}"; do
+    f="${f#deploy/}"
+    [ -f "$new/$f" ] || continue
+    if [ -f "$f" ] && cmp -s "$new/$f" "$f"; then continue; fi
+    if [ -f "$f" ] && { [ -z "$old" ] || [ ! -f "$old/$f" ] || ! cmp -s "$old/$f" "$f"; }; then
+      # Said and written once: a .new that is already there and the same is not news
+      if [ -f "$f.new" ] && cmp -s "$new/$f" "$f.new"; then continue; fi
+      KEPT_FILES="$KEPT_FILES $f"
+      [ "$mode" = check ] || cat "$new/$f" > "$f.new"
+    else
+      NEW_FILES="$NEW_FILES $f"
+      if [ "$f" = compose.yml ] && [ -f compose.yml ]; then
+        IMAGE_CHANGES="$(awk 'NR == FNR { o[$1] = $2; next } ($1 in o) && o[$1] != $2 { print $1 ": " o[$1] " -> " $2 }' <(image_lines compose.yml) <(image_lines "$new/compose.yml") | paste -sd, - | sed 's/,/, /g')"
+        if [ -n "$(pg_major compose.yml)" ] && [ -n "$(pg_major "$new/compose.yml")" ] && [ "$(pg_major compose.yml)" != "$(pg_major "$new/compose.yml")" ]; then
+          PG_MAJOR_FROM="$(pg_major compose.yml)"; PG_MAJOR_TO="$(pg_major "$new/compose.yml")"
+        fi
+      fi
+      if [ "$mode" != check ]; then
+        mkdir -p "$(dirname "$f")"
+        [ ! -f "$f" ] || cp -p "$f" "$f.bak"
+        cat "$new/$f" > "$f"
+      fi
+    fi
+  done
+  [ "$old" = "$new" ] || [ -z "$old" ] || rm -rf "$old"
+  rm -rf "$new"
+  NEW_FILES="${NEW_FILES# }"; KEPT_FILES="${KEPT_FILES# }"
 }
 # Does the step from the running server to the image its tag names now ask for a person? It does when the running
 # version is older than the new image's mark says and does not carry the same mark itself. BY_HAND names that mark.
@@ -1003,8 +1074,9 @@ if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ]; then
 fi
 case "${1:-help}" in
   update)
-    # Pulls the images, backs up when one of them is new, and starts what changed: Compose leaves a container whose
-    # image stayed the same as it is. --check: pull and say what is new, change nothing that runs (exit 10 when
+    # Pulls the images, takes over the deploy files the new server image brings (compose.yml with the versions of
+    # PostgreSQL and LiveKit, livekit.yaml, the Caddyfile, the overlays; refresh_files), pulls what they name, backs up
+    # when something is new, and starts what changed: Compose leaves a container whose image stayed the same as it is. --check: pull and say what is new, change nothing that runs (exit 10 when
     # something is new). --no-backup: without the backup. --auto: the run of the job (squorli autoupdate).
     shift; check=0; auto=0; backup=1; yes=0; BACKUP=""; stamp=""
     # What the run of the job says, with the time in front: its log holds one line per run that found nothing
@@ -1032,13 +1104,28 @@ case "${1:-help}" in
       dc pull
     fi
     changed="$(changed_services | tr '\n' ' ')"; changed="${changed% }"
-    if [ -z "$changed" ]; then
+    # The deploy files the new server image brings (refresh_files): looked at now, written after the signature check and
+    # the backup; the images they name anew (a raised LiveKit, say) are pulled after that.
+    refresh_files check
+    if [ -n "$PG_MAJOR_TO" ]; then
+      say "!  Die neue Version bringt PostgreSQL $PG_MAJOR_TO statt $PG_MAJOR_FROM. Ein Wechsel der Hauptversion verlangt vorher Handarbeit und wird nicht automatisch eingespielt. Versionshinweise, Abschnitt \"Before you update\": https://github.com/danielklessa/squorli/releases" \
+        "!  The new version brings PostgreSQL $PG_MAJOR_TO instead of $PG_MAJOR_FROM. A change of the major version asks for work by hand first and is not installed automatically. Release notes, section \"Before you update\": https://github.com/danielklessa/squorli/releases"
+      exit 10
+    fi
+    if [ -z "$changed" ] && [ -z "$NEW_FILES" ]; then
       say "Nichts Neues: jeder laufende Container hat das neueste Image." "Nothing new: every running container has the newest image."
+      if [ -n "$KEPT_FILES" ]; then
+        say "!  Neue Deploy-Dateien aus $FILES_REF, die du selbst geändert hast, bleiben; die neue Fassung liegt daneben als .new: $KEPT_FILES" \
+          "!  New deploy files from $FILES_REF that you changed yourself are kept; the new version lies next to them as .new: $KEPT_FILES"
+        [ "$check" = 1 ] || refresh_files apply
+      fi
       if [ "$check" = 1 ] || [ "$auto" = 1 ]; then exit 0; fi
       dc up -d --no-build --remove-orphans && dc ps
       exit 0
     fi
-    say "Neue Images für: $changed" "New images for: $changed"
+    [ -z "$changed" ] || say "Neue Images für: $changed" "New images for: $changed"
+    [ -z "$NEW_FILES" ] || say "Neue Deploy-Dateien aus $FILES_REF: $NEW_FILES${IMAGE_CHANGES:+ ($IMAGE_CHANGES)}" "New deploy files from $FILES_REF: $NEW_FILES${IMAGE_CHANGES:+ ($IMAGE_CHANGES)}"
+    [ -z "$KEPT_FILES" ] || say "!  Selbst geänderte Dateien bleiben, die neue Fassung liegt daneben als .new: $KEPT_FILES" "!  Files changed by hand are kept, the new version lies next to them as .new: $KEPT_FILES"
     # A new server image is checked before anything of it runs (by_hand below asks the image's node). The other services'
     # images (PostgreSQL, LiveKit, Caddy) are their makers' and are pinned by digest in compose.yml.
     case " $changed " in *" server "*)
@@ -1068,10 +1155,22 @@ case "${1:-help}" in
         exit 1
       fi
     fi
+    if [ -n "$NEW_FILES" ]; then
+      refresh_files apply
+      # The images the new files name: pulled now, so that changed_services sees them
+      if [ "$auto" = 1 ]; then dc pull -q 2>&1 || true; else dc pull || true; fi
+      changed="$(changed_services | tr '\n' ' ')"; changed="${changed% }"
+      [ -z "$changed" ] || say "Neue Images für: $changed" "New images for: $changed"
+    fi
     dc up -d --no-build --remove-orphans
+    # A service reads its configuration at its start: one whose file changed while its container stayed is restarted
+    for s in livekit caddy; do
+      case "$s" in livekit) f=livekit/livekit.yaml ;; *) f=caddy/Caddyfile ;; esac
+      case " $NEW_FILES " in *" $f "*) case " $changed " in *" $s "*) ;; *) [ -z "$(dc ps -q "$s" 2>/dev/null || true)" ] || dc restart "$s" >/dev/null 2>&1 || true ;; esac ;; esac
+    done
     if server_up; then
       if [ "$auto" != 1 ]; then dc ps; fi
-      say "Aktualisiert: $changed. Der App-Server antwortet." "Updated: $changed. The app server answers."
+      say "Aktualisiert: ${changed:-$NEW_FILES}. Der App-Server antwortet." "Updated: ${changed:-$NEW_FILES}. The app server answers."
     else
       dc ps || true
       say "x Aktualisiert: $changed, aber der App-Server antwortet nicht (squorli logs server). Sicherung von vorher: ${BACKUP:-keine}" \
@@ -1108,6 +1207,8 @@ case "${1:-help}" in
           "  !  A version that asks for work by hand first is not installed automatically: it stands in the log then and waits for squorli update."
         t "  !  Neue Images von PostgreSQL und Caddy kommen mit: dann startet auch die Datenbank oder der Proxy neu." \
           "  !  New images of PostgreSQL and Caddy come along: the database or the proxy restarts then, too."
+        t "  !  Neue Deploy-Dateien einer Version (compose.yml mit den Versionen von PostgreSQL und LiveKit, livekit.yaml, Caddyfile, Overlays) werden übernommen, die alte Fassung bleibt als .bak; eine selbst geänderte Datei bleibt, die neue liegt daneben als .new." \
+          "  !  New deploy files of a version (compose.yml with the versions of PostgreSQL and LiveKit, livekit.yaml, the Caddyfile, the overlays) are taken over, the old version stays as .bak; a file changed by hand is kept, the new one lies next to it as .new."
         t "  !  Vor jedem Update wird gesichert. Die Sicherungen bleiben liegen und brauchen Platz: $here/backups" \
           "  !  Every update makes a backup first. The backups stay and take space: $here/backups"
         t "     Ein Update, das fehlschlägt, wird nicht zurückgenommen. Was geschah, steht in $here/autoupdate.log." \
