@@ -31,7 +31,7 @@ async function api(method, path, body, token, raw = false, extraHeaders = {}) {
 }
 
 async function newKey() {
-  const priv = ed.utils.randomPrivateKey();
+  const priv = ed.utils.randomSecretKey();
   return { priv, publicKey: hex(await ed.getPublicKeyAsync(priv)) };
 }
 // Domain the server binds signatures to (PUBLIC_DOMAIN), taken from /api/health instead of a hardcoded "localhost".

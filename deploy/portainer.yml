@@ -87,7 +87,7 @@ services:
     networks: [internal]
 
   livekit:
-    image: livekit/livekit-server:v1.13.7  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
+    image: livekit/livekit-server:v1.13.9  # pinned; raise it on purpose with a server release (deploy/AGENTS.md)
     restart: unless-stopped
     # LiveKit runs as root in its image but needs no capability (high ports) and writes nothing: no privileges, nothing
     # writable but a private /tmp (audit measure 3.10, 4 October 2026).

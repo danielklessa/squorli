@@ -1414,7 +1414,9 @@ export class VoiceClient {
   }
 
   private startMeters() {
-    this.stopMeters();
+    // Only the timer (re)starts: a meter made for a track subscribed while join() was still publishing the microphone (someone
+    // already talking in the channel) must stay, with the boost above 100 % that hangs on it (12 October 2026, voice-video.md).
+    if (this.meterTimer !== null) { clearInterval(this.meterTimer); this.meterTimer = null; }
     this.meterTimer = window.setInterval(() => {
       if (this.audioCtx?.state !== "running") return; // without a running context LiveKit's report applies (see refreshParticipants)
       const now = performance.now();
