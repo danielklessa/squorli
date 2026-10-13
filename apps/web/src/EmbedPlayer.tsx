@@ -33,13 +33,17 @@ export type EmbedSync = {
   ended: ((videoId: string) => void) | null;
 };
 
-const slots = new Set<HTMLElement>();
+/** Pinning the player's tile in the stage's speaker view (VoiceStage.tsx): the player lies over the tile and takes its clicks, so its own bar offers it. */
+export type EmbedSlotPin = { pinned: boolean; toggle: () => void };
+const slots = new Map<HTMLElement, { current: EmbedSlotPin | null }>();
 
-export function EmbedSlot() {
+export function EmbedSlot({ pin = null }: { pin?: EmbedSlotPin | null }) {
   const ref = useRef<HTMLDivElement>(null);
+  const pinRef = useRef(pin);
+  pinRef.current = pin;
   useEffect(() => {
     const el = ref.current!;
-    slots.add(el);
+    slots.set(el, pinRef);
     return () => { slots.delete(el); };
   }, []);
   // The text only shows while the player is not lying over it: the tile is too small for the player.
@@ -76,11 +80,11 @@ export function usePlayerWindow(key: string | null) {
 }
 export type PlayerWindow = ReturnType<typeof usePlayerWindow>;
 
-function largestSlot(): DOMRect | null {
-  let best: DOMRect | null = null;
-  for (const el of slots) {
+function largestSlot(): { rect: DOMRect; pin: EmbedSlotPin | null } | null {
+  let best: { rect: DOMRect; pin: EmbedSlotPin | null } | null = null;
+  for (const [el, pin] of slots) {
     const rect = el.getBoundingClientRect();
-    if (!best || rect.width * rect.height > best.width * best.height) best = rect;
+    if (!best || rect.width * rect.height > best.rect.width * best.rect.height) best = { rect, pin: pin.current };
   }
   return best;
 }
@@ -108,6 +112,8 @@ export function EmbedPlayer({ source, name, volume, muted, popout, sync, onNotic
     return youtubePlayerSrc(source.videoId, window.location.origin, s ? radioPositionAt(s.playback, Date.now() + s.clockOffset) : 0, s?.playback.playing ?? true);
   };
   const src = useMemo(buildSrc, [key, win]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The pin of the tile the player lies on: "none" while it floats (the tile below takes the click then) or no stage offers one.
+  const [pinShown, setPinShown] = useState<"none" | "pin" | "unpin">("none");
 
   // Follow the slot. Tiles move without any resize of their own (another tile appears, the view changes), so the
   // position is read once per frame instead of trusting observers: one getBoundingClientRect, no layout work of ours.
@@ -118,13 +124,15 @@ export function EmbedPlayer({ source, name, volume, muted, popout, sync, onNotic
     const tick = () => {
       const el = box.current;
       if (el) {
-        const b = twitchPlayerBox(largestSlot(), { width: window.innerWidth, height: window.innerHeight });
+        const slot = largestSlot();
+        const b = twitchPlayerBox(slot?.rect ?? null, { width: window.innerWidth, height: window.innerHeight });
         const next = `${b.left}|${b.top}|${b.width}|${b.height}|${b.floating}`;
         if (next !== last) {
           last = next;
           Object.assign(el.style, { left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` });
           el.classList.toggle("floating", b.floating);
         }
+        setPinShown(!slot?.pin || b.floating ? "none" : slot.pin.pinned ? "unpin" : "pin");
       }
       raf = requestAnimationFrame(tick);
     };
@@ -201,6 +209,8 @@ export function EmbedPlayer({ source, name, volume, muted, popout, sync, onNotic
       <iframe ref={frame} key={src} src={src} title={t("radio.playerFrame", { name })} onLoad={() => control.current?.start()}
         allow={playerFrameAllow(routable)} allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />
       <div className="tile-window-actions">
+        {pinShown === "pin" && <button className="icon" title={t("stage.pin")} aria-label={t("stage.pin")} onClick={() => largestSlot()?.pin?.toggle()}><Icon name="pin" /></button>}
+        {pinShown === "unpin" && <button className="icon" title={t("stage.unpin")} aria-label={t("stage.unpin")} onClick={() => largestSlot()?.pin?.toggle()}><Icon name="pin-off" /></button>}
         <button className="icon" title={t("stage.popout")} aria-label={t("stage.popout")} onClick={openWindow}><Icon name="external-link" /></button>
         {/* The radio off for me, without the way through the radio menu (user's wish); the stage's tile then offers to turn it back on. */}
         <button className="icon" title={t("radio.mute")} aria-label={t("radio.mute")} onClick={onTurnOff}><Icon name="x" /></button>

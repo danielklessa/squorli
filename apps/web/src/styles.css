@@ -230,7 +230,11 @@ button.rail-item { padding: 0; border: 0; cursor: pointer; font: inherit; positi
 .friend-row { margin: 0.4rem 0; }
 .friend-row .ic { margin-right: 0.3rem; }
 /* Server directory (M6d): list from the directory, joining via link */
-.browser-modal { width: min(44rem, 100%); }
+.browser-modal { width: min(44rem, 100%); padding-bottom: 0.75rem; }
+/* One field for an address or link and the filter of the list below (ServerBrowser.tsx). */
+.browser-search { display: flex; gap: 0.5rem; padding: 0.9rem 1.25rem 0; }
+.browser-search input { flex: 1; min-width: 0; }
+.browser-note { margin: 0; padding: 0.4rem 1.25rem 0; }
 .browser-list { list-style: none; margin: 0; padding: 0.5rem 1.25rem 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; overflow-y: auto; }
 .browser-item { display: flex; align-items: center; gap: 0.8rem; background: var(--bg); padding: 0.7rem 0.9rem; border-radius: var(--r); }
 .browser-item .rail-item { cursor: default; }

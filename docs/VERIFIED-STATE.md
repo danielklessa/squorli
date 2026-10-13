@@ -1,5 +1,9 @@
 # Verified state
 
+- **One plus button, add and discover in one dialog (14 October 2026, `docs/features/desktop.md`):** typecheck of all packages; web tests 557 (`serverSearch.test.ts` 5 new); `pnpm icons` (`compass` gone); root build; the real `ServerBrowser` in a headless Chrome harness on the dev Vite with a stubbed list: filtering by words, no reaction to Enter on a word, the no-match line, an address with Enter, an inline error, an invite link handed over whole, 1000 and 400 px, without a directory; screenshots. Not checked: in the running app against a real directory, the browser path's navigation.
+
+- **Speaker view pinning (14 October 2026, `docs/features/voice-video.md`):** typecheck of all packages; web tests 552; `pnpm icons` (`pin-off`); root build; the real `VoiceStage` with a stub client in a headless Chrome harness on the dev Vite: speaker large while a share runs, a click pins a camera, the share and the player, a second click on the large one releases it to the speaker in the speaker view, a share clicked in the tile view comes large and pinned; screenshot. Not checked: the pin button in a real Twitch/YouTube player, inside the app with real shares.
+
 - **Equalizer never cut off (14 October 2026, `docs/features/radio.md`):** typecheck of all packages; all tests (web 552); root build; the headless Chrome harness with SomaFM and the stage's mount rule: muting the radio let the canvas's ink sink over 0.9 s, the canvas went at 1.0 s; the button the same (0.8 s, then removed); the station without CORS as before.
 
 - **Equalizer bars at 6.5 % (14 October 2026, `docs/features/radio.md`):** typecheck of all packages; all tests (web 552); root build; screenshot from the headless Chrome harness with SomaFM.

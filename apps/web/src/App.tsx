@@ -26,7 +26,7 @@ import { VoiceStage } from "./VoiceStage";
 import { CameraPicker } from "./CameraPicker";
 import { Icon } from "./Icon";
 import { attentionCount } from "./attention";
-import { askConfirm, askInput, showNotice } from "./dialogs";
+import { askConfirm, showNotice } from "./dialogs";
 import type { MenuAnchor } from "./ContextMenu";
 import { MiniProfile } from "./MiniProfile";
 import { SettingsDialog, type SettingsTab } from "./SettingsDialog";
@@ -744,12 +744,11 @@ export function App() {
     order: voiceSettings.serverOrder,
   });
   const showRail = !!state.directoryUrl || homeless || mobile;
-  const addServer = async (initial = "") => {
-    const input = await askInput({ title: t("add.title"), text: t("add.text"), label: t("add.label"), placeholder: t("add.placeholder"), initial, maxLength: 400, confirmLabel: t("add.confirm") });
-    if (input === null) return;
+  // "Add a server" (ServerBrowser.tsx): an address or link shown inside the client; the error stays in the dialog.
+  const addServer = async (input: string): Promise<string | null> => {
     const error = await store.addServer(input);
-    if (error) { await askConfirm({ title: t("add.title"), text: error, confirmLabel: t("common.ok") }); void addServer(input); return; }
-    setStageOpen(false);
+    if (!error) { setShowBrowser(false); setStageOpen(false); }
+    return error;
   };
   const railState = Object.fromEntries(Object.entries(state.servers).map(([k, s]) => [k, {
     // Muted channels and a muted server give no unread mark; mentions always count.
@@ -789,16 +788,16 @@ export function App() {
       {stageWindow.render(stage(true))}
       {embedSource && channelRadio && <EmbedPlayer source={embedSource} name={channelRadio.name} volume={radioState.volume} muted={voice.deafened} popout={playerWindow} sync={embedSync} onNotice={(text) => client.setNotice(text)} onTurnOff={() => radio.setMuted(true)}
         onStreamOver={() => { const api = voiceHost ? store.connection(voiceHost)?.api : null; if (api && voiceChannel && embedTwitch) void api.radioOffline(voiceChannel.id, embedTwitch).catch(() => {}); }} />}
-      {showRail && <ServerRail servers={railServers} serverState={railState} activeKey={homeOpen ? null : activeHost} onAdd={homeless ? () => { void addServer(); } : null}
+      {showRail && <ServerRail servers={railServers} serverState={railState} activeKey={homeOpen ? null : activeHost} onAdd={homeless || state.directoryUrl ? () => setShowBrowser(true) : null}
         onSelect={(key, host) => { setMobileContent(false); setVoicePreview(null); if (key === state.homeHost) { store.openServer(homeDirHost); } else store.openServer(host); setStageOpen(key === voiceHost && stageOpen); }}
-        onDiscover={state.directoryUrl ? () => setShowBrowser(true) : null} onLeave={(host, name) => { void leaveServer(host, name); }}
+        onLeave={(host, name) => { void leaveServer(host, name); }}
         onMute={(key, muted) => { void store.connection(key)?.setServerMuted(muted).catch(() => {}); }}
         onReorder={(hosts) => { saveVoiceSettings({ ...loadVoiceSettings(), serverOrder: hosts }); }}
         home={homeAvailable ? { open: homeOpen, badge: homeBadge, onToggle: () => { setMobileContent(false); store.openHome(!homeOpen); } } : null}
         serverAccounts={state.serverAccounts} onSignOutAccount={(key) => { if (key === voiceHost) void client.leave(); store.logoutServerAccount(key); }} onReport={reportServer}
         onRemoveRefused={(key) => store.removeRefused(key)} />}
-      {showBrowser && state.directoryUrl && <ServerBrowser directoryUrl={state.directoryUrl} currentHost={homeless ? active?.serverDomain ?? null : home?.serverDomain ?? null} onClose={() => setShowBrowser(false)}
-        onOpen={homeless ? (host) => { setShowBrowser(false); setStageOpen(false); void store.addServer(host); } : null}
+      {showBrowser && (state.directoryUrl || homeless) && <ServerBrowser directoryUrl={state.directoryUrl} currentHost={homeless ? active?.serverDomain ?? null : home?.serverDomain ?? null} onClose={() => setShowBrowser(false)}
+        onOpen={homeless ? (host) => { setShowBrowser(false); setStageOpen(false); void store.addServer(host); } : null} onAdd={homeless ? addServer : null}
         onReport={reportServer ? (host, name) => { setShowBrowser(false); reportServer(host, name); } : null} />}
       <div className="left" id="app-navigation">
         {homeOpen ? <HomeSidebar state={state} store={store} members={server?.members ?? []} onOpenChat={() => setMobileContent(true)} onReportAccount={reportAccount(null)} /> : view ? <Sidebar
@@ -824,7 +823,7 @@ export function App() {
         {homeOpen ? (
           <HomeMain state={state} store={store} />
         ) : !active ? (
-          <NoServers directoryUrl={state.directoryUrl} account={state.directoryAccount ?? null} onDiscover={() => setShowBrowser(true)} onAdd={() => { void addServer(); }} onLogout={() => { void signOut(store, () => { void client.leave(); }); }} />
+          <NoServers directoryUrl={state.directoryUrl} account={state.directoryAccount ?? null} onAdd={() => setShowBrowser(true)} onLogout={() => { void signOut(store, () => { void client.leave(); }); }} />
         ) : !view ? (
           <ServerStatus s={active} store={store} state={state} rail={railServers} onRetry={(invite) => store.retryServer(active.host, invite)} onClose={() => { if (active.refused) store.removeRefused(active.host); else store.closeServer(active.host); }}
             onOpen={(key) => { setMobileContent(false); setVoicePreview(null); store.openServer(key === state.homeHost ? homeDirHost : key); }}

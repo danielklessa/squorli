@@ -16,7 +16,6 @@
 .ic-chevron-up::before { content: "\e070"; }
 .ic-clock::before { content: "\e087"; }
 .ic-cloud::before { content: "\e088"; }
-.ic-compass::before { content: "\e09b"; }
 .ic-copy::before { content: "\e09e"; }
 .ic-crown::before { content: "\e1d6"; }
 .ic-download::before { content: "\e0b2"; }
@@ -64,6 +63,7 @@
 .ic-pencil::before { content: "\e1f9"; }
 .ic-phone::before { content: "\e133"; }
 .ic-pin::before { content: "\e259"; }
+.ic-pin-off::before { content: "\e2b6"; }
 .ic-plane::before { content: "\e1de"; }
 .ic-play::before { content: "\e13c"; }
 .ic-plus::before { content: "\e13d"; }

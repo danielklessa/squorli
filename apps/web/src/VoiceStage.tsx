@@ -11,7 +11,7 @@ import { VoiceMemberMenu } from "./VoiceMemberMenu";
 import { RadioControl } from "./RadioControl";
 import { RadioVisualizer } from "./RadioVisualizer";
 import { PushToTalkButton } from "./PushToTalkButton";
-import { EmbedSlot } from "./EmbedPlayer";
+import { EmbedSlot, type EmbedSlotPin } from "./EmbedPlayer";
 import type { ServerApi } from "./api";
 import type { RadioPlayer } from "./voice/radioPlayer";
 import { VoiceClient, explainScreenAudio, isChromium, type VideoTile, type VoiceParticipant, type VoiceState } from "./voice/voiceClient";
@@ -81,8 +81,8 @@ type Item = { key: string; participant: StageParticipant; tile: VideoTile | null
 /**
  * Stage of a voice channel (M3): one tile per participant (camera or avatar) plus one per screen share.
  * The default is the tile view; the tile size is computed so that all of them fit into the visible area
- * (no scrolling). Clicking a tile enlarges it (focus), clicking the large tile goes back.
- * "Speaker" follows the active speaker or the newest screen share the user watches, without pinning.
+ * (no scrolling). Clicking a tile shows it large in the speaker view and pins it there; clicking the large tile again
+ * releases it. Without a pin "Speaker" follows the active speaker; a screen share only gets the large place by a click.
  * Others' feeds are the user's choice (19 September 2026): a screen share shows a tile that offers to watch it and is only
  * received after that; a camera shows by itself; both can be turned off for yourself from the tile or its context menu.
  * The tile view can hide participants without video while any video is being sent; that choice is never stored.
@@ -148,17 +148,16 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   for (const p of participants) {
     if (notWatched(p, "screen") && !items.some((i) => i.key === feedId(p.identity, "screen"))) items.push({ key: feedId(p.identity, "screen"), participant: p, tile: null, kind: "screen", off: true });
   }
-  // A new screen share the user watches automatically moves into focus as long as nothing is pinned.
-  const screens = items.filter((i) => (i.kind === "screen" && !i.off) || i.kind === "player");
-  const lastScreen = screens[screens.length - 1];
+  // A screen share (and the radio's player) is large only once the user clicked it (user's wish, 14 October 2026: "generell
+  // soll der Screenshare nur im Vordergrund sein, wenn er angeklickt wurde"); until 14 October 2026 the newest watched
+  // share moved into focus by itself. Without a pin the large place follows the speaker, among the cameras only.
   // With "feature myself" off your own camera tile only becomes the large one by pinning it, or when nobody else is there.
-  const mayFeature = (i: Item) => i.kind !== "playerOff" && (featureSelfInSpeakerView || !i.participant?.isLocal);
+  const mayFeature = (i: Item) => i.kind === "camera" && (featureSelfInSpeakerView || !i.participant.isLocal);
   const focusKey = (pinned && items.some((i) => i.key === pinned) ? pinned : null)
-    ?? lastScreen?.key
     ?? (lastSpeaker ? items.find((i) => i.kind === "camera" && i.participant.identity === lastSpeaker && mayFeature(i))?.key : undefined)
     ?? items.find((i) => i.tile && mayFeature(i))?.key
     ?? items.find(mayFeature)?.key
-    ?? items.find((i) => i.tile)?.key
+    ?? items.find((i) => i.kind === "camera" && i.tile)?.key
     ?? items[0]?.key
     ?? null;
   const focus = items.find((i) => i.key === focusKey) ?? null;
@@ -187,9 +186,11 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
     return () => { for (const id of ids) client.setScreenAudioListening(id, "stage", false); };
   }, [client, screenIds]);
 
-  // Click a tile: show it large. Click the large tile: back to the tiles.
+  // Click a tile: show it large in the speaker view, pinned. Click the large tile: pin it, or release the pin again, so the
+  // speaker view follows the speaker once more (user's wish, 14 October 2026: "bei erneutem drücken auf das selbe Video soll
+  // das pinning deaktiviert werden"); the tile view is the head's switch.
   const focusOn = (key: string) => { setPinned(key); setLayout("focus"); };
-  const unfocus = () => { setPinned(null); setLayout("grid"); };
+  const togglePin = (key: string) => setPinned(pinned === key ? null : key);
 
   // Drag a tile where you want it (user's wish, 4 October 2026): the order lives in the voice client until the room is left
   // (tileOrder.ts), the own tile stays first. A pointer with a threshold and capture, like the server rail; a touch scrolls
@@ -278,7 +279,8 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   const info = t("stage.participants", { n: voice.participants.length }) + (voice.audioProfile ? `\nOpus ${voice.audioProfile.bitrate} kbit/s ${voice.audioProfile.stereo ? t("stage.stereo") : t("stage.mono")}` : "");
   const playerTileOf = (i:Extract<Item, { participant: null }>, big = false) => i.kind === "playerOff" && playerOff
     ? <PlayerOffTile key={i.key} big={big} kind={playerOff} name={channel.radio?.name ?? ""} radio={radio} onDismiss={onDismissPlayerOff} />
-    : <PlayerTile key={i.key} big={big} popped={playerPopped} elsewhere={detached} onRestore={onRestorePlayer} />;
+    : <PlayerTile key={i.key} big={big} popped={playerPopped} elsewhere={detached} onRestore={onRestorePlayer}
+      pin={{ pinned: pinned === i.key, toggle: () => (big ? togglePin(i.key) : focusOn(i.key)) }} />;
 
   return (
     <section className="stage">
@@ -316,7 +318,7 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
       ) : (
         <div className="stage-focus">
           <div className="stage-main">{focus.participant === null ? playerTileOf(focus, true)
-            : <Tile item={focus} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big pinned={pinned === focus.key} onClick={unfocus} />}</div>
+            : <Tile item={focus} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big pinned={pinned === focus.key} onClick={() => togglePin(focus.key)} />}</div>
           {rest.length > 0 && (
             <div className={`stage-strip ${drag?.active ? "reordering" : ""}`}>
               {rest.map((i) => i.participant === null ? playerTileOf(i)
@@ -392,11 +394,16 @@ function useFittedGrid(n: number) {
  * `elsewhere`: this stage is in a window of its own. The player is one iframe of the main window and moving it would
  * reload it, so it stays there (floating, or in its own window) and the tile only says so.
  */
-function PlayerTile({ big, popped, elsewhere, onRestore }: { big?: boolean; popped: boolean; elsewhere: boolean; onRestore: () => void }) {
+/**
+ * The player's place. The player lies over it and takes the clicks, so pinning it is a button in the player's own hover bar
+ * (`EmbedSlot`'s `pin`, EmbedPlayer.tsx); where nothing lies over the tile (the player floats, sits in a window of its own or in
+ * the main window), a click on the tile does it.
+ */
+function PlayerTile({ big, popped, elsewhere, onRestore, pin }: { big?: boolean; popped: boolean; elsewhere: boolean; onRestore: () => void; pin: EmbedSlotPin }) {
   return (
-    <div className={`tile screen embed ${big ? "big" : ""}`}>
+    <div className={`tile screen embed ${big ? "big" : ""}`} onClick={pin.toggle} title={t(big ? (pin.pinned ? "stage.unpinTip" : "stage.pinTip") : "stage.enlarge")}>
       {elsewhere ? <div className="tile-popped"><Icon name="radio" /><span>{t(popped ? "stage.poppedOut" : "stage.playerInMain")}</span></div>
-        : popped ? <div className="tile-popped"><Icon name="external-link" /><span>{t("stage.poppedOut")}</span><button className="secondary small" onClick={onRestore}>{t("stage.restoreVideo")}</button></div> : <EmbedSlot />}
+        : popped ? <div className="tile-popped"><Icon name="external-link" /><span>{t("stage.poppedOut")}</span><button className="secondary small" onClick={(event) => { event.stopPropagation(); onRestore(); }}>{t("stage.restoreVideo")}</button></div> : <EmbedSlot pin={pin} />}
     </div>
   );
 }
@@ -469,7 +476,7 @@ function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds
   // A share nobody turned on for themselves: the whole tile is the switch, there is nothing to enlarge yet.
   const shareOff = item.kind === "screen" && item.off;
   return (
-    <div ref={ref} className={cls} {...attrs} onClick={() => { if (shareOff) watch(true); else if (!ref.current?.ownerDocument.fullscreenElement) onClick(); }} onContextMenu={(event) => onMenu(item, event)} title={shareOff ? t("stage.screenOn") : big ? t("stage.backToGrid") : t("stage.enlarge")}>
+    <div ref={ref} className={cls} {...attrs} onClick={() => { if (shareOff) watch(true); else if (!ref.current?.ownerDocument.fullscreenElement) onClick(); }} onContextMenu={(event) => onMenu(item, event)} title={shareOff ? t("stage.screenOn") : big ? t(pinned ? "stage.unpinTip" : "stage.pinTip") : t("stage.enlarge")}>
       {shareOff ? <div className="tile-popped"><Icon name="monitor" /><span>{t("stage.shareOffered", { name: p.name })}</span><button className="small" onClick={(event) => { event.stopPropagation(); watch(true); }}><Icon name="eye" /> {t("stage.watch")}</button></div>
         : popped ? <div className="tile-popped"><Icon name="external-link" /><span>{t("stage.poppedOut")}</span><button className="secondary small" onClick={(event) => { event.stopPropagation(); onRestore(tile!.id); }}>{t("stage.restoreVideo")}</button></div> : tile ? <TrackVideo tile={tile} /> : <Avatar name={p.name} src={p.avatarUrl} size="large" />}
       {item.kind === "camera" && item.off && <div className="tile-window-actions" onClick={(event) => event.stopPropagation()}>

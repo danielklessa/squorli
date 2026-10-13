@@ -4,6 +4,8 @@ Part of the project description (entry point: root `AGENTS.md`, section 0; until
 
 | Date | Change |
 |---|---|
+| 2026-10-14 | **One plus button in the rail: add and discover in one dialog** (the user's wish; `docs/features/desktop.md`): the compass is gone; `ServerBrowser.tsx` ("Server hinzufügen") has one field that takes an address or link (Enter opens it) and filters the published servers (`serverSearch.ts`, tested); errors inline; `NoServers.tsx` with one button; the browser with a home server can open a typed address too. |
+| 2026-10-14 | **Speaker view: pin by click, a share large only by a click** (the user's wishes; `docs/features/voice-video.md`): `VoiceStage` no longer gives the newest watched share or the radio's player the large place by itself; a click on a tile pins it, a click on the large tile releases it and the large place follows the speaker again (the view stays); the radio's player has a pin / pin-off button in its hover bar (`EmbedSlot` `pin`, `EmbedPlayer.tsx`); icon `pin-off`. |
 | 2026-10-14 | **Equalizer never cut off** (the user's rule; `docs/features/radio.md`): `VoiceStage` keeps `RadioVisualizer` until its `onFaded`, so muting the radio, deafen or the radio stopping let the bars fall and fade out like the button does. |
 | 2026-10-14 | **Equalizer bars fainter** (the user's correction; `docs/features/radio.md`): 6.5 % instead of 9 %. |
 | 2026-10-14 | **Equalizer without peak marks** (the user's correction: too restless; `docs/features/radio.md`): the marks are removed from `radioVisual.ts` and the drawing; bars, base glow and particles remain. |

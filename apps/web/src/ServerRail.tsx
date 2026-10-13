@@ -38,13 +38,11 @@ const DRAG_SCROLL_STEP_PX = 10;
  * lands), or use the menu's "Nach oben"/"Nach unten" or Alt+arrow keys on a focused entry; `onReorder` gets the hosts in the
  * new order (serverOrder.ts, kept in the settings and the directory account). A touch cannot drag here (it scrolls the rail),
  * so the menu is the way on a phone.
- * At the bottom: "discover servers" opens the public server directory.
+ * At the bottom: one plus button opens "add a server" (ServerBrowser.tsx): an address or link, or the public server directory.
  */
-export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscover, onAdd, onLeave, onMute, onReorder, home, serverAccounts, onSignOutAccount, onReport = null, onRemoveRefused }: {
+export function ServerRail({ servers, serverState, activeKey, onSelect, onAdd, onLeave, onMute, onReorder, home, serverAccounts, onSignOutAccount, onReport = null, onRemoveRefused }: {
   servers: RailServer[]; serverState: RailState; activeKey: string | null; onSelect: (key: string, host: string) => void;
-  /** Open the public server directory; null = the client knows no directory. */
-  onDiscover: (() => void) | null;
-  /** Add a server by address or link (client without a home server: the desktop app); null = not offered. */
+  /** Open "add a server": an address or link, or the public server directory (one button since 14 October 2026); null = neither is offered. */
   onAdd: (() => void) | null;
   /** Delete your account on `host` (asks for confirmation itself). */
   onLeave: (host: string, name: string) => void;
@@ -168,8 +166,7 @@ export function ServerRail({ servers, serverState, activeKey, onSelect, onDiscov
           attrs={sortable ? { "data-rail-index": index, onPointerDown: onPointerDown(index, s.key), onPointerMove, onPointerUp: (e) => endDrag(e, true), onPointerCancel: (e) => endDrag(e, false), onKeyDown: onKeyDown(index) } : { "data-rail-index": index }} />;
       })}
       <span className="rail-sep" />
-      {onAdd && <button className="rail-item discover" title={t("rail.add")} onClick={onAdd}><Icon name="plus" /></button>}
-      {onDiscover && <button className="rail-item discover" title={t("rail.discover")} onClick={onDiscover}><Icon name="compass" /></button>}
+      {onAdd && <button className="rail-item discover" title={t("rail.add")} aria-label={t("rail.add")} onClick={onAdd}><Icon name="plus" /></button>}
       {menu && (
         <div className="rail-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={(e) => e.stopPropagation()}>
           <div className="muted small rail-menu-head">{menu.name}<br />{menu.host}{serverAccounts[menu.key] && <><br />~{serverAccounts[menu.key]}</>}</div>
