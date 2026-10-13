@@ -5,6 +5,7 @@
 .ic-app-window::before { content: "\e426"; }
 .ic-arrow-right::before { content: "\e049"; }
 .ic-audio-lines::before { content: "\e55a"; }
+.ic-audio-waveform::before { content: "\e55b"; }
 .ic-ban::before { content: "\e051"; }
 .ic-bell::before { content: "\e059"; }
 .ic-bell-off::before { content: "\e05a"; }

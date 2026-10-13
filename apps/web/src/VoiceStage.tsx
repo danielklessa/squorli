@@ -9,6 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type HTMLAtt
 import type { MenuAnchor } from "./ContextMenu";
 import { VoiceMemberMenu } from "./VoiceMemberMenu";
 import { RadioControl } from "./RadioControl";
+import { RadioVisualizer } from "./RadioVisualizer";
 import { PushToTalkButton } from "./PushToTalkButton";
 import { EmbedSlot } from "./EmbedPlayer";
 import type { ServerApi } from "./api";
@@ -100,6 +101,18 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   const [layout, setLayout] = useState<Layout>("grid"); // always start with tiles
   const [pinned, setPinned] = useState<string | null>(null);
   const [lastSpeaker, setLastSpeaker] = useState<string | null>(null);
+  // The radio's equalizer behind the tiles (docs/features/radio.md, 14 October 2026): only for a station (no Twitch or
+  // YouTube player) whose sound this browser can read, while the radio is on for me; it shows while it plays and I hear it.
+  const [radioState, setRadioState] = useState(radio.state);
+  useEffect(() => radio.subscribe(setRadioState), [radio]);
+  const radioAudio = channel.radio !== null && !channel.radio.twitchChannel && !channel.radio.youtubeVideo;
+  const offerVisual = radioAudio && radioState.analysable && !radioState.muted && !voice.afkRoom;
+  const visualActive = offerVisual && radioState.visual && radioState.status === "playing" && !voice.deafened;
+  // Never cut it off (user's rule, 14 October 2026): whatever ends it (the button, muting the radio, deafen, the radio
+  // stopping or turning into a video), it stays until its bars have fallen and it has faded out, then reports back.
+  const [visualFading, setVisualFading] = useState(false);
+  useEffect(() => { if (visualActive) setVisualFading(true); }, [visualActive]);
+  const reducedMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const canStream = hasPermission(myPermissions, Permission.STREAM_VIDEO) && channel.allowVideo && !voice.afkRoom; // nothing is sent in the AFK channel, nor where the channel forbids video
   // Without VIEW_VIDEO others' camera and screen never arrive; say so while somebody is sharing, instead of just showing avatars.
   const mayView = hasPermission(myPermissions, Permission.VIEW_VIDEO);
@@ -320,6 +333,9 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
 
       {touchPtt && <div className="stage-ptt"><PushToTalkButton client={client} disabled={voice.afkRoom || voice.micMuted} /></div>}
       <footer className="stage-bar">
+        {(visualActive || visualFading) && <RadioVisualizer player={radio} active={visualActive} calm={reducedMotion} onFaded={() => setVisualFading(false)} />}
+        {offerVisual && <button className={`bar-btn radio-visual-toggle ${radioState.visual ? "on" : ""}`} aria-pressed={radioState.visual} title={t(radioState.visual ? "stage.visualOff" : "stage.visualOn")} aria-label={t(radioState.visual ? "stage.visualOff" : "stage.visualOn")}
+          onClick={() => radio.setVisual(!radioState.visual)}><Icon name="audio-waveform" /></button>}
         {!(touchPtt && !voice.micMuted) && <button className={`bar-btn ${voice.micMuted ? "off" : ""}`} disabled={voice.afkRoom} title={voice.afkRoom ? t("dock.afkChannel") : voice.micMuted ? (voice.deafened ? t("voice.unmuteAll") : t("voice.unmute")) : t("voice.mute")} onClick={() => client.setMuted(!voice.micMuted)}><Icon name={voice.micMuted ? "mic-off" : "mic"} /></button>}
         <button className={`bar-btn ${voice.deafened ? "off" : ""}`} disabled={voice.afkRoom} title={voice.afkRoom ? t("dock.afkChannel") : voice.deafened ? t("voice.undeafen") : t("voice.deafen")} onClick={() => client.setDeafened(!voice.deafened)}><Icon name={voice.deafened ? "headphone-off" : "headphones"} /></button>
         <button className={`bar-btn ${voice.cameraOn ? "on" : ""}`} disabled={!canStream} title={voice.afkRoom ? t("dock.afkChannel") : canStream ? (voice.cameraOn ? t("voice.cameraOff") : t("voice.cameraOnBtn")) : t("stage.noStreamPermission")}

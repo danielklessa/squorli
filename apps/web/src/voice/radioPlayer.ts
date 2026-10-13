@@ -1,10 +1,14 @@
 /**
  * Web radio of the voice channel you are in. The stream does not come through LiveKit: every client plays the station's
- * address itself in a plain <audio> element (no CORS needed that way), so everyone chooses their own volume or turns the
- * radio off for themselves. Volume and "off" are stored per device (`chat.radio.v2`): like the per-person volumes they
+ * address itself in a plain <audio> element, so everyone chooses their own volume or turns the radio off for themselves.
+ * Volume, "off" and the stage's equalizer are stored per device (`chat.radio.v2`): like the per-person volumes they
  * depend on the headset in front of this browser. The volume is only stored once the user has set it, so until then the
  * default applies (and a later change of the default reaches everyone who never touched the slider). Turned off means disconnected: no data is loaded and the station never
  * sees this listener. Deafening only silences the element, so the radio is back at once afterwards.
+ * The element asks with CORS first (14 October 2026, the equalizer needs the samples; most stations allow it) and loads
+ * once more without it when that fails before anything played, so a station without CORS plays as before. The equalizer
+ * reads a copy of the element's sound (`captureStream`, Chromium only) and never sits in its way: the element keeps its
+ * volume and its output device. Never use `createMediaElementSource` for this (it takes the sound out of the element).
  */
 const KEY = "chat.radio.v2";
 /** v1 (first day of the radio, never released) always stored the volume, also the default of that day: dropped. */
@@ -15,7 +19,11 @@ const RETRY_MS = [2000, 5000, 15000, 30000];
 
 export type RadioSettings = { volume: number; muted: boolean };
 export type RadioStatus = "off" | "connecting" | "playing" | "blocked" | "error";
-export type RadioState = RadioSettings & { status: RadioStatus };
+/**
+ * `visual` = the stage's equalizer is wanted (stored per device; off until the user turns it on, user's decision of
+ * 14 October 2026); `analysable` = the sound can be read right now (playing with CORS in a browser with `captureStream`).
+ */
+export type RadioState = RadioSettings & { status: RadioStatus; visual: boolean; analysable: boolean };
 
 /** Stored JSON -> settings; broken or foreign data yields the defaults. */
 export function parseRadioSettings(raw: string | null): RadioSettings {
@@ -34,9 +42,22 @@ export function hasOwnVolume(raw: string | null): boolean {
   try { const v = (JSON.parse(raw ?? "null") as { volume?: unknown } | null)?.volume; return typeof v === "number" && Number.isFinite(v); } catch { return false; }
 }
 
-/** What is written to the device: the off switch always, the volume only when it is the user's own. */
-export function storedRadioSettings(settings: RadioSettings, ownVolume: boolean): { volume?: number; muted: boolean } {
-  return ownVolume ? { volume: settings.volume, muted: settings.muted } : { muted: settings.muted };
+/** The equalizer as the user set it; null = never chosen (then the default applies). */
+export function parseRadioVisual(raw: string | null): boolean | null {
+  try { const v = (JSON.parse(raw ?? "null") as { visual?: unknown } | null)?.visual; return typeof v === "boolean" ? v : null; } catch { return null; }
+}
+
+/** What is written to the device: the off switch always, the volume and the equalizer only when they are the user's own. */
+export function storedRadioSettings(settings: RadioSettings, ownVolume: boolean, visual: boolean | null = null): { volume?: number; muted: boolean; visual?: boolean } {
+  const stored: { volume?: number; muted: boolean; visual?: boolean } = ownVolume ? { volume: settings.volume, muted: settings.muted } : { muted: settings.muted };
+  if (visual !== null) stored.visual = visual;
+  return stored;
+}
+
+/** Can this browser copy an element's sound without taking it away (Chromium's `captureStream`; Firefox's `mozCaptureStream` silences the element)? */
+type CapturingAudio = HTMLAudioElement & { captureStream?: () => MediaStream };
+function canCapture(el: HTMLAudioElement): boolean {
+  return typeof (el as CapturingAudio).captureStream === "function";
 }
 
 /** Why the element is (not) loading: the radio runs only with an address, and not while the user has turned it off. */
@@ -55,11 +76,22 @@ export class RadioPlayer {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private unblock: (() => void) | null = null;
   private ownVolume: boolean;
+  /** The equalizer as the user set it (null = the default). */
+  private visualChoice: boolean | null;
+  /** The current address failed with CORS before it ever played: it loads without, and cannot be analysed. */
+  private noCors = false;
+  /** The current address played with CORS once: a later error is the station's, not CORS. */
+  private corsPlayed = false;
+  /** Context of the equalizer's analysis only: never connected to an output. */
+  private visualCtx: AudioContext | null = null;
+  private analysis: { stream: MediaStream; source: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null = null;
+  private ctxUnlock: (() => void) | null = null;
 
   constructor() {
     let stored: string | null = null;
     try { stored = localStorage.getItem(KEY); localStorage.removeItem(OLD_KEY); } catch { /* blocked storage: defaults */ }
-    this.state = { ...parseRadioSettings(stored), status: "off" };
+    this.visualChoice = parseRadioVisual(stored);
+    this.state = { ...parseRadioSettings(stored), status: "off", visual: this.visualChoice ?? false, analysable: false };
     this.ownVolume = hasOwnVolume(stored);
   }
 
@@ -74,7 +106,7 @@ export class RadioPlayer {
   }
 
   private save() {
-    try { localStorage.setItem(KEY, JSON.stringify(storedRadioSettings(this.state, this.ownVolume))); } catch { /* still applies for this session */ }
+    try { localStorage.setItem(KEY, JSON.stringify(storedRadioSettings(this.state, this.ownVolume, this.visualChoice))); } catch { /* still applies for this session */ }
   }
 
   /** What the voice channel plays; null = no radio (or not in a voice channel). */
@@ -82,7 +114,56 @@ export class RadioPlayer {
     if (url === this.url) return;
     this.url = url;
     this.attempts = 0;
+    this.noCors = false;
+    this.corsPlayed = false;
     this.apply();
+  }
+
+  /** The stage's equalizer on or off (this device). */
+  setVisual(on: boolean) {
+    this.visualChoice = on;
+    this.patch({ visual: on });
+    this.save();
+  }
+
+  /**
+   * The equalizer's view of the sound, or null while it cannot be read. Built on first use after the element started
+   * playing (a captured stream has its audio track only then) and again after every new start.
+   */
+  analyser(): AnalyserNode | null {
+    if (!this.state.analysable || !this.el) return null;
+    if (this.analysis) return this.analysis.analyser;
+    try {
+      const stream = (this.el as CapturingAudio).captureStream!();
+      if (stream.getAudioTracks().length === 0) return null;
+      const ctx = this.visualCtx ??= new AudioContext();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.8;
+      source.connect(analyser);
+      this.analysis = { stream, source, analyser };
+      this.wakeCtx(ctx);
+      return analyser;
+    } catch { return null; }
+  }
+
+  /** A context made without a gesture may start suspended: try now, else with the next click or key. */
+  private wakeCtx(ctx: AudioContext) {
+    if (ctx.state === "running" || this.ctxUnlock) return;
+    void ctx.resume().catch(() => {});
+    const go = () => { this.ctxUnlock?.(); this.ctxUnlock = null; void ctx.resume().catch(() => {}); };
+    document.addEventListener("pointerdown", go, { once: true, capture: true });
+    document.addEventListener("keydown", go, { once: true, capture: true });
+    this.ctxUnlock = () => { document.removeEventListener("pointerdown", go, true); document.removeEventListener("keydown", go, true); };
+  }
+
+  private dropAnalysis() {
+    const a = this.analysis;
+    if (!a) return;
+    this.analysis = null;
+    a.source.disconnect();
+    for (const track of a.stream.getTracks()) track.stop();
   }
 
   setVolume(volume: number) {
@@ -132,12 +213,14 @@ export class RadioPlayer {
 
   private apply() {
     this.clearTimers();
-    if (!shouldLoad(this.url, this.state)) { this.unload(); this.patch({ status: "off" }); return; }
+    this.dropAnalysis();
+    if (!shouldLoad(this.url, this.state)) { this.unload(); this.patch({ status: "off", analysable: false }); return; }
     const el = this.element();
     el.volume = this.state.volume;
     el.muted = this.deafened;
+    if (this.noCors) el.removeAttribute("crossorigin"); else el.crossOrigin = "anonymous";
     el.src = this.url!;
-    this.patch({ status: "connecting" });
+    this.patch({ status: "connecting", analysable: false });
     this.applySink();
     const url = this.url;
     el.play().catch((err: unknown) => {
@@ -169,9 +252,19 @@ export class RadioPlayer {
     if (this.el) return this.el;
     const el = new Audio();
     el.preload = "none";
-    el.addEventListener("playing", () => { this.attempts = 0; this.patch({ status: "playing" }); });
+    el.addEventListener("playing", () => {
+      this.attempts = 0;
+      const cors = el.crossOrigin === "anonymous";
+      if (cors) this.corsPlayed = true;
+      this.dropAnalysis(); // a new start may bring new tracks: the next analyser() call captures afresh
+      this.patch({ status: "playing", analysable: cors && canCapture(el) });
+    });
     el.addEventListener("waiting", () => { if (this.state.status === "playing") this.patch({ status: "connecting" }); });
-    el.addEventListener("error", () => this.failed());
+    el.addEventListener("error", () => {
+      // Asked with CORS and failed before it ever played: most likely a station without CORS, so once more without at once.
+      if (el.crossOrigin === "anonymous" && !this.corsPlayed && !this.noCors && shouldLoad(this.url, this.state)) { this.noCors = true; this.apply(); return; }
+      this.failed();
+    });
     el.addEventListener("ended", () => this.failed());
     this.el = el;
     return el;
@@ -179,6 +272,8 @@ export class RadioPlayer {
 
   /** Really close the connection: pausing alone keeps a live stream downloading. */
   private unload() {
+    this.dropAnalysis();
+    if (this.visualCtx?.state === "running") void this.visualCtx.suspend().catch(() => {});
     const el = this.el;
     if (!el) return;
     el.pause();

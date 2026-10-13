@@ -729,6 +729,15 @@ button.dock-stage:hover { background: var(--sel); }
 .bar-btn.on { background: var(--accent); color: var(--on-dark); }
 .bar-btn.off { background: var(--danger); color: var(--on-light); }
 .bar-btn.leave { background: var(--danger); color: var(--on-light); }
+/* The radio's equalizer (RadioVisualizer.tsx, 14 October 2026): a canvas behind the tiles that rises from the button bar.
+   .stage isolates its stacking, so z-index -1 lies above the stage's ground and below everything in it; no pointer events. */
+.stage { position: relative; isolation: isolate; }
+.stage-bar { position: relative; }
+.radio-visual { position: absolute; left: 0; right: 0; bottom: 100%; width: 100%; height: min(34vh, 20rem); z-index: -1; pointer-events: none; filter: blur(0.5px); }
+.bar-btn.radio-visual-toggle { position: absolute; left: 0.6rem; top: 50%; transform: translateY(-50%); width: 2.5rem; height: 2.5rem; font-size: 1.1rem; color: var(--muted); }
+.bar-btn.radio-visual-toggle.on { background: var(--bg4); color: var(--brand); }
+.bar-btn.radio-visual-toggle:hover { background: var(--sel); color: var(--text); }
+@media (max-width: 700px) { .bar-btn.radio-visual-toggle { position: static; transform: none; order: -1; align-self: center; } }
 /* Hang up: handset (rotated by 135 degrees, see icon rotate) on coral */
 .icon.hangup { background: var(--danger); color: var(--on-light); border-radius: 50%; width: 1.7rem; height: 1.7rem; padding: 0; }
 .icon.hangup:hover { background: #ff9aa8; color: var(--on-light); }

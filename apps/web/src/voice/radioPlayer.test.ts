@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RADIO_DEFAULT_VOLUME, hasOwnVolume, parseRadioSettings, shouldLoad, storedRadioSettings } from "./radioPlayer";
+import { RADIO_DEFAULT_VOLUME, hasOwnVolume, parseRadioSettings, parseRadioVisual, shouldLoad, storedRadioSettings } from "./radioPlayer";
 
 describe("radio settings", () => {
   it("falls back to the defaults for missing, broken or foreign data", () => {
@@ -27,6 +27,19 @@ describe("radio settings", () => {
     const afterSlider = JSON.stringify(storedRadioSettings({ volume: 0.05, muted: false }, true));
     expect(hasOwnVolume(afterSlider)).toBe(true); // also when the chosen value equals the default
     for (const raw of [null, "{", "null", '{"volume":"laut"}']) expect(hasOwnVolume(raw), String(raw)).toBe(false);
+  });
+
+  it("stores the equalizer only once the user has chosen", () => {
+    expect(parseRadioVisual(null)).toBeNull();
+    expect(parseRadioVisual('{"muted":false}')).toBeNull();
+    expect(parseRadioVisual('{"visual":"ja"}')).toBeNull();
+    expect(parseRadioVisual("{")).toBeNull();
+    expect(parseRadioVisual('{"visual":false}')).toBe(false);
+    expect(JSON.stringify(storedRadioSettings({ volume: 0.05, muted: false }, false))).toBe('{"muted":false}');
+    const stored = JSON.stringify(storedRadioSettings({ volume: 0.4, muted: false }, true, false));
+    expect(stored).toBe('{"volume":0.4,"muted":false,"visual":false}');
+    expect(parseRadioVisual(stored)).toBe(false);
+    expect(parseRadioSettings(stored)).toEqual({ volume: 0.4, muted: false });
   });
 
   it("loads the stream only with an address and while the user has not turned the radio off", () => {
