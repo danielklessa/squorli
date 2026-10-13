@@ -261,7 +261,9 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
     setMenu({ identity: item.participant.identity, trigger: event.currentTarget, x: event.clientX, y: event.clientY });
   };
 
-  const playerTileOf = (i: Extract<Item, { participant: null }>, big = false) => i.kind === "playerOff" && playerOff
+  // The head names only the channel; the number of participants and the audio quality are the info icon's tooltip (14 October 2026).
+  const info = t("stage.participants", { n: voice.participants.length }) + (voice.audioProfile ? `\nOpus ${voice.audioProfile.bitrate} kbit/s ${voice.audioProfile.stereo ? t("stage.stereo") : t("stage.mono")}` : "");
+  const playerTileOf = (i:Extract<Item, { participant: null }>, big = false) => i.kind === "playerOff" && playerOff
     ? <PlayerOffTile key={i.key} big={big} kind={playerOff} name={channel.radio?.name ?? ""} radio={radio} onDismiss={onDismissPlayerOff} />
     : <PlayerTile key={i.key} big={big} popped={playerPopped} elsewhere={detached} onRestore={onRestorePlayer} />;
 
@@ -269,16 +271,16 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
     <section className="stage">
       <header className="chat-head">
         <span className="channel-icon"><Icon name="volume-2" /></span><strong>{channel.name}</strong>
-        <span className="muted small">· {t("stage.participants", { n: voice.participants.length })}{voice.audioProfile && ` · Opus ${voice.audioProfile.bitrate} kbit/s ${voice.audioProfile.stereo ? t("stage.stereo") : t("stage.mono")}`}</span>
+        <span className="stage-info" tabIndex={0} title={info} aria-label={info}><Icon name="info" /></span>
         <span className="spacer" />
         {radioStations && !voice.afkRoom && <RadioControl api={api} player={radio} channel={channel} stations={radioStations} nowPlaying={radioTitle} canControl={hasPermission(myPermissions, Permission.CONTROL_RADIO)} />}
         {layout === "grid" && anyVideo && (
           <button className={`icon ${videoOnly ? "on" : ""}`} aria-pressed={videoOnly} title={t(videoOnly ? "stage.showAll" : "stage.videoOnly")} aria-label={t(videoOnly ? "stage.showAll" : "stage.videoOnly")}
             onClick={() => setVideoOnly(!videoOnly)}><Icon name={videoOnly ? "user-x" : "user"} /></button>
         )}
-        <div className="seg">
-          <button className={layout === "focus" ? "active" : ""} title={t("stage.speakerHint")} onClick={() => setLayout("focus")}>{t("stage.speaker")}</button>
-          <button className={layout === "grid" ? "active" : ""} title={t("stage.gridHint")} onClick={() => setLayout("grid")}>{t("stage.grid")}</button>
+        <div className="seg seg-icons">
+          <button className={layout === "focus" ? "active" : ""} aria-pressed={layout === "focus"} title={t("stage.speakerTip")} aria-label={t("stage.speaker")} onClick={() => setLayout("focus")}><Icon name="layout-panel-top" /></button>
+          <button className={layout === "grid" ? "active" : ""} aria-pressed={layout === "grid"} title={t("stage.gridTip")} aria-label={t("stage.grid")} onClick={() => setLayout("grid")}><Icon name="layout-grid" /></button>
         </div>
         <button className="icon" title={t(detached ? "stage.restoreStage" : "stage.popoutStage")} aria-label={t(detached ? "stage.restoreStage" : "stage.popoutStage")}
           onClick={() => { try { onToggleWindow(); } catch (error) { client.setNotice(error instanceof Error ? error.message : t("stage.popupFailed")); } }}><Icon name={detached ? "undo-2" : "external-link"} /></button>

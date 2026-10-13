@@ -671,6 +671,13 @@ button.dock-stage:hover { background: var(--sel); }
 .seg { display: flex; background: var(--bg4); border-radius: var(--r); padding: 3px; }
 .seg button { background: transparent; color: var(--muted); padding: 0.25rem 0.7rem; font-size: 0.875rem; border-radius: calc(var(--r) - 3px); }
 .seg button.active { background: var(--accent); color: var(--on-dark); }
+/* The stage's layout switch shows icons, the names are tooltips (14 October 2026); the buttons keep the line of text and with it the height. */
+.seg.seg-icons button { padding-inline: 0.55rem; }
+.seg.seg-icons button:not(.active):hover { color: var(--text); }
+.seg.seg-icons .ic { font-size: 1rem; }
+/* Participants and audio quality of the stage, as the tooltip of an icon next to the channel's name. */
+.stage-info { display: inline-flex; align-items: center; flex: none; color: var(--muted); cursor: help; border-radius: 4px; }
+.stage-info:hover, .stage-info:focus-visible { color: var(--text); }
 .stage-hint { margin: 0.5rem 1rem 0; }
 .warn-box { background: rgba(255,197,104,.12); border: 1px solid rgba(255,197,104,.5); border-radius: var(--r); padding: 0.5rem 0.8rem; color: var(--text); }
 .stage-empty { flex: 1; display: grid; place-items: center; }
@@ -793,16 +800,22 @@ button.icon.on { color: var(--brand); }
 @container (max-height: 10.5rem) { .tile.player-off .tile-popped > .ic { display: none; } }
 @container (max-height: 8.5rem) { .tile.player-off .user-volume-row { display: none; } }
 /* Web radio: button in the stage head (station name while one plays), its menu, and the station list in the admin area. */
-.radio-toggle { position: relative; display: inline-flex; align-items: center; gap: 0.4rem; flex: 0 1 auto; min-width: 0; max-width: 26rem; padding: calc(0.25rem + 3px) 0.7rem; font-size: 0.875rem; background: var(--bg4); color: var(--muted); }   /* exactly as high as the .seg next to it: its 3px frame plus its buttons' padding */
-/* Without a station there is only the icon (line-height 1): an empty text box keeps the height of a line of text. */
-.radio-toggle::before { content: "\200B"; width: 0; overflow: hidden; margin-right: -0.4rem; }
-.radio-toggle:hover, .radio-toggle[aria-expanded="true"] { background: var(--sel); color: var(--text); }
-.radio-toggle.on { color: var(--ok); }
-.radio-toggle.on.silenced { color: var(--muted); }
-.radio-toggle > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-.radio-toggle.silenced > span { color: var(--muted); text-decoration: line-through; }
+/* .radio-toggle is the frame; inside it the icon (.radio-mute, only while a station plays: off and on for me) and the menu button
+   (.radio-open: the station's name, without a station the icon). */
+.radio-toggle { position: relative; display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 26rem; border-radius: var(--r); background: var(--bg4); color: var(--muted); }
+.radio-toggle > button { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; padding: calc(0.25rem + 3px) 0.7rem; font-size: 0.875rem; background: transparent; color: inherit; border-radius: var(--r); }   /* exactly as high as the .seg next to it: its 3px frame plus its buttons' padding */
+/* A button with only an icon (line-height 1): an empty text box keeps the height of a line of text. */
+.radio-toggle > button::before { content: "\200B"; width: 0; overflow: hidden; margin-right: -0.4rem; }
+.radio-toggle > button:hover, .radio-toggle > button[aria-expanded="true"] { background: var(--sel); color: var(--text); }
+.radio-toggle > .radio-mute { flex: none; padding-right: 0.35rem; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.radio-toggle > .radio-mute + .radio-open { flex: 0 1 auto; padding-left: 0.35rem; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.radio-toggle.on > .radio-mute { color: var(--ok); }
+.radio-toggle.on.silenced > .radio-mute { color: var(--muted); }
+.radio-open > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.radio-toggle.silenced .radio-open > span { color: var(--muted); text-decoration: line-through; }
+.radio-open > .radio-chevron { display: none; }   /* on a phone, in place of the name */
 /* Hidden copy of what the station is playing: RadioControl measures it to decide whether it fits in place of the station's name. */
-.radio-toggle > .radio-toggle-measure { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; overflow: visible; max-width: none; }
+.radio-open > .radio-toggle-measure { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; overflow: visible; max-width: none; }
 .user-context-menu .radio-track { display: flex; flex-direction: column; gap: 0.125rem; padding: 0 0.75rem 0.5rem; overflow-wrap: anywhere; }
 .user-context-menu .radio-now { display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0.75rem; }
 .radio-now > .ic { flex: none; font-size: 1.25rem; color: var(--ok); }
@@ -821,7 +834,7 @@ button.icon.on { color: var(--brand); }
 .radio-station-row > button { width: 100%; }
 .radio-station-row input { width: 100%; min-width: 0; }
 .radio-station-actions { display: flex; align-items: center; gap: 0.25rem; justify-content: flex-end; }
-@media (max-width: 700px) { .radio-station-row { grid-template-columns: minmax(0, 1fr); } .radio-toggle > span { display: none; } }
+@media (max-width: 700px) { .radio-station-row { grid-template-columns: minmax(0, 1fr); } .radio-open > span { display: none; } .radio-open > .radio-chevron { display: inline-block; } }
 .seg.wide { width: 100%; }
 .seg.wide button { flex: 1; }
 .camera-option.active { background: var(--accent); color: var(--on-dark); }
@@ -1220,7 +1233,8 @@ button.emoji-open[aria-expanded="true"] { color: var(--brand); }
 
 /* Header controls (user's wish, 19 September 2026): everything that can be pressed at the top of a voice lobby is exactly as high
    as the layout switch (.seg): its 3px frame plus its buttons (one line of 0.875rem text at line-height 1.5, 0.25rem padding above
-   and below). The radio button reaches that height by its own padding (see .radio-toggle); the icon buttons and the debug button
+   and below; since 14 October 2026 they show icons, the line box of that text stays). The radio's buttons reach that height by their
+   own padding (see .radio-toggle); the icon buttons and the debug button
    get it here, as squares. They keep their look: no ground until hovered. Change .seg and this value together. */
 .chat-head, .debug-toggle { --head-control-h: calc(0.875rem * 1.5 + 0.5rem + 6px); }
 .chat-head > button.icon, button.debug-toggle { height: var(--head-control-h); min-width: var(--head-control-h); padding-block: 0; flex-shrink: 0; border-radius: var(--r); }

@@ -23,6 +23,8 @@ function explain(err: unknown): string {
 /**
  * Radio button in the head of the voice stage with its menu. Members who may control the radio always see it (choose a
  * station for everyone, turn it off); listeners only while a station is playing (their own volume and off switch).
+ * While a station plays, its icon is a button of its own that turns the radio off and on for me (user's wish of
+ * 14 October 2026); the name beside it opens the menu, on a phone a small arrow in the name's place.
  * `nowPlaying` = what the station plays right now ("Artist - Title" from the server): the button shows it instead of the
  * station's name when it fits into the head's free space, the menu always shows both.
  */
@@ -68,14 +70,21 @@ export function RadioControl({ api, player, channel, stations, nowPlaying, canCo
   const volumeLabel = t("radio.volume");
   const tooltip = !playing ? t("radio.button") : title ? t("radio.buttonPlaying", { name: playing.name, title }) : t("radio.buttonOn", { name: playing.name });
 
+  const muteLabel = radio.muted ? t("radio.unmute") : t("radio.mute");
+
+  // Two buttons in one frame while a station plays: the icon turns the radio off and on for me, the rest opens the menu.
   return (
     <>
-      <button ref={showTitle.button} className={`radio-toggle ${playing ? "on" : ""} ${playing && radio.muted ? "silenced" : ""}`} title={tooltip} aria-label={tooltip} aria-haspopup="menu" aria-expanded={anchor !== null}
-        onClick={(event) => { if (performance.now() - closedAt.current < 400) return; const box = event.currentTarget.getBoundingClientRect(); setError(null); setAnchor({ trigger: event.currentTarget, x: box.left, y: box.bottom + 6 }); }}>
-        <Icon name="radio" />{playing && <span ref={showTitle.label}>{showTitle.fits && title ? title : playing.name}</span>}
-        {/* Never visible: only there to know how wide the title is at full length. */}
-        {title && <span ref={showTitle.measure} className="radio-toggle-measure" aria-hidden="true">{title}</span>}
-      </button>
+      <div ref={showTitle.button} role="group" className={`radio-toggle ${playing ? "on" : ""} ${playing && radio.muted ? "silenced" : ""}`}>
+        {playing && <button className="radio-mute" aria-pressed={radio.muted} title={muteLabel} aria-label={muteLabel} onClick={() => player.setMuted(!radio.muted)}><Icon name="radio" /></button>}
+        <button className="radio-open" title={tooltip} aria-label={tooltip} aria-haspopup="menu" aria-expanded={anchor !== null}
+          onClick={(event) => { if (performance.now() - closedAt.current < 400) return; const box = (event.currentTarget.parentElement ?? event.currentTarget).getBoundingClientRect(); setError(null); setAnchor({ trigger: event.currentTarget, x: box.left, y: box.bottom + 6 }); }}>
+          {playing ? <span ref={showTitle.label}>{showTitle.fits && title ? title : playing.name}</span> : <Icon name="radio" />}
+          {playing && <Icon name="chevron-down" className="radio-chevron" />}
+          {/* Never visible: only there to know how wide the title is at full length. */}
+          {title && <span ref={showTitle.measure} className="radio-toggle-measure" aria-hidden="true">{title}</span>}
+        </button>
+      </div>
       {anchor && (
         <ContextMenu anchor={anchor} label={t("radio.title")} onClose={() => { closedAt.current = performance.now(); setAnchor(null); }}>
           <div className="radio-now" role="presentation">
@@ -145,7 +154,7 @@ export function RadioControl({ api, player, channel, stations, nowPlaying, canCo
  * button or the texts change; decided before the browser paints, so the label never flickers between the two.
  */
 function useFits(title: string | null, name: string | null) {
-  const button = useRef<HTMLButtonElement>(null);
+  const button = useRef<HTMLDivElement>(null); // the frame around the icon and the menu button
   const label = useRef<HTMLSpanElement>(null);
   const measure = useRef<HTMLSpanElement>(null);
   const [fits, setFits] = useState(false);
@@ -157,7 +166,7 @@ function useFits(title: string | null, name: string | null) {
       if (!b || !l || !m) return;
       const spacer = head.querySelector<HTMLElement>(":scope > .spacer");
       const style = getComputedStyle(b);
-      const chrome = b.getBoundingClientRect().width - l.getBoundingClientRect().width; // icon, gap, padding
+      const chrome = b.getBoundingClientRect().width - l.getBoundingClientRect().width; // the icon's button, the padding
       const limit = parseFloat(style.maxWidth);
       setFits(fitsInstead({ wanted: m.getBoundingClientRect().width, shown: l.getBoundingClientRect().width, truncated: l.scrollWidth - l.clientWidth > 1, free: spacer?.getBoundingClientRect().width ?? 0, max: (Number.isFinite(limit) ? limit : Infinity) - chrome }));
     };
