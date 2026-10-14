@@ -64,6 +64,10 @@ if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
 // A test that drives the app against a dev server passes `--user-data-dir` and keeps its hands off the developer's own data.
 if (devUrl && !argValue("user-data-dir")) app.setPath("userData", join(app.getPath("appData"), "Squorli-dev"));
 app.userAgentFallback = desktopUserAgent(app.userAgentFallback, app.getVersion());
+// WebRTC's gain control (`autoGainControl`, micPipeline.ts) otherwise also moves the microphone's level in the system's sound
+// settings (Chromium's input volume adjustment, Core Audio on Windows; user's report, 14 October 2026). Without it the gain
+// stays inside the stream (Chromium's digital part and the client's boost), the system's slider where the user put it.
+app.commandLine.appendSwitch("disable-features", "WebRtcAllowInputVolumeAdjustment");
 registerAppScheme();
 
 const os: PlatformOs = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : process.platform === "linux" ? "linux" : "other";

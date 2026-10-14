@@ -73,6 +73,7 @@ apps/desktop/
 - **Pure logic goes into its own module with tests** (`appFiles.ts`, `navigation.ts`, `userAgent.ts`); the Electron-bound files stay thin. `bridge.ts` and `deepLink.ts` of the web package must stay DOM-free: the main process bundles and runs them. (The compiler does not enforce it: the protocol package they pull in needs the DOM library's `CryptoKey` type, so this package is typechecked with the default libraries like the server.)
 - **Tests must not import `electron`:** the package's entry throws when its binary is missing, which is the case in CI (`ELECTRON_SKIP_BINARY_DOWNLOAD=1`). Keep what is tested in modules without that import.
 - The fixed directory is `https://directory.squorli.com`; `--directory-url` exists for development only.
+- **Chromium features are switched in one place:** `index.ts` appends one `disable-features` value before `app.whenReady()` (since 14 October 2026 `WebRtcAllowInputVolumeAdjustment`: WebRTC's gain control must not move the microphone's level in the system, `docs/features/voice-video.md`). A further feature goes into that same comma-separated value; a second `appendSwitch("disable-features", ...)` replaces the first. Check a feature's name in the bundled `electron.exe` (`grep -a`) first: a wrong name is ignored without an error.
 
 ## Known pitfalls
 
