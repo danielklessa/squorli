@@ -24,7 +24,14 @@ export const MIC_BOOST_MAX = 12;
  * speech level is safe there (the floor rule, four times the quietest level seen, still applies). NOT measured on a device;
  * the debug view shows the raw level ("Eingang") to check it.
  */
-export type MicBoostLimits = { max: number; minSpeech: number };
+export type MicBoostLimits = {
+  max: number;
+  minSpeech: number;
+  /** Lowest gain; 1 (the default) = only ever raises, as the microphone's automatic does. The levelling of others (levelMatch.ts) lowers too. */
+  min?: number;
+  /** Speech level aimed for; default `MIC_BOOST_TARGET`. `AutoGain.setTarget` moves it. */
+  target?: number;
+};
 export const DESKTOP_BOOST_LIMITS: MicBoostLimits = { max: MIC_BOOST_MAX, minSpeech: 0.003 };
 /** x40 = +32 dB. */
 export const MOBILE_BOOST_LIMITS: MicBoostLimits = { max: 40, minSpeech: 0.0006 };
@@ -35,21 +42,48 @@ export const MIC_BOOST_TARGET = 0.1;
 export type MicBoostSettings = {
   /** true = learn the gain from the speech level; false = `gain` as set by hand. */
   auto: boolean;
-  /** Gain by hand, 1..MIC_BOOST_MAX (1 = off). */
+  /** Gain by hand, MIC_GAIN_MIN..MIC_GAIN_MAX (1 = unchanged; below 1 lowers the microphone). */
   gain: number;
 };
 /** Off by default (user's decision, 25 September 2026): the automatic boost is something a user switches on. */
 export const DEFAULT_MIC_BOOST: MicBoostSettings = { auto: false, gain: 1 };
 
+/** The automatic's gain: it only ever raises, so never below 1. */
 export const clampBoost = (g: unknown, max = MIC_BOOST_MAX): number => (typeof g === "number" && Number.isFinite(g) ? Math.min(max, Math.max(1, g)) : 1);
-/** Stored settings: clamped to the widest limits there are; the pipeline clamps to those of the device it runs on. */
+
+/**
+ * The level set by hand (user's wish, 14 October 2026: lowering it too, not only raising; the user chose 1 % to 600 %, on every
+ * device): the slider lowers a microphone that is too loud below 100 % and raises a quiet one above. The automatic keeps its
+ * own limits (`boostLimits`).
+ */
+export const MIC_GAIN_MIN = 0.01;
+export const MIC_GAIN_MAX = 6;
+export const clampManualGain = (g: unknown): number => (typeof g === "number" && Number.isFinite(g) ? Math.min(MIC_GAIN_MAX, Math.max(MIC_GAIN_MIN, g)) : 1);
+
+/**
+ * The slider's position for a gain and back: the position IS the percentage, 1 to 600 in whole percent, so every step moves
+ * the same (user's choice, 14 October 2026, after a logarithmic scale and one with 100 % in the middle; they accepted that the
+ * lowering then lives in the first sixth). 100 % is marked under the slider at `UNITY_MARK` and sticks near it.
+ */
+export const SLIDER_MIN = Math.round(MIC_GAIN_MIN * 100);
+export const SLIDER_MAX = Math.round(MIC_GAIN_MAX * 100);
+/** Where 100 % sits along the slider, 0..1 (about 0.165). */
+export const UNITY_MARK = (100 - SLIDER_MIN) / (SLIDER_MAX - SLIDER_MIN);
+export const gainToSlider = (g: number): number => Math.round(clampManualGain(g) * 100);
+export function sliderToGain(pos: number): number {
+  const pct = Math.round(Math.min(SLIDER_MAX, Math.max(SLIDER_MIN, pos)));
+  return (Math.abs(pct - 100) <= 3 ? 100 : pct) / 100;
+}
+
+/** Stored settings: the automatic's switch and the level set by hand (a gain above 600 % stored before comes back as 600 %). */
 export function normalizeMicBoost(raw: unknown): MicBoostSettings {
   const r = (raw ?? {}) as Partial<MicBoostSettings>;
-  return { auto: typeof r.auto === "boolean" ? r.auto : DEFAULT_MIC_BOOST.auto, gain: clampBoost(r.gain, MOBILE_BOOST_LIMITS.max) };
+  return { auto: typeof r.auto === "boolean" ? r.auto : DEFAULT_MIC_BOOST.auto, gain: clampManualGain(r.gain) };
 }
 
 /**
- * Learns the gain from the speech level of the raw input. It only ever boosts (loud microphones are the browser's job) and
+ * Learns the gain from the speech level of the raw input. For the microphone it only ever boosts (loud microphones are the browser's job;
+ * `min` lets the levelling of others lower too) and
  * only learns while someone speaks, so pauses do not pump the noise up. Speech is told from noise by a floor that follows
  * the quietest level seen: independent of the voice activation gate, which sits behind the boost and would never open for
  * the very microphones this is for.
@@ -60,7 +94,17 @@ export class AutoGain {
   private speechFrames = 0;
   gain: number;
 
-  constructor(initialGain = 1, private readonly limits: MicBoostLimits = DESKTOP_BOOST_LIMITS) { this.gain = clampBoost(initialGain, limits.max); }
+  private target: number;
+  private readonly min: number;
+
+  constructor(initialGain = 1, private readonly limits: MicBoostLimits = DESKTOP_BOOST_LIMITS) {
+    this.min = limits.min ?? 1;
+    this.target = limits.target ?? MIC_BOOST_TARGET;
+    this.gain = this.clamp(initialGain);
+  }
+  private clamp(g: number): number { return Number.isFinite(g) ? Math.min(this.limits.max, Math.max(this.min, g)) : 1; }
+  /** A new speech level to aim for (the levelling's slider); the gain follows while someone speaks. */
+  setTarget(target: number): void { if (Number.isFinite(target) && target > 0) this.target = target; }
 
   /** @param level RMS 0..1 of the raw input over the last frame (50 ms)  @returns the gain to apply now */
   update(level: number): number {
@@ -72,7 +116,7 @@ export class AutoGain {
     this.speech = this.speechFrames === 0 ? level : this.speech + (level - this.speech) * (level > this.speech ? 0.2 : 0.02);
     this.speechFrames++;
     if (this.speechFrames < 10) return this.gain; // half a second of speech before the first judgement (a cough is no speech level)
-    const wanted = clampBoost(MIC_BOOST_TARGET / Math.max(this.speech, 1e-4), this.limits.max);
+    const wanted = this.clamp(this.target / Math.max(this.speech, 1e-4));
     // Towards the wanted gain in about a second of speech; down faster than up (too loud is worse than too quiet).
     this.gain += (wanted - this.gain) * (wanted < this.gain ? 0.15 : 0.05);
     return this.gain;

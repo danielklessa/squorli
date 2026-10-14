@@ -19,6 +19,8 @@ import { Icon } from "./Icon";
 import { t } from "./i18n";
 import { platform } from "./platform";
 import { useVoiceSettings } from "./voice/useVoiceSettings";
+import { saveVoiceSettings, loadVoiceSettings } from "./voice/settings";
+import { LEVEL_SLIDER_MAX, LEVEL_SLIDER_MIN, levelToSlider, sliderToLevel } from "./voice/levelMatch";
 import { feedId, videoActive } from "./voice/videoWatch";
 import { moveTile, orderTiles } from "./tileOrder";
 
@@ -119,7 +121,11 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   const hiddenStreams = !mayView && participants.some((p) => !p.isLocal && (p.cameraOn || p.screenOn));
 
   // Others win over yourself; whether you are featured at all while only you speak is the user's choice (settings > view).
-  const { featureSelfInSpeakerView, mode } = useVoiceSettings();
+  const { featureSelfInSpeakerView, mode, levelMatch } = useVoiceSettings();
+  const levelPct = levelToSlider(levelMatch.level);
+  // The bar's width decides where the levelling's slider goes: beside its button, or above it where the centred buttons need the room.
+  const [barRef, barNarrow] = useNarrow(LEVEL_SLIDER_INLINE_MIN);
+  const setLevelMatch = (patch: Partial<typeof levelMatch>) => { const s = loadVoiceSettings(); saveVoiceSettings({ ...s, levelMatch: { ...s.levelMatch, ...patch } }); };
   // A phone or tablet with push-to-talk: a hold button above the bar instead of a key (PushToTalkButton.tsx), and the mute
   // button leaves the bar (user's wish, 22 September 2026), except while muted: the dock is out of sight on a phone, so
   // the stage must still offer the way back.
@@ -334,7 +340,7 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
         onClose={() => setMenu(null)} onError={(text) => { if (text) client.setNotice(text); }} />}
 
       {touchPtt && <div className="stage-ptt"><PushToTalkButton client={client} disabled={voice.afkRoom || voice.micMuted} /></div>}
-      <footer className="stage-bar">
+      <footer className={`stage-bar${barNarrow ? " narrow" : ""}`} ref={barRef}>
         {(visualActive || visualFading) && <RadioVisualizer player={radio} active={visualActive} calm={reducedMotion} onFaded={() => setVisualFading(false)} />}
         {offerVisual && <button className={`bar-btn radio-visual-toggle ${radioState.visual ? "on" : ""}`} aria-pressed={radioState.visual} title={t(radioState.visual ? "stage.visualOff" : "stage.visualOn")} aria-label={t(radioState.visual ? "stage.visualOff" : "stage.visualOn")}
           onClick={() => radio.setVisual(!radioState.visual)}><Icon name="audio-waveform" /></button>}
@@ -349,9 +355,46 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
         {VoiceClient.supportsScreenShare() && <button className={`bar-btn ${voice.screenOn ? "on" : ""}`} disabled={!canStream} title={voice.afkRoom ? t("dock.afkChannel") : canStream ? (voice.screenOn ? t("stage.stopShare") : isChromium() ? t("stage.shareWithAudio") : t("stage.shareNoAudio")) : t("stage.noStreamPermission")}
           onClick={() => client.setScreenShareEnabled(!voice.screenOn)}><Icon name={voice.screenOn ? "screen-share-off" : "screen-share"} /></button>}
         <button className={`bar-btn leave${locked ? " locked" : ""}`} aria-disabled={locked} title={locked ? t("voice.stickyNotice") : t("voice.leave")} onClick={() => onLeave()}><Icon name={locked ? "lock" : "phone"} rotate={locked ? 0 : 135} /></button>
+        {/* Levelling the others (voice/levelMatch.ts, 14 October 2026): its button (fold-vertical, the user's pick) at the bar's right end, mirroring the equalizer's
+            button on the left; while on, the common level's slider beside it (above it where the bar is narrow). */}
+        {!voice.afkRoom && (
+          <div className={`level-match${levelMatch.on ? " on" : ""}`}>
+            {levelMatch.on && (
+              <label className="level-match-slider" title={t("stage.levelMatchLevel", { pct: levelPct })}>
+                <span className="level-match-value">{levelPct} %</span>
+                <input type="range" min={LEVEL_SLIDER_MIN} max={LEVEL_SLIDER_MAX} step={1} list="level-match-unity" value={levelPct}
+                  aria-label={t("stage.levelMatchLevel", { pct: levelPct })} aria-valuetext={`${levelPct} %`}
+                  onChange={(e) => setLevelMatch({ level: sliderToLevel(Number(e.target.value)) })} />
+                <datalist id="level-match-unity"><option value={100} /></datalist>
+              </label>
+            )}
+            <button className={`bar-btn level-match-toggle ${levelMatch.on ? "on" : ""}`} aria-pressed={levelMatch.on}
+              title={t(levelMatch.on ? "stage.levelMatchOff" : "stage.levelMatchOn")} aria-label={t(levelMatch.on ? "stage.levelMatchOff" : "stage.levelMatchOn")}
+              onClick={() => setLevelMatch({ on: !levelMatch.on })}><Icon name="fold-vertical" /></button>
+          </div>
+        )}
       </footer>
     </section>
   );
+}
+
+/** Below this bar width (px) the levelling's slider floats above its button (styles.css `.stage-bar.narrow`). */
+const LEVEL_SLIDER_INLINE_MIN = 736;
+
+/** Whether an element is narrower than `min` px, followed with the ResizeObserver of the window it lives in (the stage can have its own). */
+function useNarrow(min: number): [(node: HTMLElement | null) => void, boolean] {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  const ref = useCallback((node: HTMLElement | null) => setEl(node), []);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    if (!el) return;
+    const measure = () => setNarrow(el.clientWidth < min);
+    measure();
+    const ro = new (el.ownerDocument.defaultView ?? window).ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el, min]);
+  return [ref, narrow];
 }
 
 /** Computes columns and tile width (16:9) so n tiles fit into the container without scrolling. */

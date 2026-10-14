@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AutoGain, DESKTOP_BOOST_LIMITS, MIC_BOOST_MAX, MIC_BOOST_TARGET, MOBILE_BOOST_LIMITS, SOFT_CLIP_RANGE, boostLimits, normalizeMicBoost, softClip, softClipCurve } from "./micBoost";
+import { AutoGain, DESKTOP_BOOST_LIMITS, MIC_BOOST_MAX, MIC_BOOST_TARGET, MIC_GAIN_MAX, MIC_GAIN_MIN, MOBILE_BOOST_LIMITS, SLIDER_MAX, SLIDER_MIN, SOFT_CLIP_RANGE, UNITY_MARK, boostLimits, clampManualGain, gainToSlider, normalizeMicBoost, sliderToGain, softClip, softClipCurve } from "./micBoost";
 
 /** `seconds` of frames (50 ms each): speech at `speech` with short pauses at `noise`, like talking. */
 function talk(g: AutoGain, seconds: number, speech: number, noise: number): number {
@@ -85,7 +85,35 @@ describe("normalizeMicBoost", () => {
   it("defaults to off and repairs rubbish", () => {
     expect(normalizeMicBoost(undefined)).toEqual({ auto: false, gain: 1 });
     expect(normalizeMicBoost({ auto: false, gain: 3 })).toEqual({ auto: false, gain: 3 });
-    // Stored settings keep what a phone may set; the pipeline clamps to the limits of the device it runs on.
-    expect(normalizeMicBoost({ auto: "yes", gain: 400 })).toEqual({ auto: false, gain: MOBILE_BOOST_LIMITS.max });
+    // The level set by hand runs from 1 % to 600 % on every device; more stored before comes back as 600 %.
+    expect(normalizeMicBoost({ auto: "yes", gain: 400 })).toEqual({ auto: false, gain: MIC_GAIN_MAX });
+    expect(normalizeMicBoost({ auto: false, gain: 12 })).toEqual({ auto: false, gain: 6 });
+    expect(normalizeMicBoost({ auto: false, gain: 0.25 })).toEqual({ auto: false, gain: 0.25 });
+    expect(normalizeMicBoost({ auto: false, gain: 0 })).toEqual({ auto: false, gain: MIC_GAIN_MIN });
+  });
+});
+
+describe("the level set by hand", () => {
+  it("lowers below 100 % down to 1 % and raises up to 600 %", () => {
+    expect(clampManualGain(0.5)).toBe(0.5);
+    expect(clampManualGain(0.001)).toBe(0.01);
+    expect(clampManualGain(9)).toBe(6);
+    expect(clampManualGain("x")).toBe(1);
+  });
+  it("the slider is linear in whole percent from 1 to 600, 100 % at about a sixth of the way", () => {
+    expect([SLIDER_MIN, SLIDER_MAX]).toEqual([1, 600]);
+    expect(sliderToGain(SLIDER_MIN)).toBe(0.01);
+    expect(sliderToGain(SLIDER_MAX)).toBe(6);
+    expect(sliderToGain(250)).toBe(2.5);
+    expect(gainToSlider(0.25)).toBe(25);
+    expect(gainToSlider(9)).toBe(600);
+    expect(UNITY_MARK).toBeCloseTo(99 / 599, 9);
+  });
+  it("every step is one percent point, 100 % sticks near it, and a position maps back to itself", () => {
+    expect(sliderToGain(103)).toBe(1);
+    expect(sliderToGain(97)).toBe(1);
+    expect(sliderToGain(104)).toBe(1.04);
+    expect(sliderToGain(0)).toBe(0.01);
+    for (let pos = SLIDER_MIN; pos <= SLIDER_MAX; pos++) if (Math.abs(pos - 100) > 3) expect(gainToSlider(sliderToGain(pos))).toBe(pos);
   });
 });

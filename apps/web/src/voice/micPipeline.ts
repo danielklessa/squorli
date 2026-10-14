@@ -1,6 +1,6 @@
 import { VoiceGate, contextNeedsResume, rmsLevel } from "./gate";
 import { OneSidedDetector, type SideVerdict } from "./oneSided";
-import { AutoGain, DEFAULT_MIC_BOOST, DESKTOP_BOOST_LIMITS, MOBILE_BOOST_LIMITS, SOFT_CLIP_RANGE, clampBoost, softClipCurve, type MicBoostLimits, type MicBoostSettings } from "./micBoost";
+import { AutoGain, DEFAULT_MIC_BOOST, DESKTOP_BOOST_LIMITS, MOBILE_BOOST_LIMITS, SOFT_CLIP_RANGE, clampBoost, clampManualGain, softClipCurve, type MicBoostLimits, type MicBoostSettings } from "./micBoost";
 
 /**
  * Microphone pipeline: getUserMedia -> AudioContext -> [stereo only: one-sided input onto both channels, oneSided.ts] -> boost (gain + clipping guard, micBoost.ts) -> [analyser for the level]
@@ -218,7 +218,7 @@ export class MicPipeline {
   }
 
   /** Boost settings (Einstellungen > Sprache und Audio); takes effect at once. */
-  setBoost(b: MicBoostSettings) { this.boost = { auto: b.auto, gain: clampBoost(b.gain, this.limits.max) }; this.applyBoost(true); }
+  setBoost(b: MicBoostSettings) { this.boost = { auto: b.auto, gain: clampManualGain(b.gain) }; this.applyBoost(true); }
 
   /** Sets the boost's gain: learned (automatic) or by hand. The node gets gain / SOFT_CLIP_RANGE, see micBoost.ts. */
   private applyBoost(immediately = false) {

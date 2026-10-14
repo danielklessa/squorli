@@ -22,7 +22,8 @@ import {
 } from "livekit-client";
 import { BackgroundProcessor, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
 import { VoiceGate, contextNeedsResume, rmsLevel } from "./gate";
-import { boostLimits, type MicBoostSettings } from "./micBoost";
+import { AutoGain, SOFT_CLIP_RANGE, boostLimits, softClipCurve, type MicBoostSettings } from "./micBoost";
+import { DEFAULT_LEVEL_MATCH, normalizeLevelMatch, playbackGain, remoteLevelLimits, targetOf, type LevelMatchSettings } from "./levelMatch";
 import { MicPipeline, openMic, type GateMode, type OpenedMic } from "./micPipeline";
 import { micPermissionState, micRefusal } from "./micPermission";
 import { isCameraBusy, retryCameraBusy } from "./cameraRetry";
@@ -189,6 +190,13 @@ export function explainScreenAudio(state: Pick<VoiceState, "screenOn" | "screenA
   return isChromium() ? t("voice.screenNoAudioChromium") : t("voice.screenNoAudioOther");
 }
 
+/**
+ * Per remote microphone: the level meter (speaker highlight), the speaker's levelling (`leveler`, learns all the time so switching
+ * the levelling on is no jump) and, while it plays through Web Audio (above 100 % or levelled), its route: source -> `boost`
+ * (gain / SOFT_CLIP_RANGE) -> `clip` (the clipping guard of micBoost.ts) -> the context's output.
+ */
+type RemoteMeter = { source: MediaStreamAudioSourceNode; analyser: AnalyserNode; gate: VoiceGate; samples: Float32Array<ArrayBuffer>; leveler: AutoGain; boost: GainNode | null; clip: WaveShaperNode | null };
+
 export class VoiceClient {
   private room: Room | null = null;
   private mic: MicPipeline | null = null;
@@ -239,7 +247,11 @@ export class VoiceClient {
   /** The microphone asked for inside the user's gesture, waiting for join() to take it over (prepareMic()). */
   private preMic: { deviceId: string | null; stereo: boolean; opened: Promise<OpenedMic> } | null = null;
   /** Level meter per remote microphone track: speaker highlight without the delay of LiveKit's report (~0.5-1 s). */
-  private readonly meters = new Map<string, { source: MediaStreamAudioSourceNode; analyser: AnalyserNode; gate: VoiceGate; samples: Float32Array<ArrayBuffer>; boost: GainNode | null }>();
+  private readonly meters = new Map<string, RemoteMeter>();
+  /** Levelling the others (levelMatch.ts): off by default, per device; App.tsx hands it over from the voice settings. */
+  private levelMatch: LevelMatchSettings = { ...DEFAULT_LEVEL_MATCH };
+  /** The clipping guard's curve (micBoost.ts), made once and shared by every speaker's route. */
+  private clipCurve: Float32Array<ArrayBuffer> | null = null;
   private meterTimer: number | null = null;
   /** Cues for joining/leaving (per device, from the voice settings). */
   private sounds: SoundSettings = { ...DEFAULT_SOUND_SETTINGS };
@@ -406,6 +418,24 @@ export class VoiceClient {
   private log(text: string) {
     const line = `${new Date().toLocaleTimeString()} ${text}`;
     this.patch({ events: [...this.state.events.slice(-(EVENTS_MAX - 1)), line] });
+  }
+
+  /**
+   * Levelling the others on or off and its common level (levelMatch.ts; App.tsx from the voice settings). Every speaker's
+   * leveller aims at the new level at once; the per-person volume keeps multiplying on top.
+   */
+  setLevelMatch(next: LevelMatchSettings): void {
+    const s = normalizeLevelMatch(next);
+    if (s.on === this.levelMatch.on && s.level === this.levelMatch.level) return;
+    this.levelMatch = s;
+    for (const m of this.meters.values()) m.leveler.setTarget(targetOf(s.level));
+    this.applyUserVolumes();
+  }
+  /** Levelling the others is on (the per-person volume then works on top of the common level). */
+  isLevelMatching(): boolean { return this.levelMatch.on; }
+  /** A speaker's levelled gain right now (debug view); null without a meter. */
+  levelGain(identity: string): number | null {
+    return this.meters.get(identity)?.leveler.gain ?? null;
   }
 
   /** Take over the cue settings (settings dialog and join); also routes the cues to the chosen output device. */
@@ -994,29 +1024,47 @@ export class VoiceClient {
   }
 
   /**
-   * Up to 100 % the <audio> element's volume does it. An element cannot go above 1, so louder than that runs through a
-   * GainNode on the meter's source into the shared AudioContext (which follows the voice output device where the browser
-   * can do that) while the element stays attached but silent; Chromium only feeds a remote stream into Web Audio
-   * while an element plays it. Without a running context the boost would be silence, so it falls back to 100 %.
+   * Up to 100 % the <audio> element's volume does it. An element cannot go above 1, and the levelling needs a gain per speaker
+   * that follows their speech, so louder than 100 % and every levelled speaker run through Web Audio: the meter's source ->
+   * gain -> the clipping guard -> the shared AudioContext (which follows the voice output device where the browser can do
+   * that), while the element stays attached but silent; Chromium only feeds a remote stream into Web Audio while an element
+   * plays it. Without a running context that route would be silence, so it falls back to the element (at most 100 %, not levelled).
    */
   private applyUserVolume(remote: RemoteTrack, identity: string): void {
     if (remote.source === Track.Source.ScreenShareAudio) return;
     const track = remote as RemoteAudioTrack; // remoteAudio only ever holds audio tracks (attachRemote)
-    const volume = this.blocked.has(this.volumeKey(identity)) ? 0 : clampUserVolume(this.userVolumes[this.volumeKey(identity)]);
+    const volume = this.userVolumeOf(identity);
     const meter = this.meters.get(identity);
     const ctx = this.audioCtx;
-    if (volume > 1 && meter && ctx?.state === "running") {
-      if (!meter.boost) {
+    if ((volume > 1 || this.levelMatch.on) && meter && ctx?.state === "running") {
+      if (!meter.boost || !meter.clip) {
         meter.boost = ctx.createGain();
+        meter.clip = ctx.createWaveShaper();
+        meter.clip.curve = this.clipCurve ??= softClipCurve();
         meter.source.connect(meter.boost);
-        meter.boost.connect(ctx.destination);
+        meter.boost.connect(meter.clip);
+        meter.clip.connect(ctx.destination);
       }
-      meter.boost.gain.value = this.state.deafened ? 0 : Math.min(USER_VOLUME_MAX, volume);
+      meter.boost.gain.value = this.routeGain(meter, volume) / SOFT_CLIP_RANGE;
       track.setVolume(0);
       return;
     }
     track.setVolume(Math.min(1, volume));
-    if (meter?.boost) { meter.source.disconnect(meter.boost); meter.boost.disconnect(); meter.boost = null; }
+    this.dropRoute(meter);
+  }
+  /** How loud this person is played for us (0..USER_VOLUME_MAX): blocked = 0. */
+  private userVolumeOf(identity: string): number {
+    return this.blocked.has(this.volumeKey(identity)) ? 0 : clampUserVolume(this.userVolumes[this.volumeKey(identity)]);
+  }
+  /** The route's gain: deafened = 0, otherwise the levelled gain (while levelling) times the per-person volume. */
+  private routeGain(meter: RemoteMeter, volume: number): number {
+    return this.state.deafened ? 0 : playbackGain(this.levelMatch.on, meter.leveler.gain, Math.min(USER_VOLUME_MAX, volume));
+  }
+  private dropRoute(meter: RemoteMeter | undefined): void {
+    if (!meter?.boost) return;
+    try { meter.source.disconnect(meter.boost); } catch { /* already apart */ }
+    meter.boost.disconnect(); meter.clip?.disconnect();
+    meter.boost = null; meter.clip = null;
   }
 
   /** @param ended a track that is going away right now but is still referenced by its publication (see TrackUnsubscribed) */
@@ -1396,7 +1444,7 @@ export class VoiceClient {
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
       source.connect(analyser); // not to destination: playback keeps running through the <audio> element
-      this.meters.set(identity, { source, analyser, gate: new VoiceGate(REMOTE_SPEAK_THRESHOLD, REMOTE_SPEAK_HANGOVER_MS), samples: new Float32Array(analyser.fftSize), boost: null });
+      this.meters.set(identity, { source, analyser, gate: new VoiceGate(REMOTE_SPEAK_THRESHOLD, REMOTE_SPEAK_HANGOVER_MS), samples: new Float32Array(analyser.fftSize), leveler: new AutoGain(1, remoteLevelLimits(this.levelMatch.level)), boost: null, clip: null });
     } catch (err) {
       this.log(`pegelmesser fuer ${identity.slice(0, 8)} nicht moeglich: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -1404,7 +1452,7 @@ export class VoiceClient {
   private dropMeter(identity: string) {
     const m = this.meters.get(identity);
     if (!m) return;
-    m.source.disconnect(); m.analyser.disconnect(); m.boost?.disconnect();
+    m.source.disconnect(); m.analyser.disconnect(); m.boost?.disconnect(); m.clip?.disconnect();
     this.meters.delete(identity);
   }
   /** Cue for another participant, unless we have only just connected (then they were already there). */
@@ -1421,10 +1469,14 @@ export class VoiceClient {
       if (this.audioCtx?.state !== "running") return; // without a running context LiveKit's report applies (see refreshParticipants)
       const now = performance.now();
       let changed = false;
-      for (const m of this.meters.values()) {
+      for (const [identity, m] of this.meters) {
         m.analyser.getFloatTimeDomainData(m.samples);
+        const level = rmsLevel(m.samples);
         const before = m.gate.isOpen();
-        if (m.gate.update(rmsLevel(m.samples), now) !== before) changed = true;
+        if (m.gate.update(level, now) !== before) changed = true;
+        // The levelling learns from the raw received level all the time; while its route plays, the gain follows smoothly.
+        m.leveler.update(level);
+        if (m.boost && this.audioCtx) m.boost.gain.setTargetAtTime(this.routeGain(m, this.userVolumeOf(identity)) / SOFT_CLIP_RANGE, this.audioCtx.currentTime, 0.1);
       }
       if (changed) this.refreshParticipants();
     }, 50);

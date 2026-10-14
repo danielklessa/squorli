@@ -24,6 +24,7 @@
 .ic-eye::before { content: "\e0ba"; }
 .ic-eye-off::before { content: "\e0bb"; }
 .ic-flag::before { content: "\e0d1"; }
+.ic-fold-vertical::before { content: "\e43c"; }
 .ic-folder::before { content: "\e0d7"; }
 .ic-gamepad-2::before { content: "\e0df"; }
 .ic-gavel::before { content: "\e0e0"; }

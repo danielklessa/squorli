@@ -3,7 +3,7 @@ import { AvatarEditor } from "./AvatarEditor";
 import type { CropRect } from "./avatarCrop";
 import { AvatarImageError, loadAvatarSource, renderAvatar, type AvatarImage } from "./avatarImage";
 import type { DeviceInfo, DirectoryAccount, Me, SessionInfo } from "@squorli/protocol";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ServerApi } from "./api";
 import { BLUR_OPTIONS } from "./CameraPicker";
 import { askConfirm } from "./dialogs";
@@ -21,7 +21,9 @@ import { activity } from "./activity";
 import { platform, type WindowAppearance } from "./platform";
 import { DOWNLOAD_URL, describeUpdate, useUpdateState } from "./appUpdates";
 import { idleDetectionSupported, idleDetectionWanted, setIdleDetection } from "./idleDetection";
-import { boostLimits } from "./voice/micBoost";
+import { chooseDevice } from "./voice/deviceMatch";
+import { LEVEL_SLIDER_MAX, LEVEL_SLIDER_MIN, levelToSlider, sliderToLevel } from "./voice/levelMatch";
+import { SLIDER_MAX, SLIDER_MIN, UNITY_MARK, boostLimits, gainToSlider, sliderToGain } from "./voice/micBoost";
 import { saveVoiceSettings, type VoiceSettings } from "./voice/settings";
 import { VOICE_CUES, type SoundCue, type SoundSettings } from "./voice/sounds";
 import { useVoiceSettings } from "./voice/useVoiceSettings";
@@ -405,7 +407,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 <label className="stack">
                   {t("settings.microphone")}
                   <select value={voice.inputDeviceId ?? settings.inputDeviceId ?? ""}
-                    onChange={(e) => { const id = e.target.value || null; update({ inputDeviceId: id }); void client.setInputDevice(id); }}>
+                    onChange={(e) => { const id = e.target.value || null; update(chooseDevice(settingsRef.current, "input", id, devices.inputs)); void client.setInputDevice(id); }}>
                     <option value="">{t("settings.default")}</option>
                     {devices.inputs.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId}</option>)}
                   </select>
@@ -451,7 +453,11 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 {!settings.micBoost.auto && (
                   <label className="stack">
                     {t("settings.micBoostGain", { pct: Math.round(settings.micBoost.gain * 100) })}
-                    <input type="range" min={1} max={boostLimits(platform.mobile).max} step={0.25} value={settings.micBoost.gain} onChange={(e) => update({ micBoost: { ...settings.micBoost, gain: Number(e.target.value) } })} />
+                    <input type="range" min={SLIDER_MIN} max={SLIDER_MAX} step={1} list="mic-level-unity" value={gainToSlider(settings.micBoost.gain)} aria-valuetext={`${Math.round(settings.micBoost.gain * 100)} %`} onChange={(e) => update({ micBoost: { ...settings.micBoost, gain: sliderToGain(Number(e.target.value)) } })} />
+                    {/* 100 % marked where it sits on the linear slider: the tick is the browser's own (a datalist), so it stands under the thumb's
+                        centre whatever the thumb's size; the label under it is placed by `UNITY_MARK` (micBoost.ts). */}
+                    <datalist id="mic-level-unity"><option value={100} /></datalist>
+                    <span className="level-scale" aria-hidden="true" style={{ "--mark": UNITY_MARK } as CSSProperties}><span>{SLIDER_MIN} %</span><span className="level-scale-mid">100 %</span><span>{SLIDER_MAX} %</span></span>
                   </label>
                 )}
                 <span className="muted small">
@@ -461,16 +467,26 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 <label className="stack">
                   {t("settings.voiceOut")}
                   <select value={settings.outputDeviceId ?? ""} disabled={devices.outputs.length === 0}
-                    onChange={(e) => { const id = e.target.value || null; update({ outputDeviceId: id }); if (id) void client.setOutputDevice(id); void client.setMicTestOutput(id); }}>
+                    onChange={(e) => { const id = e.target.value || null; update(chooseDevice(settingsRef.current, "output", id, devices.outputs)); if (id) void client.setOutputDevice(id); void client.setMicTestOutput(id); }}>
                     <option value="">{t("settings.default")}</option>
                     {devices.outputs.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId}</option>)}
                   </select>
                   {devices.outputs.length === 0 && <span className="muted small">{t("settings.outputChromium")}</span>}
                 </label>
+                <label className="check"><input type="checkbox" checked={settings.levelMatch.on} onChange={(e) => update({ levelMatch: { ...settings.levelMatch, on: e.target.checked } })} /> {t("settings.levelMatch")}</label>
+                {settings.levelMatch.on && (
+                  <label className="stack">
+                    {t("settings.levelMatchLevel", { pct: levelToSlider(settings.levelMatch.level) })}
+                    <input type="range" min={LEVEL_SLIDER_MIN} max={LEVEL_SLIDER_MAX} step={1} list="settings-level-unity" value={levelToSlider(settings.levelMatch.level)} aria-valuetext={`${levelToSlider(settings.levelMatch.level)} %`} onChange={(e) => update({ levelMatch: { ...settings.levelMatch, level: sliderToLevel(Number(e.target.value)) } })} />
+                    <datalist id="settings-level-unity"><option value={100} /></datalist>
+                    <span className="level-scale" aria-hidden="true" style={{ "--mark": 0.5 } as CSSProperties}><span>{LEVEL_SLIDER_MIN} %</span><span className="level-scale-mid">100 %</span><span>{LEVEL_SLIDER_MAX} %</span></span>
+                  </label>
+                )}
+                <span className="muted small">{t("settings.levelMatchHint")}</span>
                 <label className="stack">
                   {t("settings.screenAudio")}
                   <select value={settings.screenOutputDeviceId ?? ""} disabled={devices.outputs.length === 0}
-                    onChange={(e) => { const id = e.target.value || null; update({ screenOutputDeviceId: id }); void client.setScreenOutputDevice(id); }}>
+                    onChange={(e) => { const id = e.target.value || null; update(chooseDevice(settingsRef.current, "screenOutput", id, devices.outputs)); void client.setScreenOutputDevice(id); }}>
                     <option value="">{t("settings.sameAsVoice")}</option>
                     {devices.outputs.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId}</option>)}
                   </select>
@@ -480,7 +496,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                   {t("settings.radioAudio")}
                   {/* Only stored: App.tsx hands the choice to the radio player, which switches a running stream over at once. */}
                   <select value={settings.radioOutputDeviceId ?? ""} disabled={devices.outputs.length === 0}
-                    onChange={(e) => update({ radioOutputDeviceId: e.target.value || null })}>
+                    onChange={(e) => update(chooseDevice(settingsRef.current, "radioOutput", e.target.value || null, devices.outputs))}>
                     <option value="">{t("settings.sameAsVoice")}</option>
                     {devices.outputs.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId}</option>)}
                   </select>
@@ -522,7 +538,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 <label className="stack">
                   {t("settings.tab.camera")}
                   <select value={settings.cameraDeviceId ?? ""}
-                    onChange={(e) => { const id = e.target.value || null; update({ cameraDeviceId: id }); void client.setCameraDevice(id); }}>
+                    onChange={(e) => { const id = e.target.value || null; update(chooseDevice(settingsRef.current, "camera", id, devices.cameras)); void client.setCameraDevice(id); }}>
                     <option value="">{t("settings.default")}</option>
                     {devices.cameras.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId}</option>)}
                   </select>

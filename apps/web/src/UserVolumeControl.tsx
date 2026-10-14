@@ -14,6 +14,7 @@ export function UserVolumeControl({ client, publicKey }: { client: VoiceClient; 
   return (
     <div className="user-volume" role="group" aria-label={label}>
       <span className="muted small">{label}</span>
+      {client.isLevelMatching() && <span className="muted small">{t("volume.userLevelled")}</span>}
       <div className="user-volume-row">
         <input type="range" data-menu-item min={0} max={USER_VOLUME_MAX * 100} step={1} value={percent} title={label} aria-label={label} aria-valuetext={`${percent} %`}
           // Home/End belong to the slider here, not to the menu's item navigation.

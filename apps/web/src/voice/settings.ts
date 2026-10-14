@@ -9,6 +9,8 @@ import type { HotkeyBindings } from "../platform/bridge";
 import { NO_HOTKEYS, normalizeHotkeys } from "../platform/hotkeys";
 import { detectMobile } from "../platform/mobile";
 import { normalizeServerOrder } from "../serverOrder";
+import { normalizeDeviceLabels, type DeviceLabels } from "./deviceMatch";
+import { DEFAULT_LEVEL_MATCH, normalizeLevelMatch, type LevelMatchSettings } from "./levelMatch";
 import { DEFAULT_MIC_BOOST, normalizeMicBoost, type MicBoostSettings } from "./micBoost";
 import { DEFAULT_SOUND_SETTINGS, normalizeSoundSettings, type SoundSettings } from "./sounds";
 
@@ -29,11 +31,21 @@ export type VoiceSettings = {
    */
   micBoost: MicBoostSettings;
   outputDeviceId: string | null;
+  /**
+   * Levelling the others (levelMatch.ts, 14 October 2026): every speaker brought to one common level, the stage bar's fold-vertical
+   * button. Off by default; per device like the per-person volume, NOT part of the directory account (the user's choices).
+   */
+  levelMatch: LevelMatchSettings;
   /** Separate output device for screen share audio (null = same as voice). Chromium only (setSinkId). */
   screenOutputDeviceId: string | null;
   /** Separate output device for the web radio (null = same as voice). Chromium only (setSinkId). */
   radioOutputDeviceId: string | null;
   cameraDeviceId: string | null;
+  /**
+   * The names of the chosen devices (deviceMatch.ts): a device Windows added again has a new id, and is found by its name.
+   * Per device like the ids; always written together with them (`chooseDevice`).
+   */
+  deviceLabels: DeviceLabels;
   /** Send resolution of the camera (simulcast supplies smaller layers automatically). */
   cameraQuality: "360p" | "720p";
   /** Camera background blur: 0 = off, otherwise the radius (10 light, 20 strong). Only in browsers that support it. */
@@ -81,9 +93,11 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   inputDeviceId: null,
   micBoost: { ...DEFAULT_MIC_BOOST },
   outputDeviceId: null,
+  levelMatch: { ...DEFAULT_LEVEL_MATCH },
   screenOutputDeviceId: null,
   radioOutputDeviceId: null,
   cameraDeviceId: null,
+  deviceLabels: {},
   cameraQuality: "720p",
   cameraBlur: 0,
   sounds: { ...DEFAULT_SOUND_SETTINGS },
@@ -112,7 +126,7 @@ function readStored(): VoiceSettings {
     if (!raw) return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS }, detectMobile());
     const stored = JSON.parse(raw) as Partial<VoiceSettings>;
     // `sounds` is nested, so it needs its own merge: settings stored before the cues existed have no such field.
-    return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS, ...stored, sounds: normalizeSoundSettings(stored.sounds), micBoost: normalizeMicBoost(stored.micBoost), games: normalizeGameDisplay(stored.games), serverOrder: normalizeServerOrder(stored.serverOrder), dmLinkPreviews: stored.dmLinkPreviews !== false, hotkeys: normalizeHotkeys(stored.hotkeys) }, detectMobile());
+    return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS, ...stored, sounds: normalizeSoundSettings(stored.sounds), micBoost: normalizeMicBoost(stored.micBoost), levelMatch: normalizeLevelMatch(stored.levelMatch), deviceLabels: normalizeDeviceLabels(stored.deviceLabels), games: normalizeGameDisplay(stored.games), serverOrder: normalizeServerOrder(stored.serverOrder), dmLinkPreviews: stored.dmLinkPreviews !== false, hotkeys: normalizeHotkeys(stored.hotkeys) }, detectMobile());
   } catch {
     return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS }, detectMobile());
   }

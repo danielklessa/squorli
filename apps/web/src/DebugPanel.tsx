@@ -77,7 +77,7 @@ export function DebugPanel({ log, client, voice }: { log: RawLogEntry[]; client:
               <td>{fmtKbps(rates[`s:${v.source}:${v.rid}:${v.codec}`]?.kbps)}, {v.codec}{v.encoder ? ` (${v.encoder})` : ""}, {v.width}×{v.height} @ {Math.round(v.fps)} fps{v.limitation && v.limitation !== "none" ? t("debug.limitedBy", { what: v.limitation }) : ""}</td></tr>
           ))}
           {stats.receivers.map((r) => (
-            <tr key={r.identity}><td>{t("debug.audioFrom", { id: r.identity.slice(0, 8) })}</td><td>{t("debug.audioRecvRow", { rate: fmtKbps(rates[`r:${r.identity}:audio`]?.kbps), recv: r.packetsReceived ?? "?", lost: r.packetsLost ?? 0, jitter: fmtMs(r.jitter) })}</td></tr>
+            <tr key={r.identity}><td>{t("debug.audioFrom", { id: r.identity.slice(0, 8) })}</td><td>{t("debug.audioRecvRow", { rate: fmtKbps(rates[`r:${r.identity}:audio`]?.kbps), recv: r.packetsReceived ?? "?", lost: r.packetsLost ?? 0, jitter: fmtMs(r.jitter) })}{client.isLevelMatching() && client.levelGain(r.identity) !== null ? ` · x${client.levelGain(r.identity)!.toFixed(2)}` : ""}</td></tr>
           ))}
           {stats.videoRecv.map((v) => (
             <tr key={`${v.identity}${v.source}`}><td>{v.source === "screen" ? t("debug.screen") : t("debug.camera")} {t("debug.from")} {v.identity.slice(0, 8)}</td>

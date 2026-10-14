@@ -3,13 +3,15 @@ import { describe, expect, it } from "vitest";
 import { applyAccountSettings, sameAccountSettings, sameHiddenGames, toAccountSettings } from "./accountSettings";
 import { DEFAULT_VOICE_SETTINGS, type VoiceSettings } from "./voice/settings";
 
-const device: VoiceSettings = { ...DEFAULT_VOICE_SETTINGS, inputDeviceId: "mic-1", outputDeviceId: "out-1", screenOutputDeviceId: "out-2", radioOutputDeviceId: "out-3", cameraDeviceId: "cam-1" };
+const device: VoiceSettings = { ...DEFAULT_VOICE_SETTINGS, inputDeviceId: "mic-1", outputDeviceId: "out-1", screenOutputDeviceId: "out-2", radioOutputDeviceId: "out-3", cameraDeviceId: "cam-1", deviceLabels: { output: "Kopfhörer (Arctis)" }, levelMatch: { on: true, level: 0.7 } };
 
 describe("account settings", () => {
   it("leaves the device selection out of the account", () => {
     const s = toAccountSettings(device, "de");
     expect(JSON.stringify(s)).not.toContain("mic-1");
     expect(JSON.stringify(s)).not.toContain("cam-1");
+    expect(JSON.stringify(s)).not.toContain("Arctis");
+    expect(JSON.stringify(s)).not.toContain("levelMatch");
     expect(AccountSettings.parse(s)).toEqual(s);
   });
 
@@ -27,6 +29,8 @@ describe("account settings", () => {
     expect(next.featureSelfInSpeakerView).toBe(false);
     expect(next.sounds.volume).toBe(0.2);
     expect([next.inputDeviceId, next.outputDeviceId, next.screenOutputDeviceId, next.radioOutputDeviceId, next.cameraDeviceId]).toEqual(["mic-1", "out-1", "out-2", "out-3", "cam-1"]);
+    expect(next.deviceLabels).toEqual({ output: "Kopfhörer (Arctis)" });
+    expect(next.levelMatch).toEqual({ on: true, level: 0.7 });
     expect(sameAccountSettings(toAccountSettings(next, "auto"), remote, true)).toBe(true);
   });
 

@@ -40,6 +40,7 @@ import { NoServers } from "./NoServers";
 import { ScreenPicker } from "./ScreenPicker";
 import { quickSharePick, whenListed } from "./screenPick";
 import { TitleBar } from "./TitleBar";
+import { chooseDevice, healDevices } from "./voice/deviceMatch";
 import { loadVoiceSettings, saveVoiceSettings } from "./voice/settings";
 import { loadNotificationSettings, notificationFor, parseNotificationTag } from "./notifications";
 import { useVoiceSettings } from "./voice/useVoiceSettings";
@@ -262,10 +263,10 @@ export function App() {
 
   const pickCamera = useCallback(async (deviceId: string, blur: number) => {
     setCameraPick(null);
-    const next = { ...voiceSettings, cameraDeviceId: deviceId, cameraBlur: blur };
+    const next = { ...voiceSettings, ...chooseDevice(voiceSettings, "camera", deviceId, cameraPick ?? []), cameraBlur: blur };
     saveVoiceSettings(next);
     await client.setCameraEnabled(true, deviceId, next.cameraQuality, next.cameraBlur);
-  }, [client, voiceSettings]);
+  }, [client, voiceSettings, cameraPick]);
 
   useEffect(() => store.subscribe(setState), [store]);
   useEffect(() => client.subscribe(setVoice), [client]);
@@ -284,6 +285,30 @@ export function App() {
   // Cue settings reach the voice client from here, whether the user changed them or the directory account supplied them.
   useEffect(() => client.setSoundSettings(voiceSettings.sounds), [client, voiceSettings.sounds]);
   useEffect(() => client.setCueOutput(voiceSettings.outputDeviceId), [client, voiceSettings.outputDeviceId]);
+  // Levelling the others (voice/levelMatch.ts): the stage bar's button and the settings dialog write it, the voice client plays it.
+  useEffect(() => client.setLevelMatch(voiceSettings.levelMatch), [client, voiceSettings.levelMatch]);
+  // A chosen device that Windows added again has a new id: find it by its name (voice/deviceMatch.ts), at start, when devices
+  // come and go and when the voice status changes (a browser lists names only once the microphone was allowed). In a channel
+  // the voice client follows at once; the radio's and the chat player's sinks and the cues follow the settings anyway.
+  const inVoice = voice.status !== "disconnected";
+  useEffect(() => {
+    if (!navigator.mediaDevices) return undefined;
+    let stale = false;
+    const heal = () => void VoiceClient.listDevices().then((lists) => {
+      if (stale) return;
+      const current = loadVoiceSettings();
+      const patch = healDevices(current, lists);
+      if (!patch) return;
+      saveVoiceSettings({ ...current, ...patch });
+      if (patch.inputDeviceId !== undefined) void client.setInputDevice(patch.inputDeviceId);
+      if (patch.outputDeviceId && inVoice) void client.setOutputDevice(patch.outputDeviceId);
+      if (patch.screenOutputDeviceId !== undefined) void client.setScreenOutputDevice(patch.screenOutputDeviceId);
+      if (patch.cameraDeviceId !== undefined) void client.setCameraDevice(patch.cameraDeviceId);
+    }).catch(() => {});
+    heal();
+    navigator.mediaDevices.addEventListener("devicechange", heal);
+    return () => { stale = true; navigator.mediaDevices.removeEventListener("devicechange", heal); };
+  }, [client, inVoice, voice.status]);
   // A new direct message or a mention the user does not see right now (store.ts `incoming`): the cue, in every client, and a
   // notification of the operating system where this device allows it (docs/features/notifications.md).
   useEffect(() => {

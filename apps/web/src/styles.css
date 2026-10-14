@@ -103,6 +103,14 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--b
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--brand); outline-offset: 0; }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
 input[type="range"] { padding: 0; background: transparent; accent-color: var(--brand); }
+/* The microphone level's scale under its slider: 1 % at the left, 600 % at the right, "100 %" under the browser's own tick for 100 %
+   (a datalist, exact whatever the thumb's size). The label follows the thumb's centre from half a thumb in to half a thumb before
+   the end (`--mark` = 0..1 from micBoost.ts, `--thumb` about Chromium's thumb; a pixel off does not show on a text). */
+.level-scale { --thumb: 13px; position: relative; display: block; height: 1.1rem; margin-top: calc(var(--u) * -1); font-size: 0.75rem; color: var(--muted); }
+.level-scale > span { position: absolute; bottom: 0; }
+.level-scale > span:first-child { left: 0; }
+.level-scale > span:last-child { right: 0; }
+.level-scale-mid { left: calc(var(--thumb) / 2 + var(--mark, 0.5) * (100% - var(--thumb))); transform: translateX(-50%); color: var(--text); }
 input[type="color"] { padding: 0; width: 2.2rem; height: 2.2rem; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 textarea { resize: none; }
@@ -742,6 +750,21 @@ button.dock-stage:hover { background: var(--sel); }
 .bar-btn.radio-visual-toggle.on { background: var(--bg4); color: var(--brand); }
 .bar-btn.radio-visual-toggle:hover { background: var(--sel); color: var(--text); }
 @media (max-width: 700px) { .bar-btn.radio-visual-toggle { position: static; transform: none; order: -1; align-self: center; } }
+/* Levelling the others (VoiceStage.tsx, voice/levelMatch.ts, 14 October 2026): its button (fold-vertical) at the bar's right end, the mirror of the
+   equalizer's button; while on, the common level's slider to its left. Where the bar is narrow (a stage between wide side columns,
+   a phone; `.narrow`, measured by VoiceStage.tsx) the slider floats above the button instead, so it never runs into the centred
+   buttons. No container query: its containment would make the bar a stacking context and lift the equalizer over the tiles. */
+.level-match { position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 0.5rem; }
+.bar-btn.level-match-toggle { width: 2.5rem; height: 2.5rem; font-size: 1.1rem; color: var(--muted); }
+/* Switched on: a filled circle like the camera's and the screen share's buttons, but in Squorli Blue (user's wish); the icon in
+   Night, because white on Squorli Blue measures 2.84:1, below the 3:1 a control needs, Night 6.49:1. */
+.bar-btn.level-match-toggle.on { background: var(--brand); color: var(--on-light); }
+.bar-btn.level-match-toggle:not(.on):hover { background: var(--sel); color: var(--text); }
+.level-match-slider { display: flex; align-items: center; gap: 0.4rem; }
+.level-match-slider input { width: 7rem; }
+.level-match-value { min-width: 3rem; text-align: right; font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stage-bar.narrow .level-match-slider { position: absolute; right: 0; bottom: calc(100% + 0.9rem); padding: 0.4rem 0.6rem; background: var(--bg3); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+@media (max-width: 700px) { .level-match { position: static; transform: none; order: 99; align-self: center; } .level-match-slider { right: 0.6rem; } }
 /* Hang up: handset (rotated by 135 degrees, see icon rotate) on coral */
 .icon.hangup { background: var(--danger); color: var(--on-light); border-radius: 50%; width: 1.7rem; height: 1.7rem; padding: 0; }
 .icon.hangup:hover { background: #ff9aa8; color: var(--on-light); }
