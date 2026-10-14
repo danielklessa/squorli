@@ -1114,6 +1114,7 @@ export const de = {
   "stage.grid": "Kacheln",
   "stage.visualOff": "Equalizer ausblenden",
   "stage.visualOn": "Equalizer einblenden",
+  "stage.visualFrontSwitch": "Equalizer über den Kacheln",
   "stage.audioBlocked": "Ton ist blockiert, bis du einmal klickst.",
   "stage.empty": "Noch niemand im Kanal.",
   "stage.pttHold": "Zum Sprechen halten",

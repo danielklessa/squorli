@@ -28,20 +28,20 @@ export function NotificationSettings() {
     <>
       <h3>{t("notify.head")}</h3>
       <label className="check">
-        <input type="checkbox" checked={active} disabled={!usable} onChange={(e) => void toggle(e.target.checked)} />
+        <input type="checkbox" className="switch" role="switch" checked={active} disabled={!usable} onChange={(e) => void toggle(e.target.checked)} />
         {t("notify.on")}
       </label>
       <label className="check">
-        <input type="checkbox" checked={settings.preview} disabled={!active} onChange={(e) => change({ ...settings, preview: e.target.checked })} />
+        <input type="checkbox" className="switch" role="switch" checked={settings.preview} disabled={!active} onChange={(e) => change({ ...settings, preview: e.target.checked })} />
         {t("notify.preview")}
       </label>
       <label className="check">
-        <input type="checkbox" checked={settings.dmPreview} disabled={!active} onChange={(e) => change({ ...settings, dmPreview: e.target.checked })} />
+        <input type="checkbox" className="switch" role="switch" checked={settings.dmPreview} disabled={!active} onChange={(e) => change({ ...settings, dmPreview: e.target.checked })} />
         {t("notify.previewDm")}
       </label>
       {platform.notifications.knowsFullscreen && (
         <label className="check">
-          <input type="checkbox" checked={settings.fullscreen} disabled={!active} onChange={(e) => change({ ...settings, fullscreen: e.target.checked })} />
+          <input type="checkbox" className="switch" role="switch" checked={settings.fullscreen} disabled={!active} onChange={(e) => change({ ...settings, fullscreen: e.target.checked })} />
           {t("notify.fullscreen")}
         </label>
       )}

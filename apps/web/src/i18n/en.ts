@@ -1113,6 +1113,7 @@ export const en: Messages = {
   "stage.grid": "Tiles",
   "stage.visualOff": "Hide the equalizer",
   "stage.visualOn": "Show the equalizer",
+  "stage.visualFrontSwitch": "Equalizer over the tiles",
   "stage.audioBlocked": "Sound is blocked until you click once.",
   "stage.empty": "Nobody in the channel yet.",
   "stage.pttHold": "Hold to talk",

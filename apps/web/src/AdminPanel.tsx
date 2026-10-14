@@ -90,13 +90,13 @@ function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; s
       <label className="stack">{t("admin.serverName")}<input value={name} maxLength={64} onChange={(e) => setName(e.target.value)} /></label>
       <SaveButton disabled={name.trim() === server.settings.name || !name.trim()} onSave={() => save(() => api.updateSettings({ name: name.trim() }))} />
       <label className="check">
-        <input type="checkbox" checked={server.settings.openJoin} onChange={(e) => run(() => api.updateSettings({ openJoin: e.target.checked }))} />
+        <input type="checkbox" className="switch" role="switch" checked={server.settings.openJoin} onChange={(e) => run(() => api.updateSettings({ openJoin: e.target.checked }))} />
         {t("admin.openJoin")}
       </label>
       {/* Server accounts (docs/features/local-accounts.md): a server from before them does not send the field. */}
       {server.settings.localAccounts !== undefined && <>
         <label className="check">
-          <input type="checkbox" checked={server.settings.localAccounts} disabled={server.settings.localAccountsLocked === true} onChange={(e) => run(() => api.updateSettings({ localAccounts: e.target.checked }))} />
+          <input type="checkbox" className="switch" role="switch" checked={server.settings.localAccounts} disabled={server.settings.localAccountsLocked === true} onChange={(e) => run(() => api.updateSettings({ localAccounts: e.target.checked }))} />
           {t("admin.localAccounts")}
         </label>
         <span className="muted small">{t(!directoryUrl ? "admin.localAccountsNoDirectory" : server.settings.localAccountsLocked ? "admin.localAccountsLocked" : "admin.localAccountsHint")}</span>
@@ -104,7 +104,7 @@ function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; s
       {/* Suspended directory accounts (docs/features/reports.md): a server from before it, or one without a directory, does not send the field. */}
       {server.settings.refuseSuspended !== undefined && <>
         <label className="check">
-          <input type="checkbox" checked={server.settings.refuseSuspended} onChange={(e) => run(() => api.updateSettings({ refuseSuspended: e.target.checked }))} />
+          <input type="checkbox" className="switch" role="switch" checked={server.settings.refuseSuspended} onChange={(e) => run(() => api.updateSettings({ refuseSuspended: e.target.checked }))} />
           {t("admin.refuseSuspended")}
         </label>
         <span className="muted small">{t("admin.refuseSuspendedHint")}</span>
@@ -120,7 +120,7 @@ function ServerTab({ api, server, directoryUrl, run, save }: { api: ServerApi; s
       </>}
       <h3>{t("admin.directoryHeading")}</h3>
       <label className="check">
-        <input type="checkbox" checked={server.settings.listed} disabled={!directoryUrl} onChange={(e) => run(() => api.updateSettings({ listed: e.target.checked }))} />
+        <input type="checkbox" className="switch" role="switch" checked={server.settings.listed} disabled={!directoryUrl} onChange={(e) => run(() => api.updateSettings({ listed: e.target.checked }))} />
         {t("admin.listed")}
       </label>
       <label className="stack">{t("admin.description")}<textarea value={description} maxLength={200} rows={3} disabled={!directoryUrl} placeholder={t("admin.descriptionPlaceholder")} onChange={(e) => setDescription(e.target.value)} /></label>

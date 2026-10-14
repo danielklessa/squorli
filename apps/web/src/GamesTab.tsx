@@ -65,7 +65,7 @@ export function GamesTab({
       <h3>{t("games.head")}</h3>
       <label className="check">
         <input
-          type="checkbox"
+          type="checkbox" className="switch" role="switch"
           checked={display.enabled}
           onChange={(e) => setDisplay({ enabled: e.target.checked })}
         />
@@ -77,7 +77,7 @@ export function GamesTab({
         <>
           <label className="check">
             <input
-              type="checkbox"
+              type="checkbox" className="switch" role="switch"
               checked={display.servers}
               onChange={(e) => setDisplay({ servers: e.target.checked })}
             />

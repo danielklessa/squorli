@@ -158,20 +158,20 @@ function VoiceTab({ api, server, channel, run }: { api: ServerApi; server: Serve
     <div className="stack chan-tab">
       <fieldset className="perm-group">
         <legend>{t("chan.sticky")}</legend>
-        <label className="check"><input type="checkbox" checked={d.sticky} disabled={isAfk} onChange={(e) => setD({ ...d, sticky: e.target.checked })} />{t("chan.stickyOn")}</label>
+        <label className="check"><input type="checkbox" className="switch" role="switch" checked={d.sticky} disabled={isAfk} onChange={(e) => setD({ ...d, sticky: e.target.checked })} />{t("chan.stickyOn")}</label>
         <p className="muted small">{isAfk ? t("chan.err.afk_channel_sticky") : t("chan.stickyHint")}</p>
-        <label className="check"><input type="checkbox" checked={d.stickyPersist} disabled={!d.sticky} onChange={(e) => setD({ ...d, stickyPersist: e.target.checked })} />{t("chan.stickyPersist")}</label>
-        <label className="check"><input type="checkbox" checked={d.stickyHideVoice} disabled={!d.sticky} onChange={(e) => setD({ ...d, stickyHideVoice: e.target.checked })} />{t("chan.stickyHideVoice")}</label>
+        <label className="check"><input type="checkbox" className="switch" role="switch" checked={d.stickyPersist} disabled={!d.sticky} onChange={(e) => setD({ ...d, stickyPersist: e.target.checked })} />{t("chan.stickyPersist")}</label>
+        <label className="check"><input type="checkbox" className="switch" role="switch" checked={d.stickyHideVoice} disabled={!d.sticky} onChange={(e) => setD({ ...d, stickyHideVoice: e.target.checked })} />{t("chan.stickyHideVoice")}</label>
       </fieldset>
       <label>{t("chan.userLimit")}<select value={d.userLimit ?? ""} onChange={(e) => setD({ ...d, userLimit: e.target.value ? Number(e.target.value) : null })}>
         <option value="">{t("chan.userLimitNone")}</option>{[2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 99].map((n) => <option key={n} value={n}>{n}</option>)}
       </select><span className="muted small">{t("chan.userLimitHint")}</span></label>
       <label>{t("admin.audioQuality")}<select value={d.audioBitrate} title={t("admin.bitrateHint")} onChange={(e) => setD({ ...d, audioBitrate: Number(e.target.value) })}>{AUDIO_BITRATES.map((b) => <option key={b} value={b}>{b} kbit/s</option>)}</select><span className="muted small">{t("admin.bitrateHint")}</span></label>
-      <label className="check" title={t("admin.stereoHint")}><input type="checkbox" checked={d.audioStereo} onChange={(e) => setD({ ...d, audioStereo: e.target.checked })} />{t("admin.stereo")}</label>
-      {server.radioStations !== undefined && <label className="check"><input type="checkbox" checked={d.allowRadio} onChange={(e) => setD({ ...d, allowRadio: e.target.checked })} />{t("chan.allowRadio")}</label>}
-      <label className="check"><input type="checkbox" checked={d.allowVideo} onChange={(e) => setD({ ...d, allowVideo: e.target.checked })} />{t("chan.allowVideo")}</label>
+      <label className="check" title={t("admin.stereoHint")}><input type="checkbox" className="switch" role="switch" checked={d.audioStereo} onChange={(e) => setD({ ...d, audioStereo: e.target.checked })} />{t("admin.stereo")}</label>
+      {server.radioStations !== undefined && <label className="check"><input type="checkbox" className="switch" role="switch" checked={d.allowRadio} onChange={(e) => setD({ ...d, allowRadio: e.target.checked })} />{t("chan.allowRadio")}</label>}
+      <label className="check"><input type="checkbox" className="switch" role="switch" checked={d.allowVideo} onChange={(e) => setD({ ...d, allowVideo: e.target.checked })} />{t("chan.allowVideo")}</label>
       {/* Vote kick (docs/features/votekick.md): the admin's switch, on by default. */}
-      <label className="check"><input type="checkbox" checked={d.allowVoteKick} onChange={(e) => setD({ ...d, allowVoteKick: e.target.checked })} />{t("chan.allowVoteKick")}</label>
+      <label className="check"><input type="checkbox" className="switch" role="switch" checked={d.allowVoteKick} onChange={(e) => setD({ ...d, allowVoteKick: e.target.checked })} />{t("chan.allowVoteKick")}</label>
       <p className="muted small">{t("chan.allowVoteKickHint")}</p>
       <SaveRow dirty={dirty} saving={saving} saved={saved} onSave={onSave} />
     </div>
@@ -349,8 +349,8 @@ function PermissionsTab({ api, server, target, kind, myUserId, myPerms, category
       <div className="chan-perm-list">
         {defaultRole && (
           <div className="stack chan-shortcuts">
-            <label className="check" title={t("chan.privateHint", { role: defaultRole.name })}><input type="checkbox" checked={privateOn} disabled={!grantableIn(myPerms, SHORTCUTS.private)} onChange={(e) => save(withEveryoneDeny(entries, defaultRole.id, SHORTCUTS.private, e.target.checked, myUserId))} /><Icon name="lock" /> {t(target.kind === "channel" ? "chan.private" : "chan.privateCategory")}</label>
-            {kind === "text" && <label className="check" title={t("chan.readOnlyHint", { role: defaultRole.name })}><input type="checkbox" checked={readOnlyOn} disabled={!grantableIn(myPerms, SHORTCUTS.readOnly)} onChange={(e) => save(withEveryoneDeny(entries, defaultRole.id, SHORTCUTS.readOnly, e.target.checked))} /><Icon name="megaphone" /> {t("chan.readOnly")}</label>}
+            <label className="check" title={t("chan.privateHint", { role: defaultRole.name })}><input type="checkbox" className="switch" role="switch" checked={privateOn} disabled={!grantableIn(myPerms, SHORTCUTS.private)} onChange={(e) => save(withEveryoneDeny(entries, defaultRole.id, SHORTCUTS.private, e.target.checked, myUserId))} /><Icon name="lock" /> {t(target.kind === "channel" ? "chan.private" : "chan.privateCategory")}</label>
+            {kind === "text" && <label className="check" title={t("chan.readOnlyHint", { role: defaultRole.name })}><input type="checkbox" className="switch" role="switch" checked={readOnlyOn} disabled={!grantableIn(myPerms, SHORTCUTS.readOnly)} onChange={(e) => save(withEveryoneDeny(entries, defaultRole.id, SHORTCUTS.readOnly, e.target.checked))} /><Icon name="megaphone" /> {t("chan.readOnly")}</label>}
           </div>
         )}
         <h4>{t("chan.entries")}</h4>

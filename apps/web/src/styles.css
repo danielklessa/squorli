@@ -118,6 +118,16 @@ input[type="range"] { padding: 0; background: transparent; accent-color: var(--b
 .level-scale-mid { left: calc(var(--thumb) / 2 + var(--mark, 0.5) * (100% - var(--thumb))); transform: translateX(-50%); color: var(--text); }
 input[type="color"] { padding: 0; width: 2.2rem; height: 2.2rem; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+/* On/off settings as toggle switches (user's wish, 14 October 2026; settings, administration, channel dialog): a checkbox with
+   `className="switch" role="switch"`, so labels, keyboard and handlers stay a checkbox's. Lists to tick (permissions, roles,
+   import, games) stay checkboxes. The same look as the stage's equalizer switch (`.switch-track`). */
+input[type="checkbox"].switch { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 2.1rem; height: 1.2rem; margin: 0; padding: 0; border-radius: 999px; background: var(--bg4); border: 1px solid var(--line); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+input[type="checkbox"].switch::before { content: ""; position: absolute; top: 50%; left: 0.15rem; width: 0.85rem; height: 0.85rem; border-radius: 50%; background: var(--muted); transform: translateY(-50%); transition: left 0.15s, background 0.15s; }
+input[type="checkbox"].switch:checked { background: var(--brand); border-color: var(--brand); }
+input[type="checkbox"].switch:checked::before { left: calc(100% - 1rem); background: var(--on-light); }
+input[type="checkbox"].switch:disabled { opacity: 0.45; cursor: not-allowed; }
+input[type="checkbox"].switch:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { input[type="checkbox"].switch, input[type="checkbox"].switch::before { transition: none; } }
 textarea { resize: none; }
 a { color: var(--brand); }
 code { font-family: ui-monospace, Consolas, monospace; font-size: 0.85em; }
@@ -411,6 +421,8 @@ button.dock-stage:hover { background: var(--sel); }
 .settings-body button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .settings-body .check { align-items: flex-start; }
 .settings-body .check input { flex: none; margin-top: 0.3em; }
+/* A switch is taller than a checkbox: less room above it, so it sits centred on the label's first line (user's report: too low). */
+.settings-body .check input.switch { margin-top: 0.15em; }
 .settings-body h3:not(:first-child) { padding-top: 1rem; border-top: 1px solid var(--line); }
 :is(.settings-modal, .admin-modal, .channel-modal) .modal-head { flex: none; gap: 0.75rem; }
 :is(.settings-modal, .admin-modal, .channel-modal) .modal-head h2 { min-width: 0; overflow-wrap: anywhere; }
@@ -754,7 +766,19 @@ button.dock-stage:hover { background: var(--sel); }
 .bar-btn.radio-visual-toggle { position: absolute; left: 0.6rem; top: 50%; transform: translateY(-50%); width: 2.5rem; height: 2.5rem; font-size: 1.1rem; color: var(--muted); }
 .bar-btn.radio-visual-toggle.on { background: var(--bg4); color: var(--brand); }
 .bar-btn.radio-visual-toggle:hover { background: var(--sel); color: var(--text); }
-@media (max-width: 700px) { .bar-btn.radio-visual-toggle { position: static; transform: none; order: -1; align-self: center; } }
+/* The equalizer over the tiles (user's wish, 14 October 2026): above everything in the stage, still without pointer events,
+   so the tiles stay clickable; the switch for it sits right of the equalizer's button while that is on. */
+.radio-visual.front { z-index: 1; }
+/* A toggle switch (user's wish): the layers icon as its label, then a track with a knob; Squorli Blue when on. */
+button.radio-visual-front { position: absolute; left: 3.5rem; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 0.4rem; height: 2.5rem; padding: 0 0.5rem; border-radius: 999px; background: transparent; color: var(--muted); font-size: 1rem; }
+button.radio-visual-front:hover { background: var(--bg4); color: var(--text); }
+button.radio-visual-front.on { color: var(--brand); }
+.switch-track { position: relative; width: 2.1rem; height: 1.2rem; border-radius: 999px; background: var(--bg4); border: 1px solid var(--line); transition: background 0.15s; }
+.switch-knob { position: absolute; top: 50%; left: 0.15rem; width: 0.85rem; height: 0.85rem; border-radius: 50%; background: var(--muted); transform: translateY(-50%); transition: left 0.15s, background 0.15s; }
+button.radio-visual-front.on .switch-track { background: var(--brand); border-color: var(--brand); }
+button.radio-visual-front.on .switch-knob { left: calc(100% - 1rem); background: var(--on-light); }
+@media (prefers-reduced-motion: reduce) { .switch-track, .switch-knob { transition: none; } }
+@media (max-width: 700px) { .bar-btn.radio-visual-toggle, button.radio-visual-front { position: static; transform: none; order: -1; align-self: center; } }
 /* Levelling the others (VoiceStage.tsx, voice/levelMatch.ts, 14 October 2026): its button (fold-vertical) at the bar's right end, the mirror of the
    equalizer's button; while on, the common level's slider to its left. Where the bar is narrow (a stage between wide side columns,
    a phone; `.narrow`, measured by VoiceStage.tsx) the slider floats above the button instead, so it never runs into the centred

@@ -359,21 +359,21 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 {trayPref && (
                   <>
                     <h3>{t("settings.tray")}</h3>
-                    <label className="check"><input type="checkbox" checked={closeToTray} onChange={(e) => { const on = e.target.checked; setCloseToTray(on); void trayPref.setCloseToTray(on).then(setCloseToTray); }} /> {t("settings.closeToTray")}</label>
+                    <label className="check"><input type="checkbox" className="switch" role="switch" checked={closeToTray} onChange={(e) => { const on = e.target.checked; setCloseToTray(on); void trayPref.setCloseToTray(on).then(setCloseToTray); }} /> {t("settings.closeToTray")}</label>
                     <span className="muted small">{t("settings.closeToTrayHint")}</span>
                   </>
                 )}
                 {autostartPref && (
                   <>
                     <h3>{t("settings.autostartHead")}</h3>
-                    <label className="check"><input type="checkbox" checked={autostart} onChange={(e) => { const on = e.target.checked; setAutostart(on); void autostartPref.set(on).then(setAutostart); }} /> {t("settings.autostart")}</label>
-                    {autostartPref.background && <label className="check"><input type="checkbox" checked={autostartBackground} disabled={!autostart} onChange={(e) => { const on = e.target.checked; setAutostartBackground(on); void autostartPref.background?.set(on).then(setAutostartBackground); }} /> {t("settings.autostartBackground")}</label>}
+                    <label className="check"><input type="checkbox" className="switch" role="switch" checked={autostart} onChange={(e) => { const on = e.target.checked; setAutostart(on); void autostartPref.set(on).then(setAutostart); }} /> {t("settings.autostart")}</label>
+                    {autostartPref.background && <label className="check"><input type="checkbox" className="switch" role="switch" checked={autostartBackground} disabled={!autostart} onChange={(e) => { const on = e.target.checked; setAutostartBackground(on); void autostartPref.background?.set(on).then(setAutostartBackground); }} /> {t("settings.autostartBackground")}</label>}
                     <span className="muted small">{t("settings.autostartHint")}</span>
                   </>
                 )}
                 <h3>{t("settings.speakerView")}</h3>
                 <label className="check">
-                  <input type="checkbox" checked={settings.featureSelfInSpeakerView} onChange={(e) => update({ featureSelfInSpeakerView: e.target.checked })} />
+                  <input type="checkbox" className="switch" role="switch" checked={settings.featureSelfInSpeakerView} onChange={(e) => update({ featureSelfInSpeakerView: e.target.checked })} />
                   {t("settings.featureSelf")}
                 </label>
                 <span className="muted small">{t("settings.featureSelfHint")}</span>
@@ -381,7 +381,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 {directoryAccount && <>
                   <h3>{t("settings.dmPreviewsHead")}</h3>
                   <label className="check">
-                    <input type="checkbox" checked={settings.dmLinkPreviews} onChange={(e) => update({ dmLinkPreviews: e.target.checked })} />
+                    <input type="checkbox" className="switch" role="switch" checked={settings.dmLinkPreviews} onChange={(e) => update({ dmLinkPreviews: e.target.checked })} />
                     {t("settings.dmPreviews")}
                   </label>
                   <span className="muted small">{t(platform.links.lookUp ? "settings.dmPreviewsHintApp" : "settings.dmPreviewsHint")}</span>
@@ -391,7 +391,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 {platform.systemIdle === "always" ? <span className="muted small">{t("settings.idleHintApp")}{platform.systemActivity ? ` ${t("settings.idleHintAppSystem")}` : ""}</span> : <>
                 <label className="check">
                   {/* The permission prompt only opens inside the click, so the switch asks right here. */}
-                  <input type="checkbox" checked={idleDetect} disabled={!idleDetectionSupported()} onChange={(e) => { const on = e.target.checked; void setIdleDetection(activity, on).then((ok) => { setIdleDetect(ok); setIdleDenied(on && !ok); }); }} />
+                  <input type="checkbox" className="switch" role="switch" checked={idleDetect} disabled={!idleDetectionSupported()} onChange={(e) => { const on = e.target.checked; void setIdleDetection(activity, on).then((ok) => { setIdleDetect(ok); setIdleDenied(on && !ok); }); }} />
                   {t("settings.idleDetect")}
                 </label>
                 <span className="muted small">{t("settings.idleHint")}</span>
@@ -449,7 +449,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                   </div>
                 )}
                 <h3>{t("settings.micBoost")}</h3>
-                <label className="check"><input type="checkbox" checked={settings.micBoost.auto} onChange={(e) => update({ micBoost: { ...settings.micBoost, auto: e.target.checked } })} /> {t("settings.micBoostAuto")}</label>
+                <label className="check"><input type="checkbox" className="switch" role="switch" checked={settings.micBoost.auto} onChange={(e) => update({ micBoost: { ...settings.micBoost, auto: e.target.checked } })} /> {t("settings.micBoostAuto")}</label>
                 {!settings.micBoost.auto && (
                   <label className="stack">
                     {t("settings.micBoostGain", { pct: Math.round(settings.micBoost.gain * 100) })}
@@ -473,7 +473,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                   </select>
                   {devices.outputs.length === 0 && <span className="muted small">{t("settings.outputChromium")}</span>}
                 </label>
-                <label className="check"><input type="checkbox" checked={settings.levelMatch.on} onChange={(e) => update({ levelMatch: { ...settings.levelMatch, on: e.target.checked } })} /> {t("settings.levelMatch")}</label>
+                <label className="check"><input type="checkbox" className="switch" role="switch" checked={settings.levelMatch.on} onChange={(e) => update({ levelMatch: { ...settings.levelMatch, on: e.target.checked } })} /> {t("settings.levelMatch")}</label>
                 {settings.levelMatch.on && (
                   <label className="stack">
                     {t("settings.levelMatchLevel", { pct: levelToSlider(settings.levelMatch.level) })}
@@ -513,7 +513,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 {([...VOICE_CUES, null, "message"] as const).map((cue) => cue === null ? <h3 key="messages">{t("settings.soundsMessagesHead")}</h3> : (
                   <div className="row" key={cue}>
                     <label className="check">
-                      <input type="checkbox" checked={settings.sounds[cue]}
+                      <input type="checkbox" className="switch" role="switch" checked={settings.sounds[cue]}
                         onChange={(e) => update({ sounds: { ...settingsRef.current.sounds, [cue]: e.target.checked } as SoundSettings })} />
                       {SOUND_LABELS[cue]}
                     </label>

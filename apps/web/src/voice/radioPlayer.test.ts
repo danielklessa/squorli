@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RADIO_DEFAULT_VOLUME, hasOwnVolume, parseRadioSettings, parseRadioVisual, shouldLoad, storedRadioSettings } from "./radioPlayer";
+import { RADIO_DEFAULT_VOLUME, hasOwnVolume, parseRadioSettings, parseRadioVisual, parseRadioVisualFront, shouldLoad, storedRadioSettings } from "./radioPlayer";
 
 describe("radio settings", () => {
   it("falls back to the defaults for missing, broken or foreign data", () => {
@@ -48,5 +48,16 @@ describe("radio settings", () => {
     expect(shouldLoad(null, { volume: 0.3, muted: false })).toBe(false);
     // Volume 0 is not "off": the slider must bring the sound back without reconnecting.
     expect(shouldLoad("https://stream.example.org/live", { volume: 0, muted: false })).toBe(true);
+  });
+});
+
+describe("the equalizer over the tiles", () => {
+  it("is behind them unless the device chose otherwise, and only that choice is stored", () => {
+    expect(parseRadioVisualFront(null)).toBe(false);
+    expect(parseRadioVisualFront('{"visualFront":"ja"}')).toBe(false);
+    expect(parseRadioVisualFront("{")).toBe(false);
+    expect(parseRadioVisualFront('{"visual":true,"visualFront":true}')).toBe(true);
+    expect(JSON.stringify(storedRadioSettings({ volume: 0.05, muted: false }, false, true))).toBe('{"muted":false,"visual":true}');
+    expect(JSON.stringify(storedRadioSettings({ volume: 0.05, muted: false }, false, true, true))).toBe('{"muted":false,"visual":true,"visualFront":true}');
   });
 });

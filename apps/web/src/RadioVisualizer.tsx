@@ -16,7 +16,7 @@ const BAR_ALPHA = 0.065, BASE_ALPHA = 0.2, PARTICLE_ALPHA = 0.22;
  * cut off. Once inactive it reads no sound any more (the player may already have dropped it). The stage may live in a window of its
  * own, so frames and the observer come from the canvas's window. `calm` (reduced motion): slower bars, no particles.
  */
-export function RadioVisualizer({ player, active, calm, onFaded }: { player: RadioPlayer; active: boolean; calm: boolean; onFaded?: () => void }) {
+export function RadioVisualizer({ player, active, calm, front = false, onFaded }: { player: RadioPlayer; active: boolean; calm: boolean; front?: boolean; onFaded?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeRef = useRef(active);
   const wake = useRef<(() => void) | null>(null);
@@ -113,5 +113,5 @@ export function RadioVisualizer({ player, active, calm, onFaded }: { player: Rad
     return () => { wake.current = null; if (frame) win.cancelAnimationFrame(frame); observer.disconnect(); };
   }, [player, calm]);
 
-  return <canvas ref={canvasRef} className="radio-visual" aria-hidden="true" />;
+  return <canvas ref={canvasRef} className={`radio-visual${front ? " front" : ""}`} aria-hidden="true" />;
 }

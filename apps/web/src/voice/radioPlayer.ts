@@ -21,9 +21,10 @@ export type RadioSettings = { volume: number; muted: boolean };
 export type RadioStatus = "off" | "connecting" | "playing" | "blocked" | "error";
 /**
  * `visual` = the stage's equalizer is wanted (stored per device; off until the user turns it on, user's decision of
- * 14 October 2026); `analysable` = the sound can be read right now (playing with CORS in a browser with `captureStream`).
+ * 14 October 2026); `visualFront` = it is drawn over the tiles instead of behind them (stored per device, off by default, the
+ * user's wish of 14 October 2026); `analysable` = the sound can be read right now (playing with CORS in a browser with `captureStream`).
  */
-export type RadioState = RadioSettings & { status: RadioStatus; visual: boolean; analysable: boolean };
+export type RadioState = RadioSettings & { status: RadioStatus; visual: boolean; visualFront: boolean; analysable: boolean };
 
 /** Stored JSON -> settings; broken or foreign data yields the defaults. */
 export function parseRadioSettings(raw: string | null): RadioSettings {
@@ -47,10 +48,16 @@ export function parseRadioVisual(raw: string | null): boolean | null {
   try { const v = (JSON.parse(raw ?? "null") as { visual?: unknown } | null)?.visual; return typeof v === "boolean" ? v : null; } catch { return null; }
 }
 
-/** What is written to the device: the off switch always, the volume and the equalizer only when they are the user's own. */
-export function storedRadioSettings(settings: RadioSettings, ownVolume: boolean, visual: boolean | null = null): { volume?: number; muted: boolean; visual?: boolean } {
-  const stored: { volume?: number; muted: boolean; visual?: boolean } = ownVolume ? { volume: settings.volume, muted: settings.muted } : { muted: settings.muted };
+/** The equalizer over the tiles: only an explicit `true` counts, everything else is behind them (the default). */
+export function parseRadioVisualFront(raw: string | null): boolean {
+  try { return (JSON.parse(raw ?? "null") as { visualFront?: unknown } | null)?.visualFront === true; } catch { return false; }
+}
+
+/** What is written to the device: the off switch always, the volume and the equalizer only when they are the user's own, the equalizer's place only when it is in front. */
+export function storedRadioSettings(settings: RadioSettings, ownVolume: boolean, visual: boolean | null = null, visualFront = false): { volume?: number; muted: boolean; visual?: boolean; visualFront?: boolean } {
+  const stored: { volume?: number; muted: boolean; visual?: boolean; visualFront?: boolean } = ownVolume ? { volume: settings.volume, muted: settings.muted } : { muted: settings.muted };
   if (visual !== null) stored.visual = visual;
+  if (visualFront) stored.visualFront = true;
   return stored;
 }
 
@@ -91,7 +98,7 @@ export class RadioPlayer {
     let stored: string | null = null;
     try { stored = localStorage.getItem(KEY); localStorage.removeItem(OLD_KEY); } catch { /* blocked storage: defaults */ }
     this.visualChoice = parseRadioVisual(stored);
-    this.state = { ...parseRadioSettings(stored), status: "off", visual: this.visualChoice ?? false, analysable: false };
+    this.state = { ...parseRadioSettings(stored), status: "off", visual: this.visualChoice ?? false, visualFront: parseRadioVisualFront(stored), analysable: false };
     this.ownVolume = hasOwnVolume(stored);
   }
 
@@ -106,7 +113,7 @@ export class RadioPlayer {
   }
 
   private save() {
-    try { localStorage.setItem(KEY, JSON.stringify(storedRadioSettings(this.state, this.ownVolume, this.visualChoice))); } catch { /* still applies for this session */ }
+    try { localStorage.setItem(KEY, JSON.stringify(storedRadioSettings(this.state, this.ownVolume, this.visualChoice, this.state.visualFront))); } catch { /* still applies for this session */ }
   }
 
   /** What the voice channel plays; null = no radio (or not in a voice channel). */
@@ -123,6 +130,12 @@ export class RadioPlayer {
   setVisual(on: boolean) {
     this.visualChoice = on;
     this.patch({ visual: on });
+    this.save();
+  }
+
+  /** The equalizer over the tiles or behind them (this device). */
+  setVisualFront(on: boolean) {
+    this.patch({ visualFront: on });
     this.save();
   }
 

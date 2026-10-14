@@ -21,7 +21,7 @@ export function RadioTab({ api, server, run }: { api: ServerApi; server: ServerS
       <p className="muted small">{t("admin.radio.intro")}</p>
       {server.settings.radioAutoStop !== undefined && (
         <label className="check">
-          <input type="checkbox" checked={server.settings.radioAutoStop} onChange={(e) => run(() => api.updateSettings({ radioAutoStop: e.target.checked }))} />
+          <input type="checkbox" className="switch" role="switch" checked={server.settings.radioAutoStop} onChange={(e) => run(() => api.updateSettings({ radioAutoStop: e.target.checked }))} />
           {t("admin.radio.autoStop")}
         </label>
       )}

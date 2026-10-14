@@ -341,9 +341,16 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
 
       {touchPtt && <div className="stage-ptt"><PushToTalkButton client={client} disabled={voice.afkRoom || voice.micMuted} /></div>}
       <footer className={`stage-bar${barNarrow ? " narrow" : ""}`} ref={barRef}>
-        {(visualActive || visualFading) && <RadioVisualizer player={radio} active={visualActive} calm={reducedMotion} onFaded={() => setVisualFading(false)} />}
+        {(visualActive || visualFading) && <RadioVisualizer player={radio} active={visualActive} calm={reducedMotion} front={radioState.visualFront} onFaded={() => setVisualFading(false)} />}
         {offerVisual && <button className={`bar-btn radio-visual-toggle ${radioState.visual ? "on" : ""}`} aria-pressed={radioState.visual} title={t(radioState.visual ? "stage.visualOff" : "stage.visualOn")} aria-label={t(radioState.visual ? "stage.visualOff" : "stage.visualOn")}
           onClick={() => radio.setVisual(!radioState.visual)}><Icon name="audio-waveform" /></button>}
+        {/* While the equalizer is on: draw it over the tiles instead of behind them (user's wish, 14 October 2026; per device). */}
+        {offerVisual && radioState.visual && (
+          <button type="button" role="switch" aria-checked={radioState.visualFront} className={`radio-visual-front${radioState.visualFront ? " on" : ""}`}
+            title={t("stage.visualFrontSwitch")} aria-label={t("stage.visualFrontSwitch")} onClick={() => radio.setVisualFront(!radioState.visualFront)}>
+            <Icon name="layers" /><span className="switch-track" aria-hidden="true"><span className="switch-knob" /></span>
+          </button>
+        )}
         {!(touchPtt && !voice.micMuted) && <button className={`bar-btn ${voice.micMuted ? "off" : ""}`} disabled={voice.afkRoom} title={voice.afkRoom ? t("dock.afkChannel") : voice.micMuted ? (voice.deafened ? t("voice.unmuteAll") : t("voice.unmute")) : t("voice.mute")} onClick={() => client.setMuted(!voice.micMuted)}><Icon name={voice.micMuted ? "mic-off" : "mic"} /></button>}
         <button className={`bar-btn ${voice.deafened ? "off" : ""}`} disabled={voice.afkRoom} title={voice.afkRoom ? t("dock.afkChannel") : voice.deafened ? t("voice.undeafen") : t("voice.deafen")} onClick={() => client.setDeafened(!voice.deafened)}><Icon name={voice.deafened ? "headphone-off" : "headphones"} /></button>
         <button className={`bar-btn ${voice.cameraOn ? "on" : ""}`} disabled={!canStream} title={voice.afkRoom ? t("dock.afkChannel") : canStream ? (voice.cameraOn ? t("voice.cameraOff") : t("voice.cameraOnBtn")) : t("stage.noStreamPermission")}
