@@ -73,6 +73,11 @@ button.titlebar-btn { width: 2.75rem; height: 100%; padding: 0; border-radius: 0
 button.titlebar-btn:hover { background: var(--bg4); color: var(--text); }
 button.titlebar-btn.close:hover { background: var(--danger); color: var(--on-light); }
 button.titlebar-btn:focus-visible { outline-offset: -3px; }
+/* The debug button (14 October 2026, user's wish): left of the window buttons with some room between, out of the drag region. */
+button.titlebar-debug { -webkit-app-region: no-drag; flex: none; width: 2.25rem; margin-right: 0.75rem; }
+button.titlebar-debug.on { color: var(--brand); }
+/* While the title bar carries the debug button the headers need no room for it on the right. */
+.app.debug-in-titlebar .chat-head { padding-right: 1rem; }
 * { box-sizing: border-box; }
 /* Scrollbars in the client's look (user's wish, 18 September 2026): slim, rounded thumb with air around it, no track, no arrows.
    Chromium (browser and desktop app) through the ::-webkit pseudo elements, which the standard properties would switch off;

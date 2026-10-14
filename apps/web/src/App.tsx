@@ -39,7 +39,7 @@ import { loadLayout, saveLayout, type ColumnId, type Layout } from "./layout";
 import { NoServers } from "./NoServers";
 import { ScreenPicker } from "./ScreenPicker";
 import { quickSharePick, whenListed } from "./screenPick";
-import { TitleBar } from "./TitleBar";
+import { TitleBar, useTitleBarShown } from "./TitleBar";
 import { chooseDevice, healDevices } from "./voice/deviceMatch";
 import { loadVoiceSettings, saveVoiceSettings } from "./voice/settings";
 import { loadNotificationSettings, notificationFor, parseNotificationTag } from "./notifications";
@@ -159,6 +159,8 @@ export function App() {
   /** The settings dialog is capturing a new push-to-talk key; the dock's listener stays quiet meanwhile. */
   const [capturingPttKey, setCapturingPttKey] = useState(false);
   const [showDebug, setShowDebug] = useState(() => new URLSearchParams(window.location.search).has("debug"));
+  // The debug button sits in the desktop app's title bar while that is shown, otherwise at the right end of the main header.
+  const debugInTitleBar = useTitleBarShown();
   /** Stage (tiles/screen) instead of chat in the main area; voice keeps running independently. */
   const [stageOpen, setStageOpen] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
@@ -805,8 +807,8 @@ export function App() {
       if (voice.status !== "disconnected" && !await askConfirm({ title: t("update.restartTitle"), text: t("update.restartInVoice"), confirmLabel: t("update.restart") })) return;
       await leaveVoiceBeforeQuit(); // the install quits without asking again (the shell skips its hand-off there)
       platform.updates?.restartAndInstall();
-    })(); }} />
-    <div className={`app ${showRail ? "with-rail" : ""} ${homeOpen ? "home" : ""} ${mobileContent ? "mobile-content" : ""} ${showStage ? "mobile-stage" : ""} ${mobile && mobileMembers && !homeOpen && view ? "mobile-members" : ""} ${!homeOpen && !view ? "no-members" : ""}`} style={{ "--left-w": `${layout.left}px`, "--members-w": `${layout.members}px` } as CSSProperties}>
+    })(); }} debug={{ on: showDebug, toggle: () => setShowDebug((v) => !v) }} />
+    <div className={`app ${showRail ? "with-rail" : ""} ${homeOpen ? "home" : ""} ${mobileContent ? "mobile-content" : ""} ${showStage ? "mobile-stage" : ""} ${mobile && mobileMembers && !homeOpen && view ? "mobile-members" : ""} ${!homeOpen && !view ? "no-members" : ""} ${debugInTitleBar ? "debug-in-titlebar" : ""}`} style={{ "--left-w": `${layout.left}px`, "--members-w": `${layout.members}px` } as CSSProperties}>
       <ColumnHandle column="left" width={layout.left} label={t("layout.resizeLeft")} onChange={(w) => resizeColumn("left", w, false)} onCommit={(w) => resizeColumn("left", w, true)} />
       {!homeOpen && view && <ColumnHandle column="members" width={layout.members} label={t("layout.resizeMembers")} onChange={(w) => resizeColumn("members", w, false)} onCommit={(w) => resizeColumn("members", w, true)} />}
       {videoWindows.windows}
@@ -880,7 +882,7 @@ export function App() {
           <section className="chat empty"><p className="muted">{t("app.noTextChannel")}</p></section>
         )}
         {showDebug && <DebugPanel log={active?.log ?? []} client={client} voice={voice} />}
-        <button className="debug-toggle icon" title={t("app.debug")} onClick={() => setShowDebug((v) => !v)}><Icon name="bug" /></button>
+        {!debugInTitleBar && <button className="debug-toggle icon" title={t("app.debug")} onClick={() => setShowDebug((v) => !v)}><Icon name="bug" /></button>}
         </>}
       </main>
 
