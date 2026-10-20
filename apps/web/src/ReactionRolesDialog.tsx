@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ServerApi } from "./api";
 import { reactionRuleErrorText } from "./apiErrorText";
 import { EmojiPicker } from "./EmojiPicker";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { assignableRoles } from "./memberRank";
 import { SaveButton } from "./SaveButton";
@@ -28,6 +29,8 @@ export function ReactionRolesDialog({ message, roles, me, api, onClose }: { mess
 
   const load = useCallback(() => api.reactionRules(message.id).then((r) => setRules(r.rules), (e) => setErr(reactionRuleErrorText(e))), [api, message.id]);
   useEffect(() => { void load(); }, [load]);
+  // The emoji picker inside registers itself above the dialog.
+  useBackClose(onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !pickerOpen) onClose(); };
     window.addEventListener("keydown", onKey);

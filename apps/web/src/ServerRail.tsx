@@ -1,5 +1,6 @@
 import { directoryServerUrl } from "@squorli/protocol";
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { t } from "./i18n";
 import { moveInOrder } from "./serverOrder";
@@ -67,6 +68,7 @@ export function ServerRail({ servers, serverState, activeKey, onSelect, onAdd, o
   const dragRef = useRef<Drag | null>(null);
   /** A drag just ended on this button: the click that follows the pointer up must not open the server. */
   const swallowClick = useRef(false);
+  useBackClose(() => setMenu(null), !!menu);
   // The menu closes on any click elsewhere or Escape (it is positioned at the pointer, outside the rail's scroll box).
   useEffect(() => {
     if (!menu) return;

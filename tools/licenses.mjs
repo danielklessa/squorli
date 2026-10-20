@@ -5,8 +5,9 @@
  * copyright notice travel with a distribution. This walks the production dependencies of @squorli/web (including those of
  * @squorli/protocol) through node_modules, plus the packages whose assets are shipped although they are no runtime
  * dependency (ASSETS: emoji data), the emoji font and the background blur's model that are no packages at all (FONT_DIR,
- * MODELS), and the desktop app's main process bundle (DESKTOP_ROOTS: electron-updater and what the shell's own workspace
- * packages pull in; since 27 September 2026, apps/desktop/AGENTS.md), and writes
+ * MODELS), the desktop app's main process bundle (DESKTOP_ROOTS: electron-updater and what the shell's own workspace
+ * packages pull in; since 27 September 2026, apps/desktop/AGENTS.md) and the mobile app's native parts (MOBILE_ROOTS:
+ * Capacitor's runtimes and the plugins' native code; since 20 October 2026, apps/mobile/AGENTS.md), and writes
  *   apps/web/src/licenses/thirdParty.ts   loaded by the settings dialog when the tab opens
  *   THIRD-PARTY-NOTICES.md                the same for readers of the repository and of the container image
  * The walk lists every package that can end up in the bundle (a superset: a package the bundler drops is listed anyway).
@@ -45,6 +46,13 @@ const desktopDir = join(root, "apps", "desktop");
 /** Programs shipped next to the server in the package for Windows, with the version that is pinned there. */
 const PROGRAMS = Object.values(JSON.parse(readFileSync(join(root, "deploy", "windows", "versions.json"), "utf8")));
 const DESKTOP_ROOTS = ["electron-updater", "@squorli/protocol", "@squorli/link-preview"];
+/**
+ * The mobile app (apps/mobile) ships Capacitor's Android and iOS runtimes and the plugins' native code next to the web
+ * client. The AndroidX and Swift libraries that Gradle and the Swift Package Manager add at build time are not listed here
+ * (docs/features/licenses.md).
+ */
+const mobileDir = join(root, "apps", "mobile");
+const MOBILE_ROOTS = ["@capacitor/android", "@capacitor/ios", "@capacitor/app", "@capacitor/keyboard"];
 
 /** Directory of `name` as seen from the package in `fromDir` (Node's lookup, which also follows pnpm's layout). */
 function locate(name, fromDir) {
@@ -64,7 +72,7 @@ function webUrl(value) {
 }
 
 const found = new Map();
-/** `origin`: "web" (the client, in the browser and the app) or "desktop" (the app's shell only). */
+/** `origin`: "web" (the client, in the browser and the apps), "desktop" (the desktop app's shell only) or "mobile" (the mobile app's shell only). */
 function visit(name, fromDir, origin = "web") {
   const dir = locate(name, fromDir);
   if (!dir) { console.error(`[licenses] ${name} nicht gefunden (von ${fromDir}); pnpm install ausgeführt?`); process.exit(1); }
@@ -81,6 +89,7 @@ function visit(name, fromDir, origin = "web") {
 const webPkg = JSON.parse(readFileSync(join(webDir, "package.json"), "utf8"));
 for (const name of [...Object.keys(webPkg.dependencies), ...Object.keys(ASSETS)]) visit(name, webDir);
 for (const name of DESKTOP_ROOTS) visit(name, desktopDir, "desktop");
+for (const name of MOBILE_ROOTS) visit(name, mobileDir, "mobile");
 
 const texts = [];
 const packages = [];
@@ -97,7 +106,8 @@ for (const { dir, pkg, origins } of [...found.values()].sort((a, b) => a.pkg.nam
   const repo = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
   const url = webUrl(pkg.homepage) ?? webUrl(repo) ?? `https://www.npmjs.com/package/${pkg.name}`;
   const author = typeof pkg.author === "string" ? pkg.author : pkg.author?.name ?? null;
-  const note = [NOTES[pkg.name], origins.has("web") ? null : "desktop app only"].filter(Boolean).join("; ") || null;
+  const only = origins.has("web") ? null : [origins.has("desktop") && "desktop app", origins.has("mobile") && "mobile app"].filter(Boolean).join(" and ") + " only";
+  const note = [NOTES[pkg.name], only].filter(Boolean).join("; ") || null;
   packages.push({ name: pkg.name, version: pkg.version, license, url, author: author?.replace(/\s*<[^>]*>|\s*\([^)]*\)/g, "") ?? null, note, text: textIndex });
 }
 
@@ -130,7 +140,8 @@ writeFileSync(join(root, "THIRD-PARTY-NOTICES.md"), [
   "",
   "The Squorli web client (`apps/web`) is distributed as a bundle that contains the following third-party packages and",
   "assets; the desktop app (`apps/desktop`) adds its shell's bundle (marked \"desktop app only\"), and Electron ships its own",
-  "LICENSE.electron.txt and LICENSES.chromium.html next to the program. The same list with the full license texts is shown",
+  "LICENSE.electron.txt and LICENSES.chromium.html next to the program; the mobile app (`apps/mobile`) adds Capacitor's",
+  "native runtimes and plugins (marked \"mobile app only\"). The same list with the full license texts is shown",
   "in the client under Settings > Licenses. The packages of the app server are installed unmodified, with their license",
   "files, in `node_modules` of the container image.",
   "",

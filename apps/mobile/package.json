@@ -1,0 +1,24 @@
+{
+  "name": "@squorli/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Squorli mobile app: Capacitor shell around the web client (iOS and Android)",
+  "author": "Daniel Klessa",
+  "homepage": "https://squorli.com",
+  "scripts": {
+    "sync": "node scripts/sync.mjs",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/keyboard": "8.0.6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "vitest": "^5.0.0"
+  }
+}

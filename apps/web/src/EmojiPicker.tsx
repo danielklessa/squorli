@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type MutableRefObject } from "react";
 import { createPortal } from "react-dom";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { menuPosition } from "./menuPosition";
 import { emojiWithTone, entriesOf, firstShortcode, insertAt, loadRecent, loadTone, pushRecent, saveRecent, saveTone, searchEmoji, SKIN_TONES, type SkinTone } from "./emoji/picker";
@@ -72,6 +73,7 @@ export function EmojiButton({ inputRef, value, onChange, disabled = false }: {
  * opens from a message's toolbar and from the rules dialog, anchored at that button, above it with the right edges aligned.
  */
 export function EmojiPicker({ anchor, onPick, onClose, onDismiss }: { anchor: HTMLElement; onPick: (emoji: string, keepOpen: boolean) => void; onClose: () => void; onDismiss: () => void }) {
+  useBackClose(onClose);
   const [groups, setGroups] = useState<EmojiGroup[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState("");

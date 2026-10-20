@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useBackClose } from "./backStack";
 import { t } from "./i18n";
 
 /**
@@ -74,6 +75,7 @@ function NoticeDialog({ opts, onDone }: { opts: NoticeOptions; onDone: () => voi
 }
 
 function Frame({ opts, onCancel, children }: { opts: Base; onCancel: () => void; children: ReactNode }) {
+  useBackClose(onCancel);
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } };
     window.addEventListener("keydown", onKey, true);

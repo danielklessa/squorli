@@ -15,6 +15,7 @@ Read the file of every area a task touches before changing it. Agents that load 
 |---|---|---|
 | App server `apps/server/` | `apps/server/AGENTS.md` | files, routes, schema, server conventions (permissions, owners, only with account, directory client, sessions, account deletion, database), server pitfalls |
 | Desktop app `apps/desktop/` (Electron shell around the web client's build) | `apps/desktop/AGENTS.md` | files, security baseline, the fixed origin `app://squorli`, pitfalls (ELECTRON_RUN_AS_NODE, Electron's binary, embedded players, driving the app from a script) |
+| Mobile app `apps/mobile/` (Capacitor shell around the web client's build, iOS and Android) | `apps/mobile/AGENTS.md` | files, `sync`, the origins and the app id that are final, updating Capacitor (pnpm's paths in the native projects), no backup, icons from the brand, pitfalls (TypeScript 7 and the config, iOS needs a Mac, plugins are proxies) |
 | Web client `apps/web/` | `apps/web/AGENTS.md` | files, UI conventions (i18n, icons, modals, no browser dialogs, settings, multi-server client), which feature notes belong to which file |
 | Voice, camera, screen share `apps/web/src/voice/` and the media components | `apps/web/src/voice/AGENTS.md` | mute/deafen, codec, audio unlock, speech gate, `VIEW_VIDEO`, video, browser pitfalls |
 | Link lookup `packages/link-preview/` (node only; also copied to the directory repo) | `packages/link-preview/AGENTS.md` | the address rules against requests to private networks, the guarded GET, reading a page's head, YouTube's oEmbed; security rules for changes |
@@ -42,6 +43,7 @@ Feature notes (dated entries: wishes, decisions, consequences, what was checked)
 | The web client on a phone's home screen: Squorli icons, the manifest route with "Squorli - <server name>", Apple tags | `docs/features/home-screen.md` |
 | Directory integration: M6 phases, second factor, e-mail, account page | `docs/features/directory.md` |
 | Desktop app (M4): decisions, phases, platform interface (`apps/web/src/platform/`), client without a home server, the Electron shell `apps/desktop/` | `docs/features/desktop.md` |
+| Mobile app (20 October 2026, stage 1 of `docs/PLAN-mobile.md` begun): the Capacitor shell `apps/mobile/` for iOS and Android, the app's `Platform` (`platform/mobileApp.ts`), Android's back button (`backStack.ts`), the app page's CSP, icons and start screens from the brand, what the directory and the chat server need for the app (nothing), what was and was not checked | `docs/features/mobile.md` |
 | Server accounts (25 September 2026): accounts of a server's own (`~name`) next to the directory's (`@name`), no temporary users any more (every sign-in needs an account, the owner too), the key encrypted with the password in the client and kept by the server, members from before register afterwards, the client's one key per server account next to the directory account, the account's avatar kept by the server, no direct messages between server accounts for now, `LOCAL_ACCOUNTS`; the privacy policy's sentence under the forms that create an account (2 October 2026: the directory's for `@name`, the server's own link `privacyPolicyUrl` for `~name`) | `docs/features/local-accounts.md` |
 | Import of a server structure from a Discord server template (Verwaltung > Import: the template link, a plan of categories, channels and roles, only adding, Discord's public template endpoint without any token) | `docs/features/import.md` |
 | Global hotkeys of the desktop app (mute, deafen; `globalShortcut`), the push-to-talk key across the system (the system watch helper watches that one key with Raw Input, Windows), control from outside for a Stream Deck or G Hub (`squorli://control/<action>`, `--control=<action>`), Einstellungen > Tastenkürzel | `docs/features/hotkeys.md` |
@@ -93,6 +95,7 @@ Top level only; the files of each area are listed in its `AGENTS.md` (section 0)
 apps/server/           App server: Fastify 5, Drizzle ORM + postgres-js, LiveKit server SDK. Serves the built web client. -> apps/server/AGENTS.md
 apps/web/              Web client: Vite 5 + React 18 + livekit-client. Its build is also what the desktop app shows. -> apps/web/AGENTS.md
 apps/desktop/          Desktop app (M4): Electron shell that serves apps/web/dist from app://squorli; no renderer code of its own. -> apps/desktop/AGENTS.md
+apps/mobile/           Mobile app: Capacitor 8 shell (android/, ios/) around a copy of apps/web/dist; no renderer code of its own. -> apps/mobile/AGENTS.md
 packages/link-preview/ @squorli/link-preview: looking a link up on behalf of a user (SSRF rules, guarded fetch, page head parser). Used by the server, the desktop app and, as a copy, the directory. -> packages/link-preview/AGENTS.md
 packages/protocol/     @squorli/protocol: zod schemas for REST and WebSocket, PROTOCOL_VERSION. Single source of truth for the client/server contract. -> packages/protocol/AGENTS.md
 deploy/                Compose files (prod, dev, Portainer), Caddy, LiveKit config, proxy overlays. -> deploy/AGENTS.md
@@ -111,7 +114,7 @@ Dockerfile             Multi-stage build, target `app` (web + server); `pnpm dep
 ```
 
 Workspace: pnpm 10 (`packageManager` in package.json, `corepack enable`), Node >= 24 (LTS, tested with Node 24.21.0).
-Package names: `@squorli/server`, `@squorli/web`, `@squorli/desktop`, `@squorli/protocol` (the directory service `@squorli/directory` lives in `../squorli-directory`). The protocol package is consumed as TypeScript source (no build step). `packages/protocol/src/permissions.ts` = permission bitmask (append new bits at the end) and `PERMISSION_GROUPS` = display order and grouping in the role editor (sort every new permission in by meaning and re-check the arrangement, `packages/protocol/AGENTS.md`).
+Package names: `@squorli/server`, `@squorli/web`, `@squorli/desktop`, `@squorli/mobile`, `@squorli/protocol` (the directory service `@squorli/directory` lives in `../squorli-directory`). The protocol package is consumed as TypeScript source (no build step). `packages/protocol/src/permissions.ts` = permission bitmask (append new bits at the end) and `PERMISSION_GROUPS` = display order and grouping in the role editor (sort every new permission in by meaning and re-check the arrangement, `packages/protocol/AGENTS.md`).
 
 ## 2a. Sibling repo `../squorli-directory` (not published) and synchronized copies
 
@@ -142,6 +145,7 @@ All from the repo root:
 | `pnpm dev` | **Normal development start** (`tools/dev.mjs`): starts Postgres + LiveKit via Compose, then the server (`tsx watch`, :3000) and the web client (Vite, :5173, proxies `/api` including WS to :3000). The directory service is started in `../squorli-directory` (`pnpm dev` there, :3100). On exit (Ctrl+C, crash of an app) the containers are stopped automatically (`compose stop`, data is kept). Options: `--no-docker` (leave the containers alone), `--down` (`compose down` on exit). |
 | `pnpm dev:apps` | Only server + web client in parallel, without container management |
 | `pnpm dev:desktop` | The desktop app against the Vite server (:5173), which it starts itself when nothing answers there (and stops with the app); own user data folder (`Squorli-dev`). `pnpm --filter @squorli/desktop start` shows the built client (`pnpm build` first) from `app://squorli` |
+| `pnpm --filter @squorli/mobile sync` | After `pnpm build`: the web client into the mobile app's Android and iOS projects (`apps/mobile/AGENTS.md`, which also lists how to open, run and live-reload them) |
 | `pnpm docker:dev` / `pnpm docker:dev:down` | Start / remove Postgres (5432) + LiveKit in dev mode (7880/7881/7882) manually |
 | `pnpm typecheck` | `tsc --noEmit` in all packages |
 | `pnpm test` | Vitest in all packages (`--passWithNoTests`) |

@@ -26,6 +26,7 @@ import { VoiceStage } from "./VoiceStage";
 import { CameraPicker } from "./CameraPicker";
 import { Icon } from "./Icon";
 import { attentionCount } from "./attention";
+import { backStack, useBackClose } from "./backStack";
 import { askConfirm, showNotice } from "./dialogs";
 import type { MenuAnchor } from "./ContextMenu";
 import { MiniProfile } from "./MiniProfile";
@@ -384,6 +385,11 @@ export function App() {
     if (ms > 0) await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }, [client, leaveVoice]);
   useEffect(() => platform.window.beforeQuit?.(leaveVoiceBeforeQuit), [leaveVoiceBeforeQuit]);
+  // Android's back button in the mobile app (backStack.ts): what is open closes, then the phone layout goes one page back,
+  // the slid-in member list first, then the chat or the stage, as the back arrow above them does.
+  useEffect(() => platform.window.back?.(() => backStack.back()), []);
+  useBackClose(() => setMobileMembers(false), mobile && mobileMembers);
+  useBackClose(() => { setMobileContent(false); setStageOpen(false); }, mobile && mobileContent, "page");
 
   /**
    * Join a voice channel on `host`; if voice is running on another server, it is ended there first. `auto` = not the user's

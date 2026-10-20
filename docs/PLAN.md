@@ -16,7 +16,7 @@ Squorli is public: the website, the repository and the image are announced and u
 |---|---|
 | Model | Discord (server → channels → roles), but every server self-hosted |
 | Video | Up to 15 simultaneous cameras per channel (target; accepted once measured on a real server, see 3.2) |
-| Clients | Web (browser) and desktop (Windows and Linux built; macOS open, see 3.3); a native Android app is planned (`docs/PLAN-mobile.md`) |
+| Clients | Web (browser) and desktop (Windows and Linux built; macOS open, see 3.3); a mobile app for iOS and Android is being built (`docs/PLAN-mobile.md`, stage 1 begun 20 October 2026, `apps/mobile`) |
 | Identity | One account for all servers through the directory (`@name`); a server's own accounts (`~name`) next to it |
 | Development | One person, TypeScript/Node, delivered as Docker containers |
 | License | Apache 2.0. **No code from Stoat or other AGPL projects**, they may only serve as reference |
@@ -84,9 +84,9 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 `docs/PLAN-share-adaptation.md`: stage 1 (the sender's rows in the statistics), stage 2 (the governor, which may go below the quality the user picked, with the line in the tile and a way to pin), then stage 3 as simulcast first and the viewers' quality reports only if the measurements ask for them (the user, 3 October 2026).
 
-### 3.5 Native Android app (user: medium)
+### 3.5 Mobile app for iOS and Android (user: medium)
 
-`docs/PLAN-mobile.md`, all six decisions made on 25 September 2026: Capacitor, Android first without screen share, push only as a wake-up through the directory, no push for server accounts. Needs 3.1 first (stores).
+`docs/PLAN-mobile.md` (revised 17 October 2026: the user has an iPhone, Android only in the emulator). Decisions of 25 September 2026 that stand: Capacitor, no screen share in version 1, push only as a wake-up through the directory, no push for server accounts. Open: the order of the platforms (5, proposal: both shells at once, measure on iOS first), the Mac (N1), iOS voice if the web view fails in the background (N2), the publisher (N3), an Android test phone (N4). Stage 1 begun on 20 October 2026 (`docs/features/mobile.md`): the shell `apps/mobile` and the app's `Platform` are built, the first run on a device is not. The stores' prerequisite, the reports and blocking of 3.1, is built (`docs/PLAN-mobile.md` section 0).
 
 ---
 

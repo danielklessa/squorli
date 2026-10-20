@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { VoteKickResult } from "@squorli/protocol";
 import { Avatar } from "./Avatar";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { t } from "./i18n";
 import { blockMinutes, outcomeKey, secondsLeft, voteBar, voteCounts, type VoteKickPerson, type VoteKickState } from "./voteKick";
@@ -99,6 +100,7 @@ export function VoteKickPanel({ state, result, person, onVote }: { state: VoteKi
 export function VoteKickModal({ state, person, onVote, onClose }: { state: VoteKickState; person: VoteKickPerson; onVote: (yes: boolean) => void; onClose: () => void }) {
   const now = useSeconds(true);
   const left = secondsLeft(state.vote.endsAt, now);
+  useBackClose(onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", onKey, true);

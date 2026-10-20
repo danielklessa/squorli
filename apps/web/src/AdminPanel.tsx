@@ -13,6 +13,7 @@ import { RadioTab } from "./RadioTab";
 import { ImportTab } from "./ImportTab";
 import { ReportsTab } from "./ReportsTab";
 import { ReactionRolesTab } from "./ReactionRolesTab";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { fmtDateTime, locale, t } from "./i18n";
 import { runMediaCheck, type MediaCheckResult } from "./doctorMedia";
@@ -22,6 +23,7 @@ type Tab = "server" | "channels" | "radio" | "roles" | "reactionRoles" | "invite
 /** Admin area: server, categories/channels, radio stations, roles, invites, bans. Changes come back via the structure event. */
 export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEditChannel }: { api: ServerApi; server: ServerState; myUserId: string; directoryUrl: string | null; onClose: () => void; onEditChannel: (target: ChannelDialogTarget) => void }) {
   const p = server.myPermissions;
+  useBackClose(onClose);
   const [mobileFocus] = useState(() => window.matchMedia("(max-width: 700px), (pointer: coarse)").matches);
   const allTabs: { id: Tab; label: string; icon: string; ok: boolean }[] = [
     { id: "server", label: t("admin.tab.server"), icon: "server", ok: hasPermission(p, Permission.MANAGE_SERVER) },

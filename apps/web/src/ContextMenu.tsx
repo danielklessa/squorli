@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { menuPosition, submenuPosition } from "./menuPosition";
 
@@ -34,6 +35,7 @@ export function ContextMenu({ anchor, label, onClose, children }: {
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  useBackClose(onClose);
   const [position, setPosition] = useState({ left: anchor.x, top: anchor.y });
   const doc = anchor.trigger.ownerDocument;
   const win: Window & typeof globalThis = doc.defaultView ?? window;

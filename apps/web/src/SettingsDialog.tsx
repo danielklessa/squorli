@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import type { ServerApi } from "./api";
 import { BLUR_OPTIONS } from "./CameraPicker";
 import { askConfirm } from "./dialogs";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { LicensesTab } from "./LicensesTab";
 import { NotificationSettings } from "./NotificationSettings";
@@ -163,6 +164,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
 
   const update = (patch: Partial<VoiceSettings>) => saveVoiceSettings({ ...settingsRef.current, ...patch });
 
+  useBackClose(onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !capturingKey && !capturingHotkey) onClose(); };
     window.addEventListener("keydown", onKey);

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Channel, Member } from "@squorli/protocol";
 import { Avatar } from "./Avatar";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { t } from "./i18n";
 
@@ -16,6 +17,7 @@ export function MobileVoicePreview({ channel, participants, members, connected, 
   const dialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useBackClose(onClose);
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();

@@ -56,13 +56,15 @@ export interface PlatformMedia {
 export type NotifyPermission = "granted" | "default" | "denied" | "unsupported";
 
 /**
- * Where the client runs. One build serves both: the browser (served by a chat server) and the desktop app (the same files
- * from `app://squorli`, recognised by the bridge of its preload script). Everything that differs between the two goes
- * through this interface; components import the singleton from `./platform`, the UI-free cores (`Store`, `VoiceClient`)
- * take what they need as constructor options.
+ * Where the client runs. One build serves all three: the browser (served by a chat server), the desktop app (the same files
+ * from `app://squorli`, recognised by the bridge of its preload script) and the mobile app (the same files in a Capacitor
+ * shell, apps/mobile, recognised by Capacitor's native bridge; mobileApp.ts). Everything that differs goes through this
+ * interface; components import the singleton from `./platform`, the UI-free cores (`Store`, `VoiceClient`) take what they
+ * need as constructor options.
  */
 export interface Platform {
-  readonly kind: "web" | "desktop";
+  /** "mobile" = the mobile app; a phone's browser is "web" (with `mobile` true). */
+  readonly kind: "web" | "desktop" | "mobile";
   readonly os: PlatformOs;
   /** A phone or tablet, told by the device and not by the window's width (platform/mobile.ts); the desktop app never is one. */
   readonly mobile: boolean;
@@ -178,6 +180,12 @@ export interface Platform {
      * page cannot be asked (browser, an app older than this).
      */
     readonly beforeQuit: null | ((cb: () => Promise<void> | void) => () => void);
+    /**
+     * The system's back button (the mobile app on Android): `cb` closes what is on top and answers true, or false when
+     * nothing is left to close, and the platform then sends the app to the background (it never ends it: a voice
+     * connection stays). Returns the unsubscribe. null = no such button (browser, desktop app, iOS). backStack.ts.
+     */
+    readonly back: null | ((cb: () => boolean) => () => void);
   };
   /** App updates (desktop); null = the page is updated by its server. */
   readonly updates: null | { get(): UpdateState; subscribe(cb: (state: UpdateState) => void): () => void; check(): void; restartAndInstall(): void };

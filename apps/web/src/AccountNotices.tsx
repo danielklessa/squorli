@@ -1,5 +1,6 @@
 import type { AccountNotice, ReportReason } from "@squorli/protocol";
 import { useEffect, useState } from "react";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { fmtDateTime, locale, t } from "./i18n";
 import { platform } from "./platform";
@@ -46,6 +47,7 @@ export function NoticesDialog({ notices, handle, directoryUrl, onRead, onClose }
   const unread = notices.filter((n) => n.readAt === null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  useBackClose(onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", onKey, true);

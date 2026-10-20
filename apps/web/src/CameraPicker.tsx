@@ -1,6 +1,7 @@
 import { BackgroundBlur, type BackgroundProcessorWrapper } from "@livekit/track-processors";
 import { VideoPresets, createLocalVideoTrack, type LocalVideoTrack } from "livekit-client";
 import { useEffect, useRef, useState } from "react";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { VoiceClient } from "./voice/voiceClient";
 import { t } from "./i18n";
@@ -81,6 +82,7 @@ export function CameraPicker({ cameras, initial, initialBlur, onPick, onCancel, 
   // and Firefox then failed with "Starting videoinput failed" (18 September 2026).
   const pick = () => { if (!selected) return; releasePreview(); setTrack(null); onPick(selected, blur); };
 
+  useBackClose(onCancel);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); if (e.key === "Enter" && selected) pick(); };
     win.addEventListener("keydown", onKey, true);

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { ServerApi } from "./api";
 import { ApiError } from "./api";
 import { askBlockFriend } from "./friendActions";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { t } from "./i18n";
 import type { Store } from "./store";
@@ -46,6 +47,7 @@ export function ReportDialog({ target, server = null, directory = null, onClose 
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  useBackClose(onClose);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", onKey, true);

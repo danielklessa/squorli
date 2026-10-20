@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The brand's dark ground #0C1424 (docs/brand/AGENTS.md): the adaptive icon's background layer, the start and the window. -->
+    <color name="ic_launcher_background">#0C1424</color>
+    <color name="squorli_ground">#0C1424</color>
+</resources>

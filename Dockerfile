@@ -9,7 +9,9 @@ COPY packages/link-preview/package.json packages/link-preview/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY apps/desktop/package.json apps/desktop/
+COPY apps/mobile/package.json apps/mobile/
 # The desktop app (apps/desktop) is part of the workspace and the lockfile, but the image never starts it: no Electron binary.
+# The mobile app (apps/mobile) is installed for the same reason and never built here (its native projects are not in the context).
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 RUN pnpm install --frozen-lockfile
 COPY . .

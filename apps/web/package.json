@@ -17,6 +17,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
     "@livekit/track-processors": "0.8.2",
     "@noble/ed25519": "^3.0.0",
     "@squorli/protocol": "workspace:*",

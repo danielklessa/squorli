@@ -1,6 +1,7 @@
 import { directoryServerIconUrl, directoryServerUrl, type DirectoryServer } from "@squorli/protocol";
 import { useEffect, useState, type FormEvent } from "react";
 import * as api from "./api";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { RailEntry } from "./ServerRail";
 import { t } from "./i18n";
@@ -25,6 +26,7 @@ export function ServerBrowser({ directoryUrl, currentHost, onClose, onOpen, onAd
   const [addError, setAddError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const dirHost = directoryUrl ? new URL(directoryUrl).host : null;
+  useBackClose(onClose);
 
   useEffect(() => {
     if (!directoryUrl) return;

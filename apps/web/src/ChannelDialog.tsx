@@ -8,6 +8,7 @@ import { SHORTCUTS, SLOWMODE_STEPS, baseOf, emptyOverwrite, everyoneDenies, gran
 import { askConfirm, showNotice } from "./dialogs";
 import { EntityPicker } from "./EntityPicker";
 import { entryKey, type PickerEntry } from "./pickerEntries";
+import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { t, tOr } from "./i18n";
 import { topPositionOf } from "./memberRank";
@@ -30,6 +31,7 @@ export function ChannelDialog({ api, server, target, myUserId, onClose }: { api:
   const exists = !!channel || !!category;
   const myPerms = server.myChannelPermissions?.[target.id] ?? server.myPermissions;
   const canManage = hasPermission(myPerms, Permission.MANAGE_CHANNELS);
+  useBackClose(onClose);
   const [mobileFocus] = useState(() => window.matchMedia("(max-width: 700px), (pointer: coarse)").matches);
   const [tab, setTab] = useState<Tab>("general");
   const [err, setErr] = useState<string | null>(null);

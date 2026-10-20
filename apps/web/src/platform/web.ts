@@ -62,7 +62,7 @@ export function webPlatform(): Platform {
       lookUp: null,
     },
     screen: { setPicker: () => {} },
-    window: { popoutFeatures, appearance: null, tray: null, autostart: null, ready: () => {}, attention: null, focusPopout: null, frame: null, beforeQuit: null },
+    window: { popoutFeatures, appearance: null, tray: null, autostart: null, ready: () => {}, attention: null, focusPopout: null, frame: null, beforeQuit: null, back: null },
     updates: null,
   };
 }

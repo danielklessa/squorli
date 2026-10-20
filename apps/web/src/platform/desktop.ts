@@ -123,6 +123,7 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
       beforeQuit: typeof bridge.onQuitRequest === "function" && typeof bridge.quitReady === "function"
         ? (cb) => bridge.onQuitRequest((requestId) => { void Promise.resolve().then(cb).catch(() => {}).finally(() => bridge.quitReady(requestId)); })
         : null,
+      back: null,
     },
     updates: info.update.status === "unsupported" ? null : {
       get: () => update,
