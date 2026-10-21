@@ -1,4 +1,4 @@
-# Desktop app (apps/desktop): builds the installers for a tag `desktop-v<version>` and collects them in a DRAFT release.
+# Desktop app (apps/desktop): builds the installers (Windows, macOS, Linux) for a tag `desktop-v<version>` and collects them in a DRAFT release.
 # Publishing the draft is a person's step; the update feed on squorli.com follows separately (squorli-website,
 # `pnpm desktop:release`), which is the rollout switch. Server images use tags `v*` (ci.yml); the two never overlap.
 #
@@ -7,8 +7,10 @@
 #   CERTUM_EMAIL, CERTUM_OTP      the SimplySign login of Certum's cloud code-signing certificate; ssign signs the Windows
 #                                 executables with it (apps/desktop/build/sign.cjs)
 #   GPG_PRIVATE_KEY, GPG_PASSPHRASE  the key "Squorli Desktop Releases <signing@squorli.com>" for the detached signatures of the
-#                                 Linux files (public half: https://squorli.com/squorli-desktop.asc)
+#                                 Linux and macOS files (public half: https://squorli.com/squorli-desktop.asc)
 # A tag build fails when it cannot sign; a test build without the secrets is built unsigned.
+# macOS (21 October 2026): the macos-latest runner builds the two DMGs (arm64, x64) with an ad-hoc signature only, no Apple
+# Developer account yet (apps/desktop/electron-builder.yml `mac`); their integrity statement is the detached GPG signature.
 # Details: docs/features/desktop.md, apps/desktop/AGENTS.md.
 name: Desktop release
 
@@ -37,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     # Holds the signing secrets and waits for the owner's approval (Settings > Environments > signing > Required reviewers).
     environment: signing
@@ -62,7 +64,7 @@ jobs:
       - run: pnpm run icons
       - run: pnpm run licenses
       - run: pnpm --filter "@squorli/desktop..." build
-      # Windows: the native audio capture helper (MSVC is part of the runner image); a no-op elsewhere.
+      # Windows: the native audio capture helper (MSVC is part of the runner image); a no-op on Linux and macOS.
       - run: pnpm --filter @squorli/desktop native
       # Windows: ssign (the runner image has Rust); kept between runs by version.
       - name: ssign from the cache
@@ -75,6 +77,8 @@ jobs:
       - name: Build ssign
         if: runner.os == 'Windows' && steps.ssign.outputs.cache-hit != 'true'
         run: cargo install ssign --version ${{ env.SSIGN_VERSION }} --locked
+      # CSC_IDENTITY_AUTO_DISCOVERY: no search for an Apple certificate in the runner's keychain; the Mac build is ad-hoc signed
+      # (`mac.identity: "-"`), which that flag leaves alone.
       - run: pnpm --filter @squorli/desktop dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -92,20 +96,21 @@ jobs:
             Write-Host ("{0}: {1} / {2}" -f $f.Name, $s.Status, $s.SignerCertificate.Subject)
             if ($s.Status -ne 'Valid') { throw "$($f.Name) is not validly signed ($($s.Status))" }
           }
-      # Linux: detached GPG signatures next to the AppImage and the deb.
-      - name: Sign the Linux files
-        if: runner.os == 'Linux'
+      # Linux and macOS: detached GPG signatures next to the AppImage, the deb and the DMGs (the runner images bring gpg).
+      - name: Sign the Linux and macOS files
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           if [ -z "$GPG_PRIVATE_KEY" ]; then
-            if [ -n "$TAG" ]; then echo "GPG_PRIVATE_KEY is not set: refusing to release unsigned Linux files"; exit 1; fi
-            echo "no GPG key in the environment: test build, Linux files stay unsigned"; exit 0
+            if [ -n "$TAG" ]; then echo "GPG_PRIVATE_KEY is not set: refusing to release unsigned Linux/macOS files"; exit 1; fi
+            echo "no GPG key in the environment: test build, Linux/macOS files stay unsigned"; exit 0
           fi
           export GNUPGHOME=$(mktemp -d)
           printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
-          for f in apps/desktop/release/*.AppImage apps/desktop/release/*.deb; do
+          shopt -s nullglob   # a pattern without files stays out (the mac runner has no AppImage, Linux no dmg)
+          for f in apps/desktop/release/*.AppImage apps/desktop/release/*.deb apps/desktop/release/*.dmg; do
             printf '%s\n' "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign --output "$f.asc" "$f"
             gpg --verify "$f.asc" "$f"
           done
@@ -116,9 +121,10 @@ jobs:
           if-no-files-found: error
           path: |
             apps/desktop/release/*.exe
-            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/*.blockmap
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
+            apps/desktop/release/*.dmg
             apps/desktop/release/*.asc
             apps/desktop/release/latest*.yml
 
@@ -146,7 +152,7 @@ jobs:
         run: |
           ls -la artifacts
           notes="apps/desktop/release-notes/${TAG#desktop-v}.md"
-          footer="Installers for Windows (Squorli-Setup-*.exe) and Linux (AppImage, deb). The Windows files are code-signed with a Certum certificate issued to Daniel Klessa (Open Source Developer); Windows SmartScreen may still warn while the certificate is new. The Linux files come with detached GPG signatures (*.asc) by the key \"Squorli Desktop Releases\" E62D 34CB F884 0496 931F B534 580D 3789 5466 FC24, published at https://squorli.com/squorli-desktop.asc. Download page: https://squorli.com/en/download/"
+          footer="Installers for Windows (Squorli-Setup-*.exe), macOS (Squorli-*-arm64.dmg for Apple Silicon, Squorli-*-x64.dmg for Intel) and Linux (AppImage, deb). The Windows files are code-signed with a Certum certificate issued to Daniel Klessa (Open Source Developer); Windows SmartScreen may still warn while the certificate is new. The macOS app is not notarized by Apple (no Apple Developer account yet): on the first start macOS refuses it; open it once, then allow it under System Settings > Privacy & Security > Open Anyway. The Linux and macOS files come with detached GPG signatures (*.asc) by the key \"Squorli Desktop Releases\" E62D 34CB F884 0496 931F B534 580D 3789 5466 FC24, published at https://squorli.com/squorli-desktop.asc. Download page: https://squorli.com/en/download/"
           # A version without a notes file gets the standing text alone, as every release did before.
           if [ -f "$notes" ]; then { cat "$notes"; echo; echo "---"; echo; echo "$footer"; } > body.md; else echo "$footer" > body.md; fi
           if gh release view "$TAG" >/dev/null 2>&1; then

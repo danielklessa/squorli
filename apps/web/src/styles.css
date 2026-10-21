@@ -63,6 +63,8 @@ html[data-desktop] #root { display: flex; flex-direction: column; }
 html[data-desktop] .app { flex: 1; min-height: 0; height: auto; }
 html[data-desktop] .login { flex: 1; min-height: 0; overflow-y: auto; }
 .titlebar { flex: none; height: 2rem; margin: var(--gap) var(--gap) 0; display: flex; align-items: center; gap: 0.5rem; padding-left: 0.75rem; border-radius: var(--r); background: var(--bg2); color: var(--muted); font-size: 0.8125rem; font-weight: 600; user-select: none; overflow: hidden; -webkit-app-region: drag; }
+/* macOS: the system's window buttons lie over the bar's left end (the shell's `trafficLightPosition`); the bar starts after them. */
+html[data-desktop="macos"] .titlebar { padding-left: 5rem; }
 .titlebar-mark { flex: none; }
 .titlebar-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .titlebar.inactive .titlebar-mark, .titlebar.inactive .titlebar-title { opacity: 0.55; }

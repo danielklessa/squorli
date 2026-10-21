@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { INFO_ARGUMENT, IPC, type AppearanceState, type DesktopInfo, type PlatformOs, type UpdateState, type WindowAppearance, type WindowFrameState } from "@squorli/web/platform/bridge";
 import { APP_ORIGIN } from "./appFiles";
 import { appearanceState, normalizeAppearance, supportedMaterials } from "./appearance";
+import { applyAppMenu } from "./appMenu";
 import { attentionText, badgeFile, readAttentionCount } from "./attention";
 import { appIdRegistration, readNotification } from "./notifications";
 import { readAutostartBackground, startsInBackground } from "./autostart";
@@ -203,8 +204,10 @@ function createWindow(splash: Splash | null = null): BrowserWindow {
   const state = restoreWindowState(loadConfig(userData).window, screen.getAllDisplays().map((d) => d.workArea));
   info.frame.maximized = state?.maximized === true;
   const win = new BrowserWindow({
-    // No system title bar: the client draws its own (TitleBar.tsx). A see-through window must be frameless anyway.
-    frame: false, transparent: transparentWindow,
+    // No system title bar: the client draws its own (TitleBar.tsx). A see-through window must be frameless anyway. macOS keeps
+    // the window's own buttons (the "traffic lights") over the client's bar instead of a frame (21 October 2026): `frame: false`
+    // would drop them, and a Mac window without them is wrong; the client leaves them room (styles.css `data-desktop="macos"`).
+    ...(process.platform === "darwin" ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 16, y: 16 } } : { frame: false }), transparent: transparentWindow,
     ...(state ? state.bounds : DEFAULT_SIZE), minWidth: MIN_SIZE.width, minHeight: MIN_SIZE.height, show: false,
     // A packaged app carries its icon in the executable; unpackaged the window names it, or Electron's icon shows.
     ...(app.isPackaged ? {} : { icon: join(__dirname, "..", "build", "icon.png") }), backgroundColor: look.effective === "none" ? SOLID : "#00000000", ...(look.effective === "mica" ? { backgroundMaterial: "mica" as const } : {}), autoHideMenuBar: true, title: "Squorli",
@@ -267,7 +270,9 @@ function createWindow(splash: Splash | null = null): BrowserWindow {
   const tellFrame = () => { if (!win.isDestroyed()) win.webContents.send(IPC.windowFrame, frameOf(win)); };
   win.on("maximize", tellFrame); win.on("unmaximize", tellFrame); win.on("focus", tellFrame); win.on("blur", tellFrame);
   win.on("enter-full-screen", tellFrame); win.on("leave-full-screen", tellFrame); win.on("restore", tellFrame);
-  win.webContents.on("did-finish-load", tellFrame);
+  // The page's listeners exist only from here on: what the shell sent before (the update check's result, which on a Mac or a
+  // deb comes while the page still loads, found on 21 October 2026) is said again.
+  win.webContents.on("did-finish-load", () => { tellFrame(); if (!win.isDestroyed()) win.webContents.send(IPC.updateState, updateState()); });
   // Remembered when it closes, and a moment after every move or resize (a crash or a shutdown skips "close").
   let rememberTimer: ReturnType<typeof setTimeout> | null = null;
   const remember = () => {
@@ -307,6 +312,7 @@ else {
     registerAppId();
     // Windows knows the locale only from here on; the client says its own language once it runs (`IPC.language`).
     language = languageOfLocale(app.getLocale());
+    applyAppMenu(language);
     // Unpackaged: the build of the sibling package; packaged: electron-builder copies it next to the app (extraResources).
     const rendererRoot = app.isPackaged ? join(process.resourcesPath, "renderer") : join(__dirname, "..", "..", "web", "dist");
     serveApp(rendererRoot);
@@ -373,7 +379,7 @@ else {
     ipcMain.on(IPC.attention, (event, count: unknown) => { if (isClientFrame(event)) { attention = readAttentionCount(count); showAttention(); } });
     ipcMain.on(IPC.notify, (event, value: unknown) => { if (isClientFrame(event)) void showNotification(value, systemWatch.fullscreenBusy); });
     ipcMain.on(IPC.focusPopout, (event, name: unknown) => { if (isClientFrame(event)) focusPopout(name); });
-    ipcMain.on(IPC.language, (event, value: unknown) => { if (isClientFrame(event)) { language = readShellLanguage(value, language); setTrayLanguage(tray, language); } });
+    ipcMain.on(IPC.language, (event, value: unknown) => { if (isClientFrame(event)) { language = readShellLanguage(value, language); setTrayLanguage(tray, language); applyAppMenu(language); } });
     ipcMain.on(IPC.openExternal, (event, url: unknown) => { if (isClientFrame(event) && typeof url === "string") openExternal(url); });
     tray = createTray(() => mainWindow, () => { quitting = true; app.quit(); }, language);
     // The install quits by itself and must not be held: the client left its voice channel before it asked for the install (App.tsx).
@@ -392,7 +398,12 @@ else {
         mainWindow = createWindow(splash);
       });
     }
-    app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow(); });
+    // macOS: a click on the dock icon. The window may only be hidden (`closeToTray`), then it comes back; gone, it is made anew.
+    app.on("activate", () => {
+      const win = mainWindow;
+      if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+      else if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();
+    });
   });
   app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 }

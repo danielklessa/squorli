@@ -16,7 +16,7 @@ Squorli is public: the website, the repository and the image are announced and u
 |---|---|
 | Model | Discord (server → channels → roles), but every server self-hosted |
 | Video | Up to 15 simultaneous cameras per channel (target; accepted once measured on a real server, see 3.2) |
-| Clients | Web (browser) and desktop (Windows and Linux built; macOS open, see 3.3); a mobile app for iOS and Android is being built (`docs/PLAN-mobile.md`, stage 1 begun 20 October 2026, `apps/mobile`) |
+| Clients | Web (browser) and desktop (Windows, Linux and, since 21 October 2026, macOS built; the Mac app's signing is open, see 3.3); a mobile app for iOS and Android is being built (`docs/PLAN-mobile.md`, stage 1 begun 20 October 2026, `apps/mobile`) |
 | Identity | One account for all servers through the directory (`@name`); a server's own accounts (`~name`) next to it |
 | Development | One person, TypeScript/Node, delivered as Docker containers |
 | License | Apache 2.0. **No code from Stoat or other AGPL projects**, they may only serve as reference |
@@ -78,7 +78,7 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 ### 3.3 Clients
 
-- **macOS desktop app** (user: medium): a mac build target and signing in CI. System audio in a share is a documented limitation there, not a requirement (the user, 3 October 2026); the matrix in `docs/features/voice-video.md` says so.
+- **macOS desktop app, signing** (user: medium): the app is built since 21 October 2026 (two DMGs, Apple Silicon and Intel, on the macos-latest runner; `docs/features/desktop.md` "macOS build"), but only ad-hoc signed and not notarized, because there is no Apple Developer account (the user's decision, 21 October 2026): Gatekeeper refuses the first start until the user allows it, and the app cannot update itself (it shows the notice and links to the download page). Open, once an Apple Developer account exists: the Developer ID certificate and the notarization in the release workflow (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` in the `signing` environment; `hardenedRuntime` with entitlements; `notarize`), the zip target for Squirrel.Mac, `updateMode` "self" on darwin, start with the system (login items are unreliable for an unsigned app). System audio in a share is a documented limitation there, not a requirement (the user, 3 October 2026); the matrix in `docs/features/voice-video.md` says so.
 
 ### 3.4 A screen share that adapts by itself (user: medium)
 

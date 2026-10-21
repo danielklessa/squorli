@@ -105,7 +105,8 @@ describe("updateMode", () => {
     expect(updateMode({ packaged: true, platform: "win32", appImage: false })).toBe("self");
     expect(updateMode({ packaged: true, platform: "linux", appImage: true })).toBe("self");
     expect(updateMode({ packaged: true, platform: "linux", appImage: false })).toBe("manual");
-    expect(updateMode({ packaged: true, platform: "darwin", appImage: false })).toBe("none");
+    expect(updateMode({ packaged: true, platform: "darwin", appImage: false })).toBe("manual"); // unsigned: the download page
+    expect(updateMode({ packaged: true, platform: "freebsd", appImage: false })).toBe("none");
     expect(updateMode({ packaged: false, platform: "win32", appImage: false })).toBe("none");
   });
 });

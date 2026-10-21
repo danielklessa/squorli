@@ -7,7 +7,8 @@ import { DOWNLOAD_URL, useUpdateState } from "./appUpdates";
 /**
  * The desktop app's own title bar (user's wish, 18 September 2026): the window has no system frame, so this slim bar drags the
  * window (`-webkit-app-region: drag` in styles.css; a double click maximizes, as Windows does for a drag region) and carries
- * the three window buttons. Renders nothing in a browser (`platform.window.frame` is null) and in fullscreen.
+ * the three window buttons, except on macOS, where the system's own buttons sit over the bar's left end (the shell keeps them,
+ * `titleBarStyle: "hidden"`; 21 October 2026). Renders nothing in a browser (`platform.window.frame` is null) and in fullscreen.
  * When an update is downloaded it offers the restart (`onRestartForUpdate`: App.tsx asks first while in a voice channel);
  * a deb installation, which cannot update itself, gets the way to the download page instead.
  * The debug button lives here while the bar is shown (user's wish, 14 October 2026: on the right, with some room left of the
@@ -25,11 +26,11 @@ export function TitleBar({ title, onRestartForUpdate, debug }: { title: string; 
       {update?.status === "ready" && <button className="titlebar-update" title={t("update.ready", { v: update.version })} onClick={() => (onRestartForUpdate ?? (() => platform.updates?.restartAndInstall()))()}><Icon name="download" /> {t("update.restart")}</button>}
       {update?.status === "available" && update.manual && <button className="titlebar-update" title={t("update.availableManual", { v: update.version })} onClick={() => platform.links.openExternal(DOWNLOAD_URL)}><Icon name="download" /> {t("update.get", { v: update.version })}</button>}
       {debug && <button className={`titlebar-btn titlebar-debug${debug.on ? " on" : ""}`} aria-pressed={debug.on} title={t("app.debug")} aria-label={t("app.debug")} onClick={debug.toggle}><Icon name="bug" /></button>}
-      <div className="titlebar-buttons">
+      {platform.os !== "macos" && <div className="titlebar-buttons">
         <button className="titlebar-btn" title={t("window.minimize")} aria-label={t("window.minimize")} onClick={() => frame.control("minimize")}><Icon name="minus" /></button>
         <button className="titlebar-btn" title={state.maximized ? t("window.restore") : t("window.maximize")} aria-label={state.maximized ? t("window.restore") : t("window.maximize")} onClick={() => frame.control("toggle-maximize")}><Icon name={state.maximized ? "copy" : "square"} /></button>
         <button className="titlebar-btn close" title={t("common.close")} aria-label={t("common.close")} onClick={() => frame.control("close")}><Icon name="x" /></button>
-      </div>
+      </div>}
     </header>
   );
 }

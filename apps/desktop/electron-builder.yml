@@ -1,5 +1,6 @@
 # Packaging of the desktop app (docs/features/desktop.md, apps/desktop/AGENTS.md). Run through `pnpm --filter @squorli/desktop dist`
-# after `pnpm build` (root): the app ships the web client's build as `resources/renderer`.
+# after `pnpm build` (root): the app ships the web client's build as `resources/renderer`. Windows (NSIS, signed), Linux
+# (AppImage, deb) and, since 21 October 2026, macOS (dmg + zip for arm64 and x64, UNSIGNED: no Apple Developer account yet).
 appId: com.squorli.desktop
 productName: Squorli
 copyright: Copyright 2026 Daniel Klessa
@@ -82,6 +83,39 @@ linux:
   maintainer: Daniel Klessa <desktop@squorli.com>
   executableName: squorli
   artifactName: Squorli-${version}-${arch}.${ext}
+
+# macOS (21 October 2026, docs/features/desktop.md "macOS build"): two DMGs, Apple Silicon (arm64) and Intel (x64), built on
+# the macos-latest runner (arm64; electron-builder downloads the x64 Electron for the second). No Apple Developer account (the
+# user's decision, 21 October 2026): the app carries an AD-HOC signature (`identity: "-"`; `null` would skip signing, and an
+# Apple Silicon Mac does not start an app whose signature is missing or broken), which Gatekeeper treats as unsigned (the
+# download page says how to open it). electron-builder flips the fuses above and signs afterwards, so
+# `electronFuses.resetAdHocDarwinSignature` is not needed. No hardened runtime (its library validation would refuse the ad-hoc
+# frameworks), no notarization. electron-updater cannot install on macOS without a Developer ID (Squirrel.Mac), so the app only
+# shows the notice (updateMode.ts "manual"); the dmg still contributes to `latest-mac.yml` for that check (no zip target: it
+# would double the upload for an update path that cannot work yet). A signed build later = CSC_LINK/CSC_KEY_PASSWORD,
+# hardenedRuntime with entitlements, notarize, the zip target, updateMode "self".
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.social-networking
+  icon: build/icon.png   # electron-builder derives the .icns, as it derives the .ico
+  artifactName: Squorli-${version}-${arch}.${ext}
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
+  darkModeSupport: true
+  # Without these texts macOS ends the app the moment the client asks for the microphone or the camera.
+  extendInfo:
+    NSMicrophoneUsageDescription: Squorli uses the microphone for voice channels.
+    NSCameraUsageDescription: Squorli uses the camera for video in voice channels.
+dmg:
+  artifactName: Squorli-${version}-${arch}.${ext}
+  sign: false
+  contents:
+    - { x: 130, y: 220 }
+    - { x: 410, y: 220, type: link, path: /Applications }
 
 # The app asks only squorli.com for updates; the feed there points at the GitHub Releases files (squorli-website).
 publish:

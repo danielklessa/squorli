@@ -17,8 +17,9 @@ import { fetchSignature, signatureUrlOf, verifyDetachedSignature } from "./updat
  * Windows (NSIS) and the AppImage update themselves. **At the start** (`checkAtStart`, user's wish of 20 September 2026) the
  * start window shows the check, the download with its progress and the installation, and the app restarts into the new
  * version before the client was ever shown. While the app runs, as before: download in the background, install when the
- * user restarts from the client's notice or quits. A deb installation cannot replace itself: it only learns that a version
- * exists (`manual`) and the client links to the download page. An unpackaged app has no updates.
+ * user restarts from the client's notice or quits. A deb installation cannot replace itself, and neither may the macOS app
+ * while it is unsigned (Squirrel.Mac refuses, 21 October 2026): they only learn that a version exists (`manual`, from
+ * `latest-mac.yml` on the Mac) and the client links to the download page. An unpackaged app has no updates.
  */
 const CHECK_AFTER_START_MS = 15_000;
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
