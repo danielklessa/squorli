@@ -871,6 +871,7 @@ export const de = {
   "profile.signOutLosesText": "@{handle} hat kein Passwort. Der Schlüssel liegt nur auf diesem Gerät: Nach dem Abmelden ist das Konto endgültig verloren. Setze vorher ein Passwort, in der Anmeldung eines Servers oder auf der Kontoseite.",
   "devices.via": "über {origin}",
   "devices.viaApp": "über die Desktop-App",
+  "devices.viaMobileApp": "über die mobile App",
   "devices.page": "Kontoseite",
   "devices.none": "Noch keine Geräte.",
   "devices.hintDirectory": "Geräte, die mit {account} angemeldet sind, auf allen Servern. Ein abgemeldetes Gerät verliert deinen Schlüssel und kommt nur mit Benutzername, Passwort und zweitem Faktor wieder hinein. Ein Gerät, das 90 Tage nicht benutzt wurde, wird von selbst abgemeldet.",

@@ -11,6 +11,9 @@ describe("labelFromUserAgent (M6c)", () => {
     ["Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36", "Chrome auf Android"],
     ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Squorli-Desktop/0.1.0 Chrome/152.0.7977.130 Electron/44.4.2 Safari/537.36", "Squorli Desktop auf Windows"],
     ["Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Squorli-Desktop/1.2.3 Chrome/152.0.0.0 Electron/44.4.2 Safari/537.36", "Squorli Desktop auf Linux"],
+    // The mobile app: Android's WebView (as the emulator sent it on 20 October 2026) and iOS's WKWebView, each with the app's token appended.
+    ["Mozilla/5.0 (Linux; Android 17; sdk_gphone64_x86_64 Build/CE2A.260420.019; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/145.0.7632.218 Mobile Safari/537.36 Squorli-Mobile/0.1.0", "Squorli App auf Android"],
+    ["Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Squorli-Mobile/0.1.0", "Squorli App auf iOS"],
     ["node", "Browser"],
     ["", null],
   ];

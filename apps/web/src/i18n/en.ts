@@ -870,6 +870,7 @@ export const en: Messages = {
   "profile.signOutLosesText": "@{handle} has no password. Its key exists on this device only: after signing out the account is lost for good. Set a password first, in a server's login or on the account page.",
   "devices.via": "via {origin}",
   "devices.viaApp": "via the desktop app",
+  "devices.viaMobileApp": "via the mobile app",
   "devices.page": "Account page",
   "devices.none": "No devices yet.",
   "devices.hintDirectory": "Devices that are signed in with {account}, on every server. A device that is signed out loses your key and gets back in only with username, password and second factor. A device that was not used for 90 days is signed out by itself.",

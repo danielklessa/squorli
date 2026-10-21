@@ -166,6 +166,12 @@ h4 { font-size: 0.875rem; font-weight: 600; color: var(--muted); padding: 0 0.5r
 /* Layout */
 /* --left-w / --members-w: the side columns' widths, dragged by the user (layout.ts, ColumnHandle.tsx); App.tsx sets them. */
 .app { height: 100%; display: grid; grid-template-columns: var(--left-w, 17rem) minmax(0, 1fr) var(--members-w, 15rem); grid-template-rows: minmax(0, 1fr); overflow: hidden; position: relative; }
+/* The phone's notch and system bars: the mobile app's page runs edge to edge (apps/mobile/AGENTS.md), a browser reports zeros.
+   Outside the phone layout the root keeps every inset. The phone layout (below) keeps only left and right here and gives the top
+   and bottom ones to the columns that touch the edges (rail, navigation, the status view) and to the panels that slide in over
+   them (their header or footer), so that each one's own ground runs under the bars. Every new element that touches the top or
+   bottom edge of the phone layout takes `env(safe-area-inset-top/bottom)` itself; the modals do it in their head and body. */
+.app { box-sizing: border-box; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
 .app.with-rail { grid-template-columns: 5rem var(--left-w, 17rem) minmax(0, 1fr) var(--members-w, 15rem); }
 /* Drag handle over the gap next to a side column. Absolutely placed grid children take no cell; their grid column is the
    containing block. It is wider than the gap so it is easy to hit, and shows a line on hover, focus and while dragging. */
@@ -622,7 +628,7 @@ button.dock-stage:hover { background: var(--sel); }
 .presence.on { background: var(--ok); }
 
 /* Modal */
-.modal-backdrop { position: fixed; inset: var(--titlebar-h, 0px) 0 0 0; background: rgba(4,8,18,.7); display: grid; place-items: center; z-index: 10; padding: 1rem; }
+.modal-backdrop { position: fixed; inset: var(--titlebar-h, 0px) 0 0 0; background: rgba(4,8,18,.7); display: grid; place-items: center; z-index: 10; padding: max(1rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px)); }
 .modal { background: var(--bg2); border-radius: var(--r-panel); width: min(56rem, 100%); max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 16px 48px rgba(0,0,0,.45); }
 .small-modal { width: min(28rem, 100%); padding: 1.25rem 1.5rem 1.5rem; }
 .modal-head { display: flex; align-items: center; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--line); }
@@ -1037,15 +1043,15 @@ button.icon.on { color: var(--brand); }
 @media (max-width: 700px) {
   html { touch-action: pan-x pan-y; }
   input, textarea, select { font-size: max(16px, 1em); }
-  .app, .app.with-rail, .app.home { display: grid; grid-template-columns: minmax(0, 1fr); height: 100dvh; }
+  .app, .app.with-rail, .app.home { display: grid; grid-template-columns: minmax(0, 1fr); height: 100dvh; padding-top: 0; padding-bottom: 0; }
   .app.with-rail, .app.home { grid-template-columns: 4rem minmax(0, 1fr); }
-  .rail { flex-direction: column; padding: max(0.75rem, env(safe-area-inset-top)) 0 0.75rem; gap: 1rem; overflow-y: auto; overflow-x: hidden; height: 100%; }
+  .rail { flex-direction: column; padding: max(0.75rem, env(safe-area-inset-top)) 0 max(0.75rem, env(safe-area-inset-bottom)); gap: 1rem; overflow-y: auto; overflow-x: hidden; height: 100%; }
   .rail-item { width: 2.75rem; height: 2.75rem; }
-  .left { display: flex; grid-column: 2; grid-row: 1; margin: 0; border-radius: 0; min-height: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .left { display: flex; grid-column: 2; grid-row: 1; margin: 0; border-radius: 0; min-height: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .left > .sidebar, .left > .home-side { flex: 1; min-height: 0; }
   .main { position: absolute; inset: 0; margin: 0; border: 0; border-radius: 0; z-index: 3; visibility: hidden; transform: translateX(100%); transition: transform 240ms ease, visibility 240ms; }
   .mobile-content .main { visibility: visible; transform: translateX(0); }
-  .main.mobile-status { position: relative; visibility: visible; transform: none; grid-column: 2; grid-row: 1; z-index: 1; }
+  .main.mobile-status { position: relative; visibility: visible; transform: none; grid-column: 2; grid-row: 1; z-index: 1; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .mobile-stage.mobile-content .main { animation: mobile-rise 240ms ease; }
   .mobile-back { display: flex; align-items: center; gap: 0.5rem; flex: none; width: 100%; min-height: 3rem; padding-top: max(0.5rem, env(safe-area-inset-top)); border-radius: 0; text-align: left; }
   .mobile-content .rail, .mobile-content .left { visibility: hidden; }

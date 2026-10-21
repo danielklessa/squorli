@@ -78,10 +78,20 @@ export function deviceEnrolMessage(host: string, handle: string, deviceKey: stri
  * the whole origin is kept, scheme included, so that no host can be taken for it.
  */
 export const DESKTOP_APP_ORIGIN = "app://squorli";
-/** What to keep of a request's Origin header: the host of a web site, `DESKTOP_APP_ORIGIN` for the desktop app, else null. */
+/**
+ * What a sign-in's `origin` holds for the mobile app (20 October 2026). Its page comes from Capacitor's default origins
+ * (`MOBILE_APP_PAGE_ORIGINS`: `https://localhost` on Android, `capacitor://localhost` on iOS; apps/mobile/capacitor.config.js,
+ * final once a public version exists), which no web site is reached as: a site on localhost carries a port. The header is
+ * replaced by this constant so that the lists can name the app instead of "localhost".
+ */
+export const MOBILE_APP_ORIGIN = "app://squorli-mobile";
+/** The Origin headers the mobile app's page sends (Capacitor's defaults for Android and iOS). */
+export const MOBILE_APP_PAGE_ORIGINS: readonly string[] = ["https://localhost", "capacitor://localhost"];
+/** What to keep of a request's Origin header: the host of a web site, `DESKTOP_APP_ORIGIN` for the desktop app, `MOBILE_APP_ORIGIN` for the mobile app, else null. */
 export function signInOrigin(header: unknown): string | null {
   if (typeof header !== "string") return null;
   if (header === DESKTOP_APP_ORIGIN) return DESKTOP_APP_ORIGIN;
+  if (MOBILE_APP_PAGE_ORIGINS.includes(header)) return MOBILE_APP_ORIGIN;
   try {
     const u = new URL(header);
     return (u.protocol === "https:" || u.protocol === "http:") && u.host ? u.host : null;
@@ -94,7 +104,7 @@ export const DeviceInfo = z.object({
   id: Uuid,
   /** From the user agent at enrolment, e.g. "Chrome auf Windows"; null if unknown. */
   label: z.string().nullable(),
-  /** Where the device was enrolled from (`signInOrigin`): a site's host (a chat server's web client, the account page), `DESKTOP_APP_ORIGIN`, or null if unknown. */
+  /** Where the device was enrolled from (`signInOrigin`): a site's host (a chat server's web client, the account page), `DESKTOP_APP_ORIGIN`, `MOBILE_APP_ORIGIN`, or null if unknown. */
   origin: z.string().nullable().default(null),
   kind: DeviceKind.default("client"),
   createdAt: Iso,

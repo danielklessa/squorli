@@ -1,10 +1,11 @@
-import { DESKTOP_APP_ORIGIN, type DeviceInfo } from "@squorli/protocol";
+import { DESKTOP_APP_ORIGIN, MOBILE_APP_ORIGIN, type DeviceInfo } from "@squorli/protocol";
 import { useCallback, useEffect, useState } from "react";
 import { fmtDateTime, t } from "./i18n";
 import { PasswordInput } from "./PasswordInput";
 
-/** Where a device signed in from, as the lists say it: the site's host, or the desktop app by its name; "" if unknown. */
-export const deviceOrigin = (origin: string | null): string => (origin === DESKTOP_APP_ORIGIN ? t("devices.viaApp") : origin ? t("devices.via", { origin }) : "");
+/** Where a device signed in from, as the lists say it: the site's host, or the desktop or the mobile app by its name; "" if unknown. */
+export const deviceOrigin = (origin: string | null): string =>
+  origin === DESKTOP_APP_ORIGIN ? t("devices.viaApp") : origin === MOBILE_APP_ORIGIN ? t("devices.viaMobileApp") : origin ? t("devices.via", { origin }) : "";
 /** What a device is called in the lists: browser and system, and where it signed in from. */
 export const deviceLabel = (d: Pick<DeviceInfo, "label" | "origin">): string => [d.label ?? t("profile.unknownDevice"), deviceOrigin(d.origin)].filter(Boolean).join(" ");
 /** When it signed in and when it was last used, in one line. */

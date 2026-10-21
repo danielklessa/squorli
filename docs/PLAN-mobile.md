@@ -93,13 +93,12 @@ Times are rough guesses by Claude, not measured; they assume Claude writes most 
 
 **Done when:** on the iPhone (stage 1 build through Xcode or TestFlight) and in the Android emulator: sign in, write, join a voice channel and talk in the foreground.
 
-**State on 20 October 2026:** built: `apps/mobile` (Capacitor 8.5.3, iOS with the Swift Package Manager, both projects committed, `sync`), `platform/mobileApp.ts`, the fixed origin (Capacitor's defaults, final once public), the app page's CSP and `viewport-fit=cover`, safe areas through System Bars, the Keyboard plugin, Android's back button (`backStack.ts`), permissions and their texts, icons and start screens (`tools/mobile-icons.mjs`), the version in both projects, no Android backup. Checked in headless Chrome as an Android phone with a stand-in bridge (`docs/features/mobile.md`). **Left of stage 1:**
-- the first build and run: Android Studio and an emulator image on the development machine (stage 0; not installed), Xcode on a Mac for the iPhone (N1);
+**State on 20 October 2026:** built: `apps/mobile` (Capacitor 8.5.3, iOS with the Swift Package Manager, both projects committed, `sync`), `platform/mobileApp.ts`, the fixed origin (Capacitor's defaults, final once public), the app page's CSP and `viewport-fit=cover`, safe areas through System Bars, the Keyboard plugin, Android's back button (`backStack.ts`), permissions and their texts, icons and start screens (`tools/mobile-icons.mjs`), the version in both projects, no Android backup; the device lists name the app ("Squorli App auf Android" "über die mobile App", `MOBILE_APP_ORIGIN`; both repositories, 20 October 2026, `docs/features/devices.md`). Checked in headless Chrome as an Android phone with a stand-in bridge (`docs/features/mobile.md`). **Left of stage 1:**
+- the first build and run: **Android done on 20 October 2026** (Android Studio, the SDK and the emulator on the development machine, the app runs there; `docs/features/mobile.md`), Xcode on a Mac for the iPhone (N1) still open;
 - the "Done when" above on both;
 - long press for `VoiceMemberMenu` and the member menu (on iOS a long press fires no `contextmenu`; the stage's tiles and the sidebar's voice members have no other way to their menu);
 - the app's own wording where the browser's says "Tab" or "Browser" (`login.createDirectoryHint` and others; the desktop app's `i18n/app.*.ts` speak of windows and Windows and are not taken);
 - German texts for the iOS permission questions (`InfoPlist.strings`, added in Xcode);
-- the device lists' "where from" for the app (`signInOrigin` in the protocol's `directory.ts`, and "Squorli App" in `labelFromUserAgent`; a change of the directory contract in both repositories, before a public version);
 - Renovate: one group for every `@capacitor/*` package in both `package.json` files, and the note in its merge requests that `pnpm --filter @squorli/mobile sync` has to run (`native.test.mjs` fails until then); its Gradle, Gradle wrapper and Swift managers kept out of `apps/mobile` (the template's versions, `Package.swift` is written by `cap sync`).
 
 ### Stage 2: the background measurement (2 to 3 days per platform)
@@ -202,7 +201,7 @@ Of 25 September 2026, still standing: 1 (Capacitor), 2 (push content), 3 (no pus
 - **N3: publisher in the stores.** Person or the planned company; decide before the first upload.
 - **N4: an Android test phone.** Proposal: a used one before stage 6.
 
-**Made by Claude in stage 1 (20 October 2026), to be confirmed:** the app id `com.squorli.app` (bundle id and application id; final after the first upload); the origins `capacitor://localhost` and `https://localhost` (Capacitor's defaults; final once public); no backup and no device transfer of the app's data on Android (the device keys belong to one installation; iOS still backs up, 6.3); Android's back sends the app to the background instead of ending it; the version from `apps/mobile/package.json` with the build number major * 1000000 + minor * 1000 + patch; the English permission texts; the app page's CSP = the desktop app's; Capacitor pinned to exact versions.
+**Made by Claude in stage 1 and confirmed by the user on 20 October 2026 ("deine Entscheidungen sind akzeptiert"):** the app id `com.squorli.app` (bundle id and application id; final after the first upload); the origins `capacitor://localhost` and `https://localhost` (Capacitor's defaults; final once public); no backup and no device transfer of the app's data on Android (the device keys belong to one installation; iOS still backs up, 6.3); Android's back sends the app to the background instead of ending it; the version from `apps/mobile/package.json` with the build number major * 1000000 + minor * 1000 + patch; the English permission texts; the app page's CSP = the desktop app's; Capacitor pinned to exact versions.
 
 ## 10. Checked and not checked
 

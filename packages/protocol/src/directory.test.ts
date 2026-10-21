@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DM_REPORT_CONTEXT_MAX, DirectoryGame, DmReportRequest, LibraryGameId, directoryDmReportPayload, directoryGameIconUrl, directoryGameUrl, splitGameId } from "./directory";
 import { AccountStatus, DirectoryAction, DirectoryReportRequest, NoticeReadRequest, RefusedServersResponse, SERVER_REPORT_EVIDENCE_TEXT_MAX, directoryReportPayload, refusedHostHash, reportKindsOf } from "./directory";
 import { DIRECTORY_WS_CLOSE_DEVICE, DirectoryClientEvent, DirectoryServerEvent, FriendsActionRequest } from "./friends";
-import { BackupFetchRequest, BackupUploadRequest, DESKTOP_APP_ORIGIN, DEVICE_IDLE_MS, DEVICE_MAX, DEVICE_PAGE_MAX, DEVICE_REFUSALS, DeviceRevokeRequest, SignedActionRequest, TooManyDevicesResponse, chatLoginMessage, deviceEnrolMessage, deviceProofMessage, directoryActionMessage, isDeviceRefusal, signInOrigin } from "./directory";
+import { BackupFetchRequest, BackupUploadRequest, DESKTOP_APP_ORIGIN, DEVICE_IDLE_MS, DEVICE_MAX, DEVICE_PAGE_MAX, DEVICE_REFUSALS, DeviceRevokeRequest, MOBILE_APP_ORIGIN, SignedActionRequest, TooManyDevicesResponse, chatLoginMessage, deviceEnrolMessage, deviceProofMessage, directoryActionMessage, isDeviceRefusal, signInOrigin } from "./directory";
 import {
   ACCOUNT_SETTINGS_MAX_LENGTH, AVATAR_MAX_BYTES, AccountSettings, AccountSettingsUpdateRequest, AvatarUpdateRequest, DirectoryAccount, DirectoryHealth, avatarDigest, directoryAvatarPayload, directoryAvatarUrl, sniffAvatarMime, DirectoryRegisterRequest, Handle, directoryRegisterMessage, parseAccountSettings,
   BLOCKED_USERS_MAX, HIDDEN_GAMES_MAX, HIDDEN_GAME_ID_MAX, SERVER_HOST_MAX, SERVER_ORDER_MAX, SEALED_SETTINGS_MAX_LENGTH, SealedSettings, SoundSettings, deriveSettingsKey, openSettings, parseSealedSettings, sealSettings,
@@ -330,14 +330,19 @@ describe("suspension and notices", () => {
 });
 
 describe("devices", () => {
-  it("keeps where a sign-in came from: a site's host, the desktop app as itself, nothing else", () => {
+  it("keeps where a sign-in came from: a site's host, the desktop app as itself, the mobile app as itself, nothing else", () => {
     expect(signInOrigin("https://chat.example.org")).toBe("chat.example.org");
     expect(signInOrigin("http://localhost:3000")).toBe("localhost:3000");
     expect(signInOrigin("app://squorli")).toBe(DESKTOP_APP_ORIGIN);
+    // The mobile app's page has Capacitor's origins; a site on localhost carries a port and stays a host.
+    expect(signInOrigin("https://localhost")).toBe(MOBILE_APP_ORIGIN);
+    expect(signInOrigin("capacitor://localhost")).toBe(MOBILE_APP_ORIGIN);
+    expect(signInOrigin("https://localhost:5173")).toBe("localhost:5173");
+    expect(signInOrigin("http://localhost")).toBe("localhost");
     // A web site named like the app is a host, never the app.
     expect(signInOrigin("http://squorli")).toBe("squorli");
     expect(signInOrigin("https://squorli")).not.toBe(DESKTOP_APP_ORIGIN);
-    for (const other of ["app://other", "file://", "null", "", "chrome-extension://abc", undefined, null, 7, ["https://a.example"]]) expect(signInOrigin(other)).toBeNull();
+    for (const other of ["app://other", "app://squorli-mobile", "file://", "null", "", "chrome-extension://abc", undefined, null, 7, ["https://a.example"]]) expect(signInOrigin(other)).toBeNull();
   });
   const key = "a".repeat(64);
   const device = "c".repeat(64);
