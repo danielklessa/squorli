@@ -16,7 +16,7 @@ Adapts by itself, at the sender, without any code of ours:
 
 Does not adapt:
 - **Nothing reacts to what the viewer sees.** The sender only learns of packet loss and round trip through RTCP (and congestion control reacts to that); freezes, a full jitter buffer or a slow decoder on the viewer's side reach nobody.
-- **The frame rate ceiling** stays at 30, the capture at 1080p; a capture that starves (the game saturates the GPU) delivers fewer frames and no statistic of ours says so.
+- **The frame rate ceiling** stays at 30, the capture at 1080p; a capture that starves (the game saturates the GPU) delivers fewer frames and no statistic of ours says so. Measured on 23 October 2026 and planned separately: `docs/PLAN-share-capture.md`.
 - **The codec** never changes for a running share, except by the regression above.
 - **A hardware encoder's rate control** is looser than OpenH264's or libvpx's: Media Foundation encoders overshoot the target on keyframes and scene changes. The ceiling is the only handle.
 
@@ -53,7 +53,7 @@ A small state machine in `voice/shareGovernor.ts` (pure, tested; driven by `Voic
 - **Ladder** (moving pictures): 1080p at the ceiling, 1080p at two thirds of it, 900p (scaleResolutionDownBy 1.2), 720p at half, 720p at a third, 540p. The standing VP8 share keeps "maintain-resolution" and is not governed (text has to stay readable; frames are the right thing to lose there).
 - **Down** one rung when, for 5 s in a row: `qualityLimitationReason` is "cpu" or "bandwidth" with the resolution already scaled, or the encoded fps stay under 20, or the viewers' RTCP reports loss over 2 % or a round trip over 300 ms. **Up** one rung after 30 s without any of that, at most every 15 s, never above what the user picked.
 - **Hysteresis** matters more than the thresholds: a ladder that oscillates is worse than a fixed 720p.
-- What it cannot fix: a capture that starves at the game (stage 4 tells the user), a viewer's slow decoder (stage 3).
+- What it cannot fix: a capture that starves at the game (stage 4 tells the user; `docs/PLAN-share-capture.md`), a viewer's slow decoder (stage 3).
 - Shown to the sender: a small line in the tile ("Übertragung angepasst: 720p, 3 Mbit/s") with a way to pin a rung by hand.
 
 ### Stage 3: viewers tell the sender how the picture arrives
