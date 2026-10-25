@@ -69,9 +69,9 @@ are in the package's folder `licenses`, one folder per program.
 
 | Program | Version | License | Source | Includes |
 |---|---|---|---|---|
-| Node.js | 24.21.0 | MIT | https://nodejs.org | V8, libuv, OpenSSL, ICU, zlib and others, each under its own license (listed in the license file) |
+| Node.js | 24.22.1 | MIT | https://nodejs.org | V8, libuv, OpenSSL, ICU, zlib and others, each under its own license (listed in the license file) |
 | PostgreSQL | 16.15-4 | PostgreSQL | https://www.postgresql.org | OpenSSL (Apache-2.0), ICU (ICU License), zlib (Zlib), libxml2 and libxslt (MIT), LZ4 (BSD-2-Clause), Zstandard (BSD-3-Clause), gettext libintl, libiconv and winpthreads (LGPL-2.1, as separate DLLs) |
-| LiveKit Server | 1.13.9 | Apache-2.0 | https://github.com/livekit/livekit | Go modules compiled into the program, each under its own license |
+| LiveKit Server | 1.13.10 | Apache-2.0 | https://github.com/livekit/livekit | Go modules compiled into the program, each under its own license |
 | Caddy | 2.11.4 | Apache-2.0 | https://github.com/caddyserver/caddy | Go modules compiled into the program, each under its own license |
 | WinSW (Windows Service Wrapper) | 2.12.0 | MIT | https://github.com/winsw/winsw |  |
 

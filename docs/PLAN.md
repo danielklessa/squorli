@@ -45,7 +45,7 @@ Recording, end-to-end encryption of media, a bot API, threads, federation betwee
 | Audio quality below Discord level | Browser echo/noise suppression, speech gate, per-device settings | built; real-world measurement with users ongoing |
 | The operator's proxy breaks WebSockets or headers | Reference configurations, self-diagnosis naming the proxy fault (`docs/features/doctor.md`), subdomain only | self-diagnosis built; configs exist, untested against real installations (2.1) |
 | Screen share audio outside Chromium/Windows | Matrix, notices in the UI, the desktop app as the way out | matrix rows open (3.2) |
-| LiveKit dependency (Go, third party) | **Pinned version** (`livekit/livekit-server:v1.13.9` since 12 October 2026, pinned since 25 September 2026, `deploy/AGENTS.md`), raise it on purpose with a server release; keep the server's LiveKit layer thin | pinned; no upgrade test in CI |
+| LiveKit dependency (Go, third party) | **Pinned version** (`livekit/livekit-server:v1.13.10` since 25 October 2026, pinned since 25 September 2026, `deploy/AGENTS.md`), raise it on purpose with a server release; keep the server's LiveKit layer thin | pinned; no upgrade test in CI |
 | Scope creep towards Discord's feature list | Section 1.2, section 1.3 | ongoing |
 | Bus factor 1 | Docs next to the code, public repository | ongoing |
 
