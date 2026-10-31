@@ -20,9 +20,9 @@
   },
   "livekit": {
     "name": "LiveKit Server",
-    "version": "1.13.10",
-    "url": "https://github.com/livekit/livekit/releases/download/v1.13.10/livekit_1.13.10_windows_amd64.zip",
-    "sha256": "fd4b7c2c3c1e4c71adaa4f6a046ad1c0abaaaf1e09fae904b35bf231ffae11d2",
+    "version": "1.13.11",
+    "url": "https://github.com/livekit/livekit/releases/download/v1.13.11/livekit_1.13.11_windows_amd64.zip",
+    "sha256": "5d071ea43339f0140d24a66f0b2ff8a7bf6c4d0dceb19b30abca835670213667",
     "license": "Apache-2.0",
     "source": "https://github.com/livekit/livekit",
     "includes": "Go modules compiled into the program, each under its own license"

@@ -27,7 +27,7 @@ files, in `node_modules` of the container image.
 | argparse (desktop app only) | 2.0.1 | Python-2.0 | https://github.com/nodeca/argparse |
 | builder-util-runtime (desktop app only) | 9.7.0 | MIT | https://github.com/electron-userland/electron-builder |
 | debug (desktop app only) | 4.4.3 | MIT | https://github.com/debug-js/debug |
-| electron-updater (desktop app only) | 6.8.9 | MIT | https://github.com/electron-userland/electron-builder |
+| electron-updater (desktop app only) | 6.8.11 | MIT | https://github.com/electron-userland/electron-builder |
 | emojibase-data (Emoji names, keywords and shortcodes (picker, :shortcode:)) | 17.0.0 | MIT | https://github.com/milesj/emojibase |
 | events | 3.3.0 | MIT | https://github.com/Gozala/events |
 | fs-extra (desktop app only) | 10.1.0 | MIT | https://github.com/jprichardson/node-fs-extra |
@@ -41,7 +41,7 @@ files, in `node_modules` of the container image.
 | lodash.escaperegexp (desktop app only) | 4.1.2 | MIT | https://lodash.com/ |
 | lodash.isequal (desktop app only) | 4.5.0 | MIT | https://lodash.com/ |
 | loglevel | 1.9.2 | MIT | https://github.com/pimterry/loglevel |
-| lucide-static (Icon font, only the icons in use) | 1.58.0 | ISC | https://lucide.dev |
+| lucide-static (Icon font, only the icons in use) | 1.62.0 | ISC | https://lucide.dev |
 | machina | 7.0.1 | MIT | https://machina-js.org/ |
 | MediaPipe Selfie Segmenter (model) (Camera background blur, delivered by this server) | float16, 2023-05-07 | Apache-2.0 | https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter |
 | ms (desktop app only) | 2.1.3 | MIT | https://github.com/vercel/ms |
@@ -71,7 +71,7 @@ are in the package's folder `licenses`, one folder per program.
 |---|---|---|---|---|
 | Node.js | 24.22.1 | MIT | https://nodejs.org | V8, libuv, OpenSSL, ICU, zlib and others, each under its own license (listed in the license file) |
 | PostgreSQL | 16.15-4 | PostgreSQL | https://www.postgresql.org | OpenSSL (Apache-2.0), ICU (ICU License), zlib (Zlib), libxml2 and libxslt (MIT), LZ4 (BSD-2-Clause), Zstandard (BSD-3-Clause), gettext libintl, libiconv and winpthreads (LGPL-2.1, as separate DLLs) |
-| LiveKit Server | 1.13.10 | Apache-2.0 | https://github.com/livekit/livekit | Go modules compiled into the program, each under its own license |
+| LiveKit Server | 1.13.11 | Apache-2.0 | https://github.com/livekit/livekit | Go modules compiled into the program, each under its own license |
 | Caddy | 2.11.4 | Apache-2.0 | https://github.com/caddyserver/caddy | Go modules compiled into the program, each under its own license |
 | WinSW (Windows Service Wrapper) | 2.12.0 | MIT | https://github.com/winsw/winsw |  |
 
@@ -1049,7 +1049,7 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## License text 9
 
-Applies to: builder-util-runtime 9.7.0, electron-updater 6.8.9
+Applies to: builder-util-runtime 9.7.0, electron-updater 6.8.11
 
 ```text
 The MIT License (MIT)
@@ -1464,7 +1464,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ## License text 22
 
-Applies to: lucide-static 1.58.0
+Applies to: lucide-static 1.62.0
 
 ```text
 ISC License
