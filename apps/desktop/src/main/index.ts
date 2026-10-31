@@ -29,6 +29,7 @@ import { applyPermissions, focusPopout, letPlayersEmbed, lockDownContents, openE
 import { isClientPage } from "./navigation";
 import { createSplash, type Splash } from "./splash";
 import { createQuitHandoff } from "./quitHandoff";
+import { maximizeCommandOf, ownsMaximizeCommand, WM_SYSCOMMAND } from "./systemCommands";
 import { createTray, setTrayAttention, setTrayLanguage } from "./tray";
 import { startSystemWatch, systemWatchPath } from "./systemWatch";
 import { handleUpdates } from "./updates";
@@ -86,6 +87,7 @@ function applyAppearance(win: BrowserWindow): void {
   win.setBackgroundColor(look.effective === "mica" ? "#00000000" : SOLID);
 }
 const frameOf = (win: BrowserWindow): WindowFrameState => ({ maximized: win.isMaximized(), focused: win.isFocused(), fullscreen: win.isFullScreen() });
+const toggleMaximize = (win: BrowserWindow): void => { if (win.isMaximized()) win.unmaximize(); else win.maximize(); };
 /** App updates (updates.ts); set up once the app is ready. */
 let updateState: () => UpdateState = () => ({ status: "unsupported" });
 
@@ -219,6 +221,15 @@ function createWindow(splash: Splash | null = null): BrowserWindow {
     },
   });
   win.removeMenu();
+  // A see-through window has no thick frame (Electron takes it from a transparent window), so Windows cannot maximize it on a
+  // double click of the drag region, from the taskbar's menu or the keyboard, and never snaps it. The maximize command still
+  // arrives and the shell carries it out (systemCommands.ts); Electron fits such a window to the work area. The opaque and
+  // the mica window get all of this from Windows itself, a hook there would toggle twice.
+  if (ownsMaximizeCommand(process.platform, transparentWindow)) win.hookWindowMessage(WM_SYSCOMMAND, (wParam) => {
+    const command = maximizeCommandOf(wParam);
+    if (!command || win.isDestroyed()) return;
+    if (command === "toggle") toggleMaximize(win); else if (!win.isMaximized()) win.maximize();
+  });
   // The ordinary context menu (cut, copy, paste, spelling, a link, a picture), in the client's language (contextMenu.ts).
   handleContextMenu(win, () => language);
   if (state?.maximized) win.maximize();
@@ -360,7 +371,7 @@ else {
       const win = mainWindow;
       if (!isClientFrame(event) || !win) return;
       if (action === "minimize") win.minimize();
-      else if (action === "toggle-maximize") { if (win.isMaximized()) win.unmaximize(); else win.maximize(); }
+      else if (action === "toggle-maximize") toggleMaximize(win);
       else if (action === "close") win.close();
     });
     ipcMain.handle(IPC.setCloseToTray, (event, on: unknown) => {

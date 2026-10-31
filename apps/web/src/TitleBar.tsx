@@ -6,8 +6,9 @@ import { DOWNLOAD_URL, useUpdateState } from "./appUpdates";
 
 /**
  * The desktop app's own title bar (user's wish, 18 September 2026): the window has no system frame, so this slim bar drags the
- * window (`-webkit-app-region: drag` in styles.css; a double click maximizes, as Windows does for a drag region) and carries
- * the three window buttons, except on macOS, where the system's own buttons sit over the bar's left end (the shell keeps them,
+ * window (`-webkit-app-region: drag` in styles.css; a double click maximizes: Windows does that for a drag region, and for the
+ * see-through window, which Windows cannot maximize, the shell does it from the system's command, apps/desktop
+ * `systemCommands.ts`) and carries the three window buttons, except on macOS, where the system's own buttons sit over the bar's left end (the shell keeps them,
  * `titleBarStyle: "hidden"`; 21 October 2026). Renders nothing in a browser (`platform.window.frame` is null) and in fullscreen.
  * When an update is downloaded it offers the restart (`onRestartForUpdate`: App.tsx asks first while in a voice channel);
  * a deb installation, which cannot update itself, gets the way to the download page instead.

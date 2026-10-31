@@ -7,6 +7,7 @@ import { AUTOSTART_ARG, entryStarts, linuxAutostartEntry, linuxAutostartFile, li
 import { hwndOfHandle, hwndOfSource, isDesktopWidget } from "./captureSource";
 import { findControl } from "./controlArgs";
 import { findDeepLink } from "./deepLinkArgs";
+import { HTCAPTION, maximizeCommandOf, ownsMaximizeCommand, SC_MAXIMIZE, WM_SYSCOMMAND, wParamOf } from "./systemCommands";
 import { E0_FLAG, keysLine, scanCodeOf } from "./keyCodes";
 import { isAllowedExternal, isClientPage, windowOpenDecision } from "./navigation";
 import { appIdRegistration, inFullscreen, readNotification } from "./notifications";
@@ -97,6 +98,32 @@ describe("restoreWindowState", () => {
   it("clamps the size to the display and survives rubbish", () => {
     expect(restoreWindowState({ bounds: { x: 0, y: 0, width: 5000, height: 100 } }, [main])).toEqual({ bounds: { x: 0, y: 0, width: 1920, height: 480 }, maximized: false });
     for (const v of [null, undefined, 3, "x", {}, { bounds: { x: "1", y: 0, width: 1, height: 1 } }, { bounds: { x: NaN, y: 0, width: 800, height: 600 } }]) expect(restoreWindowState(v, [main])).toBeNull();
+  });
+});
+
+describe("systemCommands (31 October 2026)", () => {
+  const wParam = (value: number) => { const b = Buffer.alloc(8); b.writeUInt32LE(value, 0); return b; };
+  it("is the shell's job only for the see-through window on Windows: the others get it from Windows itself", () => {
+    expect(ownsMaximizeCommand("win32", true)).toBe(true);
+    expect(ownsMaximizeCommand("win32", false)).toBe(false);
+    expect(ownsMaximizeCommand("linux", true)).toBe(false);
+    expect(ownsMaximizeCommand("darwin", true)).toBe(false);
+  });
+  it("tells the maximize command apart by where it came from", () => {
+    expect(WM_SYSCOMMAND).toBe(0x112);
+    expect(maximizeCommandOf(wParam(SC_MAXIMIZE | HTCAPTION))).toBe("toggle"); // 0xf032: the double click on the drag region, as seen
+    expect(maximizeCommandOf(wParam(SC_MAXIMIZE))).toBe("maximize"); // the taskbar's menu, the keyboard
+    expect(maximizeCommandOf(wParam(0xf012))).toBeNull(); // SC_MOVE from the caption
+    expect(maximizeCommandOf(wParam(0xf020))).toBeNull(); // SC_MINIMIZE
+    expect(maximizeCommandOf(wParam(0xf120))).toBeNull(); // SC_RESTORE
+    expect(maximizeCommandOf(wParam(0xf060))).toBeNull(); // SC_CLOSE
+  });
+  it("reads the WPARAM buffer Electron hands over, whatever its size", () => {
+    expect(wParamOf(Buffer.from([0x32, 0xf0, 0, 0, 0, 0, 0, 0]))).toBe(0xf032);
+    expect(wParamOf(Buffer.from([0x32, 0xf0, 0, 0]))).toBe(0xf032);
+    expect(wParamOf(Buffer.from([2]))).toBe(2);
+    expect(wParamOf(Buffer.alloc(0))).toBe(-1);
+    expect(maximizeCommandOf(Buffer.alloc(0))).toBeNull();
   });
 });
 
