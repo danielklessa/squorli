@@ -23,7 +23,7 @@ DEFAULT_IMAGE="ghcr.io/danielklessa/squorli-server:stable"
 # The published images are signed (security audit S9, deploy/AGENTS.md "Signed images"): cosign, keyless, the certificate
 # names the release workflow of the repository at a tag v<version>. The check runs cosign in its own container, pinned by
 # digest; the same three values go into the helper. Renovate keeps the digest current (squorli-renovate).
-COSIGN_IMAGE="ghcr.io/sigstore/cosign/cosign:v3.1.3@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
+COSIGN_IMAGE="ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d"
 SIGNER_IDENTITY='^https://github\.com/danielklessa/squorli/\.github/workflows/server-release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
 SIGNER_ISSUER="https://token.actions.githubusercontent.com"
 DEFAULT_DIRECTORY="https://directory.squorli.com"
