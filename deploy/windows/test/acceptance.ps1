@@ -15,8 +15,9 @@
   What it checks: the ZIP against its .sha256 file, install.ps1 -Unattended, the services (running, automatic, an account
   of their own), the access rights of .env and of a backup, the PATH, /api/health and /rtc/validate, squorli status,
   doctor, logs, backup, restore (its own backup and the one of a Linux installation in linux-backup\), stop, start,
-  restart, update -Package (the same package; the next version, which leaves PostgreSQL and LiveKit running; one that
-  asks for work by hand, which the run of the task leaves alone; one whose app server ends at its start: the way back),
+  restart, update -Package (the same package, with STORAGE_QUOTA_MB taken out of .env first as an installation from before
+  0.10.0 has none; the next version, which leaves PostgreSQL and LiveKit running; one that asks for work by hand, which
+  the run of the task leaves alone; one whose app server ends at its start: the way back),
   update -Check, autoupdate (the task runs as SYSTEM), nodeip (the task, a check that finds an address or says it found
   none), uninstall.ps1.
 
@@ -307,11 +308,19 @@ function Test-Update {
   [IO.File]::WriteAllText("$wrong.sha256", ('0' * 64) + "  wrong-sum.zip`n")
   $r = Invoke-Squorli @('update', '-Package', $wrong) -Quiet
   Check 'a package with a wrong checksum is refused, the working folder is gone' ($r.Code -eq 1 -and -not (Test-Path -LiteralPath (Join-Path $DataDir 'update'))) "exit $($r.Code)"
+  # An installation from before 0.10.0 has no STORAGE_QUOTA_MB in its .env (the setup writes one since 4 October 2026): its
+  # update has to pass without the line and must not add one. The update of every such installation stopped in Write-Env
+  # of the new package on 1 November 2026, which this test could not see with the line a fresh installation writes.
+  $envFile = Join-Path $DataDir '.env'
+  $quota = Env-Get 'STORAGE_QUOTA_MB'
+  [IO.File]::WriteAllText($envFile, ((@([IO.File]::ReadAllLines($envFile, $Utf8) | Where-Object { -not $_.StartsWith('STORAGE_QUOTA_MB=') }) -join "`n") + "`n"), $Utf8)
   $before = @(Get-ChildItem -LiteralPath (Join-Path $DataDir 'backups') -Directory).Count
   $r = Invoke-Squorli @('update', '-Package', $script:Zip)
   $health = Get-Health
   Check "squorli update -Package (the same package): code 0, version $($script:Version) answers" ($r.Code -eq 0 -and $null -ne $health -and $health.version -eq $script:Version) "exit $($r.Code)"
   Check 'the update made a backup first' (@(Get-ChildItem -LiteralPath (Join-Path $DataDir 'backups') -Directory).Count -eq $before + 1)
+  Check 'an installation without STORAGE_QUOTA_MB (from before 0.10.0) is updated and gets none' ($r.Code -eq 0 -and (Env-Get 'STORAGE_QUOTA_MB') -eq '') "STORAGE_QUOTA_MB='$(Env-Get 'STORAGE_QUOTA_MB')'"
+  if ($quota) { [IO.File]::AppendAllText($envFile, "STORAGE_QUOTA_MB=$quota`n", $Utf8) }
   Test-ServicesUp 'after the update'
 
   Step 'update to the next version: only what changed is stopped'

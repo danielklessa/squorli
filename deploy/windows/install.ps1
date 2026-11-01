@@ -876,8 +876,10 @@ function Write-Env {
   $secret = Env-Get $envFile 'LIVEKIT_API_SECRET'
   if ($secret.Length -lt 32 -or $secret -eq 'change-me-to-at-least-32-random-characters') { Env-Set $envFile 'LIVEKIT_API_SECRET' (New-Secret) }
   # Storage quota (docs/features/limits.md; security audit S13, 4 October 2026): a fresh installation gets 80 % of the free space
-  # of the data folder's drive; a value the operator set stays.
-  if (-not (Env-Get $envFile 'STORAGE_QUOTA_MB') -and $S.QuotaMb) { Env-Set $envFile 'STORAGE_QUOTA_MB' "$($S.QuotaMb)" }
+  # of the data folder's drive; a value the operator set stays. Main fills QuotaMb only outside an update, and under
+  # Set-StrictMode a key $S does not have stops the run: ask ContainsKey first (the update of every installation from
+  # before 0.10.0 ended here on 1 November 2026, deploy/windows/AGENTS.md).
+  if (-not (Env-Get $envFile 'STORAGE_QUOTA_MB') -and $S.ContainsKey('QuotaMb') -and $S.QuotaMb) { Env-Set $envFile 'STORAGE_QUOTA_MB' "$($S.QuotaMb)" }
   # What squorli doctor shows the app server instead of a session (a proxy on this machine arrives from 127.0.0.1 too)
   if ((Env-Get $envFile 'DOCTOR_TOKEN').Length -lt 32) { Env-Set $envFile 'DOCTOR_TOKEN' (New-Secret) }
 
