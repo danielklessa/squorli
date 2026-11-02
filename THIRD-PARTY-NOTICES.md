@@ -33,7 +33,7 @@ files, in `node_modules` of the container image.
 | fs-extra (desktop app only) | 10.1.0 | MIT | https://github.com/jprichardson/node-fs-extra |
 | graceful-fs (desktop app only) | 4.2.11 | ISC | https://github.com/isaacs/node-graceful-fs |
 | hash-wasm | 4.12.0 | MIT | https://github.com/Daninet/hash-wasm#readme |
-| jose | 6.2.12 | MIT | https://github.com/panva/jose |
+| jose | 6.2.14 | MIT | https://github.com/panva/jose |
 | js-yaml (desktop app only) | 4.3.2 | MIT | https://github.com/nodeca/js-yaml |
 | jsonfile (desktop app only) | 6.2.1 | MIT | https://github.com/jprichardson/node-jsonfile |
 | lazy-val (desktop app only) | 1.0.5 | MIT | https://github.com/develar/lazy-val |
@@ -41,7 +41,7 @@ files, in `node_modules` of the container image.
 | lodash.escaperegexp (desktop app only) | 4.1.2 | MIT | https://lodash.com/ |
 | lodash.isequal (desktop app only) | 4.5.0 | MIT | https://lodash.com/ |
 | loglevel | 1.9.2 | MIT | https://github.com/pimterry/loglevel |
-| lucide-static (Icon font, only the icons in use) | 1.62.0 | ISC | https://lucide.dev |
+| lucide-static (Icon font, only the icons in use) | 1.65.0 | ISC | https://lucide.dev |
 | machina | 7.0.1 | MIT | https://machina-js.org/ |
 | MediaPipe Selfie Segmenter (model) (Camera background blur, delivered by this server) | float16, 2023-05-07 | Apache-2.0 | https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter |
 | ms (desktop app only) | 2.1.3 | MIT | https://github.com/vercel/ms |
@@ -55,6 +55,7 @@ files, in `node_modules` of the container image.
 | sdp-transform | 2.15.0 | MIT | https://github.com/clux/sdp-transform |
 | semver (desktop app only) | 7.7.4 | ISC | https://github.com/npm/node-semver |
 | tiny-typed-emitter (desktop app only) | 2.1.0 | MIT | https://github.com/binier/tiny-typed-emitter |
+| tslib | 2.9.1 | 0BSD | https://www.typescriptlang.org/ |
 | tslib | 2.8.1 | 0BSD | https://www.typescriptlang.org/ |
 | typed-emitter | 2.1.0 | MIT | https://github.com/andywer/typed-emitter |
 | universalify (desktop app only) | 2.0.1 | MIT | https://github.com/RyanZim/universalify#readme |
@@ -1249,7 +1250,7 @@ Special thank you to the authors of original C algorithms:
 
 ## License text 16
 
-Applies to: jose 6.2.12
+Applies to: jose 6.2.14
 
 ```text
 The MIT License (MIT)
@@ -1464,7 +1465,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ## License text 22
 
-Applies to: lucide-static 1.62.0
+Applies to: lucide-static 1.65.0
 
 ```text
 ISC License
@@ -2021,7 +2022,7 @@ SOFTWARE.
 
 ## License text 32
 
-Applies to: tslib 2.8.1
+Applies to: tslib 2.9.1, tslib 2.8.1
 
 ```text
 Copyright (c) Microsoft Corporation.
