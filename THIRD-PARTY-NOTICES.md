@@ -12,10 +12,10 @@ files, in `node_modules` of the container image.
 | Package | Version | License | Source |
 |---|---|---|---|
 | @bufbuild/protobuf | 1.10.1 | (Apache-2.0 AND BSD-3-Clause) | https://github.com/bufbuild/protobuf-es |
-| @capacitor/android (mobile app only) | 8.5.3 | MIT | https://capacitorjs.com |
+| @capacitor/android (mobile app only) | 8.6.0 | MIT | https://capacitorjs.com |
 | @capacitor/app | 8.1.2 | MIT | https://github.com/ionic-team/capacitor-plugins |
-| @capacitor/core | 8.5.3 | MIT | https://capacitorjs.com |
-| @capacitor/ios (mobile app only) | 8.5.3 | MIT | https://capacitorjs.com |
+| @capacitor/core | 8.6.0 | MIT | https://capacitorjs.com |
+| @capacitor/ios (mobile app only) | 8.6.0 | MIT | https://capacitorjs.com |
 | @capacitor/keyboard (mobile app only) | 8.0.6 | MIT | https://github.com/ionic-team/capacitor-keyboard |
 | @livekit/mutex | 1.1.1 | Apache-2.0 | https://github.com/livekit/ts-mutex |
 | @livekit/protocol | 1.52.1 | Apache-2.0 | https://github.com/livekit/protocol |
@@ -286,7 +286,7 @@ Apache License
 
 ## License text 2
 
-Applies to: @capacitor/android 8.5.3, @capacitor/core 8.5.3, @capacitor/ios 8.5.3
+Applies to: @capacitor/android 8.6.0, @capacitor/core 8.6.0, @capacitor/ios 8.6.0
 
 ```text
 MIT License
