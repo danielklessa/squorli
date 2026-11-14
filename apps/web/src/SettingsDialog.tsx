@@ -6,6 +6,7 @@ import type { DeviceInfo, DirectoryAccount, Me, SessionInfo } from "@squorli/pro
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ServerApi } from "./api";
 import { BLUR_OPTIONS } from "./CameraPicker";
+import { CameraPreview } from "./CameraPreview";
 import { askConfirm } from "./dialogs";
 import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
@@ -16,6 +17,7 @@ import { HotkeysTab } from "./HotkeysTab";
 import type { HotkeyAction, HotkeyStatus } from "./platform";
 import { checkHotkey, hotkeyFromKey, keyName, type HotkeyCheck } from "./platform/hotkeys";
 import { useKeyboardLayout } from "./keyboardLayout";
+import type { AudiencePerson } from "./gameAudience";
 import type { GameDetection } from "./gameDetection";
 import { LOCALES, fmtDateTime, localePreference, t, type LocalePreference } from "./i18n";
 import { activity } from "./activity";
@@ -57,6 +59,7 @@ const SOUND_LABELS: Record<SoundCue, string> = {
   selfLeave: t("settings.soundSelfLeave"),
   peerJoin: t("settings.soundPeerJoin"),
   peerLeave: t("settings.soundPeerLeave"),
+  shareStart: t("settings.soundShareStart"),
   message: t("settings.soundMessage"),
 };
 
@@ -69,7 +72,7 @@ const fmt = fmtDateTime;
  * the directory's account page, sign out, discard identity) and licenses (our own and the third-party notices, LicensesTab.tsx). With a directory account everything except the device selection
  * is stored there (store.ts pushes every change); sessions and the name on this server belong to the server shown.
  */
-export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, directoryUrl, directoryAccount, serverDomain, clientVersion, syncError, sealed, client, voice, initialTab, games, blocked, hotkeyStatus, onSaveServerName, onSaveGlobalName, onSetAvatar, onSetLocale, localePending, onCapturingKey, onClose, onLogout, accountDevices, serverAccount, onDirectorySignIn }: {
+export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, directoryUrl, directoryAccount, serverDomain, clientVersion, syncError, sealed, client, voice, initialTab, games, gameAudience, blocked, hotkeyStatus, onSaveServerName, onSaveGlobalName, onSetAvatar, onSetLocale, localePending, onCapturingKey, onClose, onLogout, accountDevices, serverAccount, onDirectorySignIn }: {
   /** The server on screen and who you are there; null = none is shown (client without a home server): the dialog then has
    *  no profile and no sessions, which belong to a server, and the account page names the directory account and `publicKey`. */
   api: ServerApi | null; me: Me | null; publicKey: string | null;
@@ -86,6 +89,8 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
   client: VoiceClient; voice: VoiceState; initialTab?: SettingsTab;
   /** Game detection of the desktop app; null = not available here, and the category is not shown. */
   games: GameDetection | null;
+  /** Who may see my game (GamesTab.tsx): the people a list can name and the relays that cannot enforce a rule yet. */
+  gameAudience: { people: AudiencePerson[]; unsupported: string[] };
   /** Blocked people (docs/features/reports.md, stage 3): the list of the identity used on the server shown, where it is kept, and lifting a block. */
   blocked: { list: { publicKey: string; name: string }[]; inAccount: boolean; onUnblock: (publicKey: string) => void };
   /** What the desktop app's shell made of the global shortcuts (App.tsx); null until it answered, or in a browser (the category is not shown there). */
@@ -211,6 +216,9 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
 
   // The microphone test ends with its tab and with the dialog; so does a capture of a global shortcut.
   useEffect(() => { if (tab !== "voice") void client.stopMicTest(); }, [tab, client]);
+  // The camera preview of the camera tab: started by its button only (the camera's light never goes on by itself), over with the tab.
+  const [cameraPreview, setCameraPreview] = useState(false);
+  useEffect(() => { if (tab !== "camera") setCameraPreview(false); }, [tab]);
   useEffect(() => { if (tab !== "hotkeys") { setCapturingHotkey(null); setRefusedHotkey(null); } }, [tab]);
   useEffect(() => () => { void client.stopMicTest(); }, [client]);
   async function toggleMicTest() {
@@ -536,6 +544,16 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
 
             {tab === "camera" && (
               <>
+                <h3>{t("settings.cameraPreview")}</h3>
+                {voice.cameraOn || cameraPreview
+                  ? <CameraPreview deviceId={settings.cameraDeviceId} blur={settings.cameraBlur} mirror={settings.cameraMirror} live={voice.cameraOn ? client.cameraTrack() : null} />
+                  : <div className="camera-preview camera-preview-off"><button className="secondary" onClick={() => setCameraPreview(true)}><Icon name="video" />{t("settings.cameraPreviewStart")}</button></div>}
+                {cameraPreview && !voice.cameraOn && <div className="row"><button className="secondary small" onClick={() => setCameraPreview(false)}>{t("settings.cameraPreviewStop")}</button></div>}
+                <label className="check">
+                  <input type="checkbox" className="switch" role="switch" checked={settings.cameraMirror} onChange={(e) => update({ cameraMirror: e.target.checked })} />
+                  {t("camera.mirror")}
+                </label>
+                <span className="muted small">{t("settings.cameraMirrorHint")}</span>
                 <h3>{t("settings.device")}</h3>
                 <label className="stack">
                   {t("settings.tab.camera")}
@@ -626,7 +644,7 @@ export function SettingsDialog({ api, me, publicKey, displayName, avatarUrl, dir
                 <span className="muted small">{t("update.hint")}</span>
               </>
             )}
-            {tab === "games" && games && <GamesTab games={games} hiddenInAccount={inAccount && sealed} />}
+            {tab === "games" && games && <GamesTab games={games} hiddenInAccount={inAccount && sealed} audience={{ ...gameAudience, inAccount: inAccount && sealed }} />}
 
             {tab === "blocked" && (
               <>

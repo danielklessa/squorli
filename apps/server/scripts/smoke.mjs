@@ -1289,6 +1289,31 @@ check("a report without the field leaves the game alone", stGame.members.find((x
 mark = wsA.events.length;
 wsB.send({ type: "activity", idle: false, game: null });
 check("no game any more -> gone for everybody", !!(await gameOfB((g) => g === null, mark)));
+// Who may see the game (docs/features/games.md, 14 November 2026): the rule rides with the report, the server filters per recipient.
+const aKey = stGame.members.find((x) => x.publicKey === ownerKey.publicKey)?.publicKey ?? null;
+const stateGameOfB = async (token) => (await api("GET", "/api/state", undefined, token))[1].members.find((x) => x.userId === B.userId)?.game ?? null;
+check("the state announces the game audience", stGame.gameAudience === true && !!aKey, `gameAudience ${stGame.gameAudience}, key ${!!aKey}`);
+mark = wsA.events.length;
+wsB.send({ type: "activity", idle: false, game: { name: "Geheimes Spiel" }, gameAudience: { mode: "only", keys: ["f".repeat(64)] } });
+const evHidden = await gameOfB((g) => g?.name === "Geheimes Spiel", mark, 6500);
+check("a game for selected people only stays hidden from everybody else, in the event and in the state", !evHidden && (await stateGameOfB(owner.token)) === null, `event ${!!evHidden}`);
+check("the player still sees their own game", (await stateGameOfB(B.token))?.name === "Geheimes Spiel");
+mark = wsA.events.length;
+wsB.send({ type: "activity", idle: false, game: { name: "Geheimes Spiel" }, gameAudience: { mode: "only", keys: [aKey] } });
+check("the rule alone changing shows the game to whoever it now names", !!(await gameOfB((g) => g?.name === "Geheimes Spiel", mark)) && (await stateGameOfB(owner.token))?.name === "Geheimes Spiel");
+mark = wsA.events.length;
+wsB.send({ type: "activity", idle: false, game: { name: "Geheimes Spiel" }, gameAudience: { mode: "except", keys: [aKey] } });
+check("a deny list takes the game away from the listed", !!(await gameOfB((g) => g === null, mark)) && (await stateGameOfB(owner.token)) === null);
+mark = wsA.events.length;
+wsB.send({ type: "activity", idle: false, game: { name: "Geheimes Spiel" } });
+check("a report without a rule shows the game to everybody again", !!(await gameOfB((g) => g?.name === "Geheimes Spiel", mark)));
+mark = wsB.events.length;
+wsB.send({ type: "activity", idle: false, game: { name: "Geheimes Spiel" }, gameAudience: { mode: "all", keys: [] } });
+const evBadRule = await wsB.waitFor((e) => e.type === "error" && e.code === "bad_message" && wsB.events.indexOf(e) >= mark, 3000).catch(() => null);
+check("a rule that is none is refused", !!evBadRule);
+mark = wsA.events.length;
+wsB.send({ type: "activity", idle: false, game: null });
+await gameOfB((g) => g === null, mark);
 
 // ---------- Kick / ban
 const keyC = await newKey();

@@ -5,6 +5,7 @@ import { ContextMenu, type MenuAnchor } from "./ContextMenu";
 import { askBlockFriend, askRemoveFriend } from "./friendActions";
 import { platform } from "./platform";
 import { DmView } from "./DmView";
+import { GameAudienceMenuItem } from "./GameAudienceMenuItem";
 import { GameLine } from "./GameLine";
 import { Icon } from "./Icon";
 import type { State, Store } from "./store";
@@ -122,6 +123,7 @@ export function HomeSidebar({ state, store, members, onOpenChat, onReportAccount
               <button role="menuitem" onClick={() => { setMenu(null); store.selectPeer(f.publicKey); onOpenChat(); }}><Icon name="message-circle" /> {t("members.writeMessage")}</button>
               <button role="menuitem" className="danger" onClick={() => { setMenu(null); askRemoveFriend(store, f.publicKey, name); }}><Icon name="user-minus" /> {t("friends.remove")}</button>
               <button role="menuitem" className="danger" onClick={() => { setMenu(null); askBlockFriend(store, f.publicKey, name); }}><Icon name="ban" /> {t("friends.block")}</button>
+              <GameAudienceMenuItem publicKey={f.publicKey} name={name} onDone={() => setMenu(null)} />
               {onReportAccount && <button role="menuitem" onClick={() => { setMenu(null); onReportAccount(f.publicKey, `@${f.handle}`); }}><Icon name="flag" /> {t("report.reportAccount")}</button>}
             </ContextMenu>
           );

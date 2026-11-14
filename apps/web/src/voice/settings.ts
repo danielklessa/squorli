@@ -4,7 +4,8 @@
  * follows the directory account (store.ts): a change here is reported to subscribers with its source, so the store can
  * push user changes to the directory and apply the account's settings without echoing them back.
  */
-import type { SoundSettings as ProtocolSoundSettings } from "@squorli/protocol";
+import type { GameAudienceSetting, SoundSettings as ProtocolSoundSettings } from "@squorli/protocol";
+import { DEFAULT_GAME_AUDIENCE, normalizeGameAudience } from "../gameAudience";
 import type { HotkeyBindings } from "../platform/bridge";
 import { NO_HOTKEYS, normalizeHotkeys } from "../platform/hotkeys";
 import { detectMobile } from "../platform/mobile";
@@ -50,6 +51,8 @@ export type VoiceSettings = {
   cameraQuality: "360p" | "720p";
   /** Camera background blur: 0 = off, otherwise the radius (10 light, 20 strong). Only in browsers that support it. */
   cameraBlur: number;
+  /** The own camera picture shown mirrored to oneself (videoDisplay.ts `mirrorsOwnCamera`); false = as the others see it. Follows the account inside the sealed settings only. */
+  cameraMirror: boolean;
   /** Cues when you or someone else joins or leaves the voice room; each one switchable. With a directory account these follow the account. */
   sounds: SoundSettings;
   /** Speaker view of the stage: may you yourself be shown large as the active speaker? Off = only others are featured. */
@@ -59,6 +62,8 @@ export type VoiceSettings = {
    * default; `servers` = show it to the members of my chat servers too. Follows the directory account.
    */
   games: GameDisplaySettings;
+  /** Who may see my game (gameAudience.ts, docs/features/games.md): everybody, only the listed people, or all but the listed. Follows the account inside the sealed settings only. */
+  gameAudience: GameAudienceSetting;
   /** The server rail as the user arranged it (serverOrder.ts): directory hosts, first at the top. Follows the account inside the sealed settings only. */
   serverOrder: string[];
   /** Link previews in direct messages (docs/features/link-previews.md); false = none made for what I send, none shown of what I receive. Follows the account inside the sealed settings only. */
@@ -100,9 +105,11 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   deviceLabels: {},
   cameraQuality: "720p",
   cameraBlur: 0,
+  cameraMirror: true,
   sounds: { ...DEFAULT_SOUND_SETTINGS },
   featureSelfInSpeakerView: true,
   games: { ...DEFAULT_GAME_DISPLAY },
+  gameAudience: { ...DEFAULT_GAME_AUDIENCE },
   serverOrder: [],
   dmLinkPreviews: true,
   hotkeys: { ...NO_HOTKEYS },
@@ -126,7 +133,7 @@ function readStored(): VoiceSettings {
     if (!raw) return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS }, detectMobile());
     const stored = JSON.parse(raw) as Partial<VoiceSettings>;
     // `sounds` is nested, so it needs its own merge: settings stored before the cues existed have no such field.
-    return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS, ...stored, sounds: normalizeSoundSettings(stored.sounds), micBoost: normalizeMicBoost(stored.micBoost), levelMatch: normalizeLevelMatch(stored.levelMatch), deviceLabels: normalizeDeviceLabels(stored.deviceLabels), games: normalizeGameDisplay(stored.games), serverOrder: normalizeServerOrder(stored.serverOrder), dmLinkPreviews: stored.dmLinkPreviews !== false, hotkeys: normalizeHotkeys(stored.hotkeys) }, detectMobile());
+    return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS, ...stored, gameAudience: normalizeGameAudience(stored.gameAudience), sounds: normalizeSoundSettings(stored.sounds), micBoost: normalizeMicBoost(stored.micBoost), levelMatch: normalizeLevelMatch(stored.levelMatch), deviceLabels: normalizeDeviceLabels(stored.deviceLabels), games: normalizeGameDisplay(stored.games), serverOrder: normalizeServerOrder(stored.serverOrder), dmLinkPreviews: stored.dmLinkPreviews !== false, hotkeys: normalizeHotkeys(stored.hotkeys) }, detectMobile());
   } catch {
     return withDeviceDefaults({ ...DEFAULT_VOICE_SETTINGS }, detectMobile());
   }
@@ -155,5 +162,5 @@ export function subscribeVoiceSettings(fn: (s: VoiceSettings, source: VoiceSetti
 
 /** Same cue settings? (Order-independent field comparison; volumes compared exactly, the slider steps are 0.05.) */
 export function sameSoundSettings(a: ProtocolSoundSettings, b: ProtocolSoundSettings): boolean {
-  return a.selfJoin === b.selfJoin && a.selfLeave === b.selfLeave && a.peerJoin === b.peerJoin && a.peerLeave === b.peerLeave && a.message === b.message && a.volume === b.volume;
+  return a.selfJoin === b.selfJoin && a.selfLeave === b.selfLeave && a.peerJoin === b.peerJoin && a.peerLeave === b.peerLeave && a.message === b.message && a.shareStart === b.shareStart && a.volume === b.volume;
 }

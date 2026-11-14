@@ -67,6 +67,7 @@ import { setSquorliLinkHandler } from "./squorliLinks";
 import { isTypingTarget } from "./usePushToTalk";
 import { askBlockPerson, askRemoveFriend } from "./friendActions";
 import { loadBlockedNames, type BlockControls } from "./blocked";
+import type { AudiencePerson } from "./gameAudience";
 
 /**
  * A command from outside the window (docs/features/hotkeys.md): a global shortcut, the push-to-talk key watched by the
@@ -761,6 +762,19 @@ export function App() {
     const remembered = loadBlockedNames();
     return store.blockedFor(activeHost).map((pk) => ({ publicKey: pk, name: known.get(pk) ?? remembered[pk] ?? `${pk.slice(0, 16)}…` }));
   })();
+  // Who may see my game (Einstellungen > Spiele): the people a list can name are the friends and the members of every connected
+  // server, without myself; and the relays that cannot enforce a rule yet (they hear of no game while one is set).
+  const gameAudienceInfo = (() => {
+    const mine = new Set<string>([state.identity?.publicKey ?? "", ...Object.values(state.servers).map((s) => s.me?.publicKey ?? "")]);
+    const people = new Map<string, AudiencePerson>();
+    for (const f of state.friends ?? []) if (f.state === "accepted") people.set(f.publicKey, { publicKey: f.publicKey, name: f.displayName ?? `@${f.handle}`, handle: `@${f.handle}` });
+    for (const s of Object.values(state.servers)) for (const m of s.server?.members ?? []) if (!people.has(m.publicKey)) people.set(m.publicKey, { publicKey: m.publicKey, name: m.displayName, handle: handleLabel(m) });
+    for (const key of mine) people.delete(key);
+    const unsupported: string[] = [];
+    if (state.directoryAccount && state.directoryUrl && !state.directoryGameAudience) unsupported.push(new URL(state.directoryUrl).host);
+    if (voiceSettings.games.servers) for (const s of Object.values(state.servers)) if (s.server && s.server.gameAudience !== true) unsupported.push(s.server.settings.name);
+    return { people: [...people.values()], unsupported };
+  })();
   const blockedInAccount = !!state.directoryAccount && state.settingsSealed && !(activeHost && state.serverAccounts[activeHost]);
 
   // Server rail: own server first, then the account's servers from the directory (without duplicating our own).
@@ -926,7 +940,7 @@ export function App() {
       {channelEdit && view && <ChannelDialog api={view.conn.api} server={view.server} target={channelEdit} myUserId={view.active.userId!} onClose={() => setChannelEdit(null)} />}
       {screenPick && inPickWindow(<ScreenPicker offer={screenPick.offer} h265={VoiceClient.supportsH265()} audioPossible={platform.os === "windows"} win={pickWindow ?? window}
         onPick={(pick) => { screenPick.resolve(pick); setScreenPick(null); }} onCancel={() => { screenPick.resolve(null); setScreenPick(null); }} />)}
-      {cameraPick && inPickWindow(<CameraPicker cameras={cameraPick} initial={voiceSettings.cameraDeviceId} initialBlur={voiceSettings.cameraBlur} win={pickWindow ?? window} onPick={(id, b) => { void pickCamera(id, b); }} onCancel={() => setCameraPick(null)} />)}
+      {cameraPick && inPickWindow(<CameraPicker cameras={cameraPick} initial={voiceSettings.cameraDeviceId} initialBlur={voiceSettings.cameraBlur} mirror={voiceSettings.cameraMirror} onMirror={(m) => saveVoiceSettings({ ...loadVoiceSettings(), cameraMirror: m })} win={pickWindow ?? window} onPick={(id, b) => { void pickCamera(id, b); }} onCancel={() => setCameraPick(null)} />)}
       {miniProfile && active?.me && (
         <MiniProfile anchor={miniProfile} displayName={me?.displayName ?? active.me.displayName ?? "…"} avatarUrl={myAvatarUrl} storedName={active.me.displayName} handle={handleLabel(active.me)}
           serverName={server?.settings.name ?? active.serverName} withDirectory={!!state.directoryAccount && !!active.serverDomain}
@@ -934,7 +948,7 @@ export function App() {
       )}
       {settingsTab && (homeless || (active?.me && conn)) && (
         <SettingsDialog api={active?.me && conn ? conn.api : null} me={active?.me ?? null} publicKey={state.identity?.publicKey ?? null} displayName={me?.displayName ?? active?.me?.displayName ?? state.directoryAccount?.displayName ?? "…"} avatarUrl={myAvatarUrl} directoryUrl={state.directoryUrl} directoryAccount={state.directoryAccount}
-          serverDomain={active?.serverDomain ?? null} clientVersion={platform.app?.version ?? home?.serverVersion ?? null} syncError={state.settingsSyncError} sealed={state.settingsSealed} client={client} voice={voice} games={games} hotkeyStatus={hotkeyStatus} initialTab={settingsTab}
+          serverDomain={active?.serverDomain ?? null} clientVersion={platform.app?.version ?? home?.serverVersion ?? null} syncError={state.settingsSyncError} sealed={state.settingsSealed} client={client} voice={voice} games={games} gameAudience={gameAudienceInfo} hotkeyStatus={hotkeyStatus} initialTab={settingsTab}
           blocked={{ list: blockedList, inAccount: blockedInAccount, onUnblock: (pk) => store.setBlocked(activeHost, pk, false, { directory: true }) }}
           onSaveServerName={(n) => store.setServerDisplayName(n)} onSaveGlobalName={(n) => store.setDirectoryName(null, n)} onSetAvatar={(active?.me?.localHandle && !active.me.handle) || (state.directoryAccount && state.directoryAvatars) ? (image) => store.setAvatar(image) : null} onSetLocale={(pref) => store.setLocale(pref)} localePending={state.localeReloadPending}
           onCapturingKey={setCapturingPttKey} onClose={() => setSettingsTab(null)}

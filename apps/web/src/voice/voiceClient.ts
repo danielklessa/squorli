@@ -29,7 +29,7 @@ import { micPermissionState, micRefusal } from "./micPermission";
 import { isCameraBusy, retryCameraBusy } from "./cameraRetry";
 import { cameraSwitch, type CameraRequest } from "./cameraSwitch";
 import type { VoiceSettings } from "./settings";
-import { DEFAULT_SOUND_SETTINGS, FEEDBACK_TONES, applyCueOutput, contextSinkSupported, cueDurationMs, normalizeSoundSettings, playCue, playTones, setContextSink, shouldPlayCue, type SoundCue, type SoundSettings } from "./sounds";
+import { DEFAULT_SOUND_SETTINGS, FEEDBACK_TONES, applyCueOutput, contextSinkSupported, cueDurationMs, normalizeSoundSettings, playCue, playTones, setContextSink, shareCueDue, shouldPlayCue, type SoundCue, type SoundSettings } from "./sounds";
 import { USER_VOLUME_MAX, clampUserVolume, loadUserVolumes, saveUserVolumes, withUserVolume, type UserVolumes } from "./userVolumes";
 import { screenSharePublish } from "./screenShareOptions";
 import { subscriptionPermissions, type VideoAccess } from "./videoAccess";
@@ -45,6 +45,15 @@ import type { PlatformMedia } from "../platform/types";
  */
 function blurAssets(): { tasksVisionFileSet: string; modelAssetPath: string } {
   return { tasksVisionFileSet: new URL("/mediapipe/wasm", location.href).href, modelAssetPath: new URL("/mediapipe/selfie_segmenter.tflite", location.href).href };
+}
+
+/**
+ * The background blur's processor with the client's own MediaPipe files. The camera preview (CameraPreview.tsx) must use this one
+ * too: LiveKit's `BackgroundBlur()` shortcut loads from jsdelivr and Google Storage, which the page's CSP refuses since the files are
+ * self-hosted, so the preview showed no blur (found 14 November 2026).
+ */
+export function blurProcessor(radius: number): BackgroundProcessorWrapper {
+  return BackgroundProcessor({ mode: "background-blur", blurRadius: radius, assetPaths: blurAssets() });
 }
 
 /**
@@ -260,6 +269,8 @@ export class VoiceClient {
   private switchingRoom = false;
   /** No cues for other participants before this time: the ones already in the room are not arrivals. */
   private peerCuesFrom = 0;
+  /** When each participant's share last got its cue (sounds.ts `shareCueDue`). */
+  private shareCueAt = new Map<string, number>();
   /** A room was fully joined (the join cue played), so leaving it earns the leave cue. */
   private cueJoined = false;
   /** Permission VIEW_VIDEO: who may receive our camera/screen (null = not told yet, LiveKit's default "everyone" stays). */
@@ -518,7 +529,7 @@ export class VoiceClient {
     room
       .on(RoomEvent.ParticipantConnected, (p) => { this.log(`teilnehmer da: ${p.identity.slice(0, 8)}`); this.peerCue("peerJoin"); this.applyVideoAccess(); this.refreshParticipants(); })
       // refreshParticipants: a share nobody watches yet is never subscribed, so `screenOn` is all the stage has to show its tile.
-      .on(RoomEvent.TrackPublished, () => { this.applyVideoSubscriptions(); this.refreshParticipants(); })
+      .on(RoomEvent.TrackPublished, (pub, p) => { if (pub.source === Track.Source.ScreenShare) this.shareCue(p.identity); this.applyVideoSubscriptions(); this.refreshParticipants(); })
       .on(RoomEvent.ParticipantDisconnected, (p) => { this.videoWatch.forgetParticipant(p.identity); this.log(`teilnehmer weg: ${p.identity.slice(0, 8)}`); this.peerCue("peerLeave"); this.refreshParticipants(); })
       .on(RoomEvent.Reconnecting, () => this.log("verbindung unterbrochen, versuche erneut"))
       .on(RoomEvent.Reconnected, () => this.log("wieder verbunden"))
@@ -648,6 +659,7 @@ export class VoiceClient {
     const wasJoined = this.cueJoined;
     this.cueJoined = false;
     this.peerCuesFrom = 0;
+    this.shareCueAt.clear();
     if (wasJoined && !this.switchingRoom) this.playSound("selfLeave");
     this.room = null;
     this.publication = null;
@@ -807,6 +819,12 @@ export class VoiceClient {
   /** Can this computer send H.265? Chromium offers it only with an encoder in the graphics unit (it ships no software one). */
   static supportsH265(): boolean { try { return supportsH265(); } catch { return false; } }
 
+  /** The published camera track while the camera runs (the settings' preview shows it instead of opening the camera twice); null otherwise. */
+  cameraTrack(): LocalVideoTrack | null {
+    const pub = this.room?.localParticipant.getTrackPublication(Track.Source.Camera);
+    return pub?.track instanceof LocalVideoTrack && !pub.isMuted ? pub.track : null;
+  }
+
   /** Can this browser blur the background (WebGL2/WASM, MediaStreamTrackProcessor)? */
   static supportsBlur(): boolean { try { return supportsBackgroundProcessors(); } catch { return false; } }
 
@@ -821,7 +839,7 @@ export class VoiceClient {
       } else if (this.blur) {
         await this.blur.switchTo({ mode: "background-blur", blurRadius: radius });
       } else {
-        this.blur = BackgroundProcessor({ mode: "background-blur", blurRadius: radius, assetPaths: blurAssets() });
+        this.blur = blurProcessor(radius);
         await track.setProcessor(this.blur);
       }
       this.patch({ cameraBlur: radius, error: null });
@@ -1456,6 +1474,13 @@ export class VoiceClient {
     this.meters.delete(identity);
   }
   /** Cue for another participant, unless we have only just connected (then they were already there). */
+  /** Cue for a screen share somebody else started (14 November 2026, docs/features/voice-video.md). */
+  private shareCue(identity: string): void {
+    const now = Date.now();
+    if (!shareCueDue({ now, cuesFrom: this.peerCuesFrom, afkRoom: this.state.afkRoom, mayView: this.mayViewVideo, blocked: this.blocked.has(this.volumeKey(identity)), last: this.shareCueAt.get(identity) })) return;
+    this.shareCueAt.set(identity, now);
+    this.playSound("shareStart");
+  }
   private peerCue(cue: "peerJoin" | "peerLeave"): void {
     if (this.peerCuesFrom === 0 || Date.now() < this.peerCuesFrom) return;
     this.playSound(cue);

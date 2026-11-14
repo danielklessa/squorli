@@ -8,20 +8,21 @@
  * Rising = arriving, falling = leaving.
  * And one for a new direct message or a message that mentions me (`message`, 20 September 2026): the same high note twice,
  * so it is neither an arrival nor a departure.
+ * And one for a screen share somebody else starts (`shareStart`, 14 November 2026): three short rising notes.
  */
 import type { SoundSettings as ProtocolSoundSettings } from "@squorli/protocol";
 import { contextNeedsResume } from "./gate";
 
-export type SoundCue = "selfJoin" | "selfLeave" | "peerJoin" | "peerLeave" | "message";
+export type SoundCue = "selfJoin" | "selfLeave" | "peerJoin" | "peerLeave" | "shareStart" | "message";
 
 /** The cues of a voice room, in the order the settings offer them. */
-export const VOICE_CUES: readonly SoundCue[] = ["selfJoin", "selfLeave", "peerJoin", "peerLeave"];
+export const VOICE_CUES: readonly SoundCue[] = ["selfJoin", "selfLeave", "peerJoin", "peerLeave", "shareStart"];
 export const SOUND_CUES: readonly SoundCue[] = [...VOICE_CUES, "message"];
 
 /** One scheduled tone of a cue; times in seconds relative to the start of the cue. */
 export type Tone = { freq: number; start: number; dur: number; type: OscillatorType; gain: number };
 
-const C5 = 523.25, G5 = 783.99, E5 = 659.25, A5 = 880, E6 = 1318.51;
+const C5 = 523.25, G5 = 783.99, E5 = 659.25, A5 = 880, C6 = 1046.5, E6 = 1318.51;
 
 export const CUE_TONES: Record<SoundCue, readonly Tone[]> = {
   selfJoin: [
@@ -40,6 +41,11 @@ export const CUE_TONES: Record<SoundCue, readonly Tone[]> = {
     { freq: A5, start: 0, dur: 0.07, type: "triangle", gain: 0.28 },
     { freq: E5, start: 0.06, dur: 0.17, type: "triangle", gain: 0.28 },
   ],
+  shareStart: [
+    { freq: G5, start: 0, dur: 0.07, type: "triangle", gain: 0.26 },
+    { freq: C6, start: 0.08, dur: 0.07, type: "triangle", gain: 0.26 },
+    { freq: E6, start: 0.16, dur: 0.16, type: "triangle", gain: 0.28 },
+  ],
   message: [
     { freq: E6, start: 0, dur: 0.09, type: "sine", gain: 0.4 },
     { freq: E6, start: 0.14, dur: 0.26, type: "sine", gain: 0.4 },
@@ -57,13 +63,14 @@ export const FEEDBACK_TONES: { on: readonly Tone[]; off: readonly Tone[] } = {
 };
 
 /** On/off per cue plus one common volume; part of the per-device voice settings and, with an account, stored in the directory (protocol schema). */
-export type SoundSettings = Omit<ProtocolSoundSettings, "message"> & { message: boolean };
+export type SoundSettings = Omit<ProtocolSoundSettings, "message" | "shareStart"> & { message: boolean; shareStart: boolean };
 
 export const DEFAULT_SOUND_SETTINGS: SoundSettings = {
   selfJoin: true,
   selfLeave: true,
   peerJoin: true,
   peerLeave: true,
+  shareStart: true,
   message: true,
   volume: 0.6,
 };
@@ -85,6 +92,20 @@ export function shouldPlayCue(cue: SoundCue, settings: SoundSettings, ctx: { dea
   if (ctx.deafened) return false;
   if (settings.volume <= 0) return false;
   return ctx.force === true || settings[cue];
+}
+
+/** A sharer's cue sounds at most once in this time, so a share started and stopped in a row does not rattle. */
+export const SHARE_CUE_REST_MS = 10_000;
+
+/**
+ * Does a screen share somebody else just started get its cue? Not right after connecting (those shares were already there), not in the
+ * AFK room, not without the right to watch video in the channel (nothing to see, nothing to announce), not for a blocked person, and
+ * not again within `SHARE_CUE_REST_MS` of the same person's last one. The switch, deafen and the volume are `shouldPlayCue`'s.
+ */
+export function shareCueDue(ctx: { now: number; cuesFrom: number; afkRoom: boolean; mayView: boolean; blocked: boolean; last: number | undefined }): boolean {
+  if (ctx.cuesFrom === 0 || ctx.now < ctx.cuesFrom) return false;
+  if (ctx.afkRoom || !ctx.mayView || ctx.blocked) return false;
+  return ctx.last === undefined || ctx.now - ctx.last >= SHARE_CUE_REST_MS;
 }
 
 /** How long a cue sounds, in milliseconds: the last tone's end plus the start offset and the tail of its decay (playTones). */

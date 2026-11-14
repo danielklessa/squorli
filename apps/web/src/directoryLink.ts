@@ -1,4 +1,4 @@
-import { DIRECTORY_WS_VERSION, DirectoryServerEvent, directoryWsAuthMessage, isDeviceRefusal, type DirectoryClientEvent, type GamePresence } from "@squorli/protocol";
+import { DIRECTORY_WS_VERSION, DirectoryServerEvent, directoryWsAuthMessage, isDeviceRefusal, type DirectoryClientEvent, sameGameAudience, type GameAudience, type GamePresence } from "@squorli/protocol";
 import { t } from "./i18n";
 import { signBoth, type Identity } from "./identity";
 import { connectedHost } from "./serverHost";
@@ -29,25 +29,35 @@ export class DirectoryLink {
   private idle = false;
   /** Game display: what the user plays (store.ts), reported with the activity state; a fresh socket knows none. */
   private game: GamePresence | null = null;
+  /** Who among the friends may see that game (protocol `GameAudience`); null = every friend. */
+  private gameAudience: GameAudience | null = null;
   private pingSentAt = 0;
   private lastHeard = 0;
   /** The directory refused this connection for good: the status keeps saying why after the socket closed. */
   private refused = false;
 
   constructor(private readonly url: string, private readonly identity: Identity,
-    private readonly onEvent: (e: DirectoryServerEvent) => void, private readonly onStatus: (s: LinkStatus, error?: string) => void, private readonly reportsActivity = false) {}
+    private readonly onEvent: (e: DirectoryServerEvent) => void, private readonly onStatus: (s: LinkStatus, error?: string) => void, private readonly reportsActivity = false,
+    /** The directory filters the game by a rule (`features.gameAudience`); without it a game that has a rule is not reported at all. */
+    private readonly takesGameAudience = false) {}
+
+  private activityReport(): Extract<DirectoryClientEvent, { type: "activity" }> {
+    const game = this.gameAudience && !this.takesGameAudience ? null : this.game;
+    return { type: "activity", idle: this.idle, game, ...(game && this.gameAudience ? { gameAudience: this.gameAudience } : {}) };
+  }
 
   /** The user turned idle or came back. The directory counts a fresh socket as active, so only `true` is repeated after a welcome. */
   setIdle(idle: boolean) {
     if (idle === this.idle) return;
     this.idle = idle;
-    if (this.reportsActivity) this.send({ type: "activity", idle, game: this.game });
+    if (this.reportsActivity) this.send(this.activityReport());
   }
 
-  setGame(game: GamePresence | null) {
-    if (game?.id === this.game?.id && game?.name === this.game?.name) return;
+  setGame(game: GamePresence | null, audience: GameAudience | null = null) {
+    if (game?.id === this.game?.id && game?.name === this.game?.name && sameGameAudience(audience, this.gameAudience)) return;
     this.game = game;
-    if (this.reportsActivity) this.send({ type: "activity", idle: this.idle, game });
+    this.gameAudience = audience;
+    if (this.reportsActivity) this.send(this.activityReport());
   }
 
   connect() {
@@ -82,7 +92,7 @@ export class DirectoryLink {
         if (this.ping) clearInterval(this.ping);
         this.pingSentAt = 0;
         this.ping = window.setInterval(() => this.heartbeat(), 25_000);
-        if ((this.idle || this.game) && this.reportsActivity) this.send({ type: "activity", idle: this.idle, game: this.game });
+        if ((this.idle || this.game) && this.reportsActivity) this.send(this.activityReport());
       }
       if (e.type === "error" && (e.code === "version" || e.code === "unauthorized" || e.code === "unknown_account" || e.code === "account_suspended" || isDeviceRefusal(e.code))) {
         // No reconnect: the client does not match the service, the key has no account there, or the account is suspended.

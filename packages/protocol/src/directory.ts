@@ -572,6 +572,8 @@ export function directoryGameIconUrl(directoryUrl: string, game: Pick<DirectoryG
 export const SoundSettings = z.object({
   selfJoin: z.boolean(), selfLeave: z.boolean(), peerJoin: z.boolean(), peerLeave: z.boolean(),
   message: z.boolean().optional(),
+  /** The cue for a screen share somebody else starts (14 November 2026). Optional without a default, like `message`: an account from before it says nothing. */
+  shareStart: z.boolean().optional(),
   /** 0..1, applied on top of the per-tone gain. */
   volume: z.number().min(0).max(1),
 });
@@ -642,6 +644,55 @@ export function parseAccountSettings(json: string | null | undefined): AccountSe
 // the server rail (22 September 2026: user settings are always stored encrypted, so it never goes into `AccountSettings`), and
 // the people the user has blocked (27 September 2026, reports stage 3: public keys, so a block holds on every server; no server
 // and not the directory learns whom somebody blocks, the block is a view of this user's client alone).
+/**
+ * Who may see my game (14 November 2026, docs/features/games.md): the user's rule for the game display. `all` = everybody the
+ * two switches allow (friends, and the members of my servers), `only` = the people of the `only` list and nobody else (an
+ * empty list = nobody), `except` = everybody but the people of the `except` list. Both lists are kept so that switching the
+ * mode loses nothing. People are public keys: a directory account has the same key at the directory and on every chat
+ * server; a server account (`~name`) has its own key per server. It follows the account inside the sealed settings only.
+ */
+export const GAME_AUDIENCE_MAX = 200;
+export const GameAudienceSetting = z.object({
+  mode: z.enum(["all", "only", "except"]).default("all"),
+  only: z.array(PublicKey).max(GAME_AUDIENCE_MAX).default([]),
+  except: z.array(PublicKey).max(GAME_AUDIENCE_MAX).default([]),
+});
+export type GameAudienceSetting = z.infer<typeof GameAudienceSetting>;
+/**
+ * The rule as it travels with a game report (`activity` of both sockets, friends.ts and index.ts): the relay (the directory for
+ * friends, a chat server for its members) is the only one who knows the receivers, so it filters. It keeps the rule in memory
+ * next to the game for as long as the connection lasts and never stores or logs it. Left out or null = everybody. A relay
+ * from before it drops the field unread and would show the game to everybody: clients report NO game to a relay that does not
+ * announce `gameAudience` (the directory's `features.gameAudience`, a chat server's `ServerState.gameAudience`) while a rule is set.
+ */
+export const GameAudience = z.object({ mode: z.enum(["only", "except"]), keys: z.array(PublicKey).max(GAME_AUDIENCE_MAX) });
+export type GameAudience = z.infer<typeof GameAudience>;
+/** What goes out with a report for a setting; null = everybody (nothing is sent). */
+export function gameAudienceOf(setting: GameAudienceSetting | null | undefined): GameAudience | null {
+  if (!setting || setting.mode === "all") return null;
+  return { mode: setting.mode, keys: setting.mode === "only" ? setting.only : setting.except };
+}
+/** May the holder of this key see a game reported with this rule? (The relays' one question; a viewer without a known key only passes "everybody" and a deny list.) */
+export function gameVisibleTo(audience: GameAudience | null | undefined, viewerKey: string | null | undefined): boolean {
+  if (!audience) return true;
+  const listed = !!viewerKey && audience.keys.includes(viewerKey.toLowerCase());
+  return audience.mode === "only" ? listed : !listed;
+}
+/** Same rule? The order of the keys plays no part. */
+export function sameGameAudience(a: GameAudience | null | undefined, b: GameAudience | null | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  if (a.mode !== b.mode || a.keys.length !== b.keys.length) return false;
+  const set = new Set(a.keys);
+  return b.keys.every((k) => set.has(k));
+}
+/** A stored or received setting made clean: unknown mode = all, keys that do not fit dropped alone, each list once and at most GAME_AUDIENCE_MAX. */
+export function cleanGameAudienceSetting(value: unknown): GameAudienceSetting {
+  const v = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const keys = (list: unknown): string[] => Array.isArray(list)
+    ? [...new Set(list.filter((k): k is string => typeof k === "string").map((k) => k.toLowerCase()).filter((k) => PublicKey.safeParse(k).success))].slice(0, GAME_AUDIENCE_MAX) : [];
+  return { mode: v.mode === "only" || v.mode === "except" ? v.mode : "all", only: keys(v.only), except: keys(v.except) };
+}
+
 export const SEALED_SETTINGS_MAX_LENGTH = 100_000;
 export const HIDDEN_GAMES_MAX = 1000;
 export const HIDDEN_GAME_ID_MAX = 64;
@@ -661,6 +712,10 @@ export const SealedSettingsContent = z.object({
   blockedUsers: z.array(PublicKey).max(BLOCKED_USERS_MAX).optional(),
   /** Link previews in direct messages (false = none are made for what this user sends, and none are shown of what they receive). Left out = the account says nothing (the device's choice stays). */
   dmLinkPreviews: z.boolean().optional(),
+  /** The own camera picture shown mirrored to oneself (14 November 2026; false = as the others see it). Left out = the account says nothing (the device's choice stays). */
+  cameraMirror: z.boolean().optional(),
+  /** Who may see my game (`GameAudienceSetting`). Left out = the account says nothing (the device's rule stays). */
+  gameAudience: GameAudienceSetting.optional(),
   /**
    * Chat servers of the account's list that the directory's operator refused and the user removed from the rail: directory
    * hosts. Hidden on every device; the account's entry stays, so a server that is allowed again shows again (the client
@@ -713,7 +768,7 @@ export async function sealSettings(key: CryptoKey, publicKeyHex: string, content
 export async function openSettings(key: CryptoKey, publicKeyHex: string, sealed: SealedSettings): Promise<SealedSettingsContent | null> {
   try {
     const pt = await globalThis.crypto.subtle.decrypt({ name: "AES-GCM", iv: hexToBytes(sealed.iv), additionalData: sealedAad(publicKeyHex) }, key, base64ToBytes(sealed.ciphertext));
-    const parsed = JSON.parse(new TextDecoder().decode(pt)) as { settings?: unknown; hiddenGames?: unknown; serverOrder?: unknown; blockedUsers?: unknown; dmLinkPreviews?: unknown; hiddenServers?: unknown };
+    const parsed = JSON.parse(new TextDecoder().decode(pt)) as { settings?: unknown; hiddenGames?: unknown; serverOrder?: unknown; blockedUsers?: unknown; dmLinkPreviews?: unknown; hiddenServers?: unknown; cameraMirror?: unknown; gameAudience?: unknown };
     const settings = AccountSettings.safeParse(parsed.settings);
     if (!settings.success) return null;
     const hiddenGames = Array.isArray(parsed.hiddenGames)
@@ -724,7 +779,7 @@ export async function openSettings(key: CryptoKey, publicKeyHex: string, sealed:
       ? [...new Set(parsed.blockedUsers.filter((k): k is string => typeof k === "string").map((k) => k.toLowerCase()).filter((k) => PublicKey.safeParse(k).success))].slice(0, BLOCKED_USERS_MAX) : undefined;
     const hiddenServers = Array.isArray(parsed.hiddenServers)
       ? [...new Set(parsed.hiddenServers.filter((h): h is string => typeof h === "string").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0 && h.length <= SERVER_HOST_MAX))].slice(0, HIDDEN_SERVERS_MAX) : undefined;
-    return { settings: settings.data, ...(hiddenGames ? { hiddenGames } : {}), ...(serverOrder ? { serverOrder } : {}), ...(blockedUsers ? { blockedUsers } : {}), ...(typeof parsed.dmLinkPreviews === "boolean" ? { dmLinkPreviews: parsed.dmLinkPreviews } : {}), ...(hiddenServers ? { hiddenServers } : {}) };
+    return { settings: settings.data, ...(hiddenGames ? { hiddenGames } : {}), ...(serverOrder ? { serverOrder } : {}), ...(blockedUsers ? { blockedUsers } : {}), ...(typeof parsed.dmLinkPreviews === "boolean" ? { dmLinkPreviews: parsed.dmLinkPreviews } : {}), ...(hiddenServers ? { hiddenServers } : {}), ...(typeof parsed.cameraMirror === "boolean" ? { cameraMirror: parsed.cameraMirror } : {}), ...(parsed.gameAudience && typeof parsed.gameAudience === "object" ? { gameAudience: cleanGameAudienceSetting(parsed.gameAudience) } : {}) };
   } catch { return null; }
 }
 /** A chat server that has looked up the key (a sign-in there), with the display name that applies there (account page). `verified` = registered with the directory. */
@@ -886,8 +941,9 @@ export const DirectoryHealth = z.object({
   /** Host that registration signatures are bound to. */
   host: z.string(),
   /** `friends` (M7): friends and direct messages over the WebSocket /api/ws. `email`: SMTP configured (address, notices, e-mail code). `settings`: the account stores all client settings (action `settings`). `afk`: the socket takes `activity` and friends carry `afk` (AFK detection). `emailRequired`: new handles need a confirmed e-mail address (REQUIRE_EMAIL; registration in two steps, see DirectoryRegisterRequest). `avatars`: the account stores one avatar image (action `avatar-set`, GET /api/avatars/<key>). `settingsSealed`: the account stores the settings as a blob the client encrypts (action `settings-sealed`). `probe`: POST /api/servers/probe exists (a registered server's setup check from outside, docs/features/doctor.md). `reports`: POST /api/reports takes a report of a direct message (action `report`; docs/features/reports.md). `reportKinds`: the kinds of report it takes (`reportKindsOf`; strings, so a kind of a later version does not break this one). `reportProof`: a direct message's report may carry each message's `iv` and `ciphertext` for the directory to compare with what it stores (`DmReportMessage`). `refusedServers`: GET /api/servers/refused exists (the hashed hosts of refused chat servers). `notices`: the account's status carries notices and POST /api/notices/read exists (action `notice-read`). `devices`: the directory enrols devices and lists them in the account's status. `deviceRevoke`: it signs devices out and enforces (action `device-revoke`, the refusals of a device). */
+  /** `gameAudience` (14 November 2026): the socket's `activity` takes a rule who may see the game and the service filters by it (`GameAudience`). */
   /** `backupArgon2` (5 October 2026): the service takes a backup with Argon2id parameters; a client makes PBKDF2 backups for one from before, which would refuse them. */
-  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), reportProof: z.boolean().default(false), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false), backupArgon2: z.boolean().default(false) }),
+  features: z.object({ backup: z.boolean(), totp: z.boolean(), email: z.boolean(), friends: z.boolean().default(false), settings: z.boolean().default(false), settingsSealed: z.boolean().default(false), afk: z.boolean().default(false), emailRequired: z.boolean().default(false), avatars: z.boolean().default(false), gameLibrary: z.boolean().default(false), gameAudience: z.boolean().default(false), dmPreviews: z.boolean().default(false), probe: z.boolean().default(false), reports: z.boolean().default(false), reportKinds: z.array(z.string().max(32)).max(32).default([]), reportProof: z.boolean().default(false), refusedServers: z.boolean().default(false), notices: z.boolean().default(false), devices: z.boolean().default(false), deviceRevoke: z.boolean().default(false), backupArgon2: z.boolean().default(false) }),
   time: Iso,
 });
 

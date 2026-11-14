@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DeviceProofFields, DisplayName, Handle, LibraryGameId } from "./directory";
+import { DeviceProofFields, DisplayName, GameAudience, Handle, LibraryGameId } from "./directory";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
 
 // COPY NOTE: also exists byte-identically in the squorli-directory repo (packages/protocol/src); the source is squorli-server, copy it over after any change.
@@ -106,8 +106,10 @@ export const DmClearRequest = z.object({ type: z.literal("dm.clear"), peer: Publ
  * This socket's user is idle (AFK_AFTER_MS without activity) or back; a socket counts as active until it says otherwise. Only sent
  * when the directory reports `features.afk`. `game`: what this socket's user plays, null = nothing; left out = this message says
  * nothing about it (a client from before the game display). A service from before it drops the field unread.
+ * `gameAudience` (14 November 2026): who among the friends may see that game (directory.ts `GameAudience`); it counts together
+ * with `game` and is replaced with every report that names a game or none; left out or null = every friend.
  */
-export const DirectoryClientActivity = z.object({ type: z.literal("activity"), idle: z.boolean(), game: GamePresence.nullable().optional() });
+export const DirectoryClientActivity = z.object({ type: z.literal("activity"), idle: z.boolean(), game: GamePresence.nullable().optional(), gameAudience: GameAudience.nullable().optional() });
 export const DirectoryClientEvent = z.discriminatedUnion("type", [DirectoryClientAuth, DirectoryClientPing, DirectoryClientActivity, FriendRequest, DmSend, DmHistoryRequest, DmReadRequest, DmDeleteRequest, DmClearRequest])
   .or(FriendAction);
 export type DirectoryClientEvent = z.infer<typeof DirectoryClientEvent>;

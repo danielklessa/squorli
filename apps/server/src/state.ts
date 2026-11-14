@@ -119,6 +119,17 @@ export async function loadMembers(db: Db, hub: Hub): Promise<Member[]> {
   }));
 }
 
+/**
+ * The member list as one recipient gets it (14 November 2026, docs/features/games.md): a game reported with a rule who may see
+ * it (`Hub.gameFor`) is left out for everybody the rule keeps out. The player themself always sees it. `loadMembers` carries
+ * every game; nothing but this function's result goes to a client.
+ */
+export function membersFor(all: Member[], hub: Hub, viewerId: string): Member[] {
+  if (!hub.hasGameAudiences()) return all;
+  const viewerKey = all.find((m) => m.userId === viewerId)?.publicKey ?? null;
+  return all.map((m) => (m.game && m.userId !== viewerId && !hub.gameFor(m.userId, viewerKey) ? { ...m, game: null } : m));
+}
+
 /** Permission context of a user; null = not a member. */
 export async function actorOf(db: Db, userId: string): Promise<Actor | null> {
   const [m] = await db.select({ userId: members.userId, streamBlocked: members.streamBlocked, isOwner: members.isOwner }).from(members).where(eq(members.userId, userId)).limit(1);
@@ -171,8 +182,10 @@ export async function loadState(db: Db, hub: Hub, userId: string): Promise<Serve
   visibility.changedSince(userId, masks);
   // importSources: what the import routes (routes/import.ts) can read a structure from; the client shows the admin tab only for these.
   return {
-    settings, categories: visibleCategories(cats, masks), channels: visibleChannels(chans, masks, ctx), roles: rs, members: mems, radioStations: stations,
+    settings, categories: visibleCategories(cats, masks), channels: visibleChannels(chans, masks, ctx), roles: rs, members: membersFor(mems, hub, userId), radioStations: stations,
     importSources: ["discord-template"], myPermissions: actor?.permissions ?? 0,
+    // The `activity` report takes a rule who may see the game, and `membersFor` filters by it (docs/features/games.md).
+    gameAudience: true,
     myChannelPermissions: visibleMasks(masks), myVoiceLock: visibility.voiceLockOf(userId),
     // Reports (docs/features/reports.md): the open count only for whoever handles them; the field's presence tells the client the server takes reports.
     openReports: actor && hasPermission(actor.permissions, Permission.MANAGE_REPORTS) ? await openReportCount(db) : 0,
@@ -212,7 +225,7 @@ export async function broadcastStructure(db: Db, hub: Hub, parts: StructurePart[
     const e: Extract<import("@squorli/protocol").ServerEvent, { type: "structure" }> = { type: "structure" };
     if (settings) e.settings = settings;
     if (rs) e.roles = rs;
-    if (mems) e.members = mems;
+    if (mems) e.members = membersFor(mems, hub, userId);
     if (stations) e.radioStations = stations;
     if (cats && chans && (explicitLists || visibility.changedSince(userId, masks))) {
       if (!explicitLists) visibility.changedSince(userId, masks);

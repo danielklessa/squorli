@@ -1,6 +1,6 @@
 import {
   DM_MAX_CIPHERTEXT_CHARS, DM_REPORT_CONTEXT_MAX, base64ToBytes, directoryServerUrl, openDm, openSettings, reportKindsOf, sealDm, sealSettings, type DmControl, type DmPreview,
-  type AccountServer, type AccountSettings, type AccountStatus, type DirectoryAccount, type DirectoryServerEvent, type DmConversation, type DmMessage, type Friend, type GamePresence, type ReportReason, type ServerLeaveResponse,
+  type AccountServer, type AccountSettings, type AccountStatus, type DirectoryAccount, type DirectoryServerEvent, type DmConversation, type DmMessage, type Friend, type GameAudience, type GameAudienceSetting, type GamePresence, type ReportReason, gameAudienceOf, type ServerLeaveResponse,
   type AccountNotice, type DirectoryReportKind, type ServerReportEvidence,
   isDeviceRefusal, type DeviceInfo, type TooManyDevicesResponse,
 } from "@squorli/protocol";
@@ -24,6 +24,7 @@ import { seesIncoming } from "./attention";
 import { notificationBody, type IncomingNote } from "./notifications";
 import { accountLocalePreference, detectLocale, locale, localePreference, markAccountLocalePreference, storeLocalePreference, t, type LocalePreference } from "./i18n";
 import { loadVoiceSettings, sameSoundSettings, saveVoiceSettings, subscribeVoiceSettings } from "./voice/settings";
+import { sameAudienceSetting } from "./gameAudience";
 import { normalizeSoundSettings } from "./voice/sounds";
 import { platform } from "./platform";
 import type { PlatformHome } from "./platform/types";
@@ -74,6 +75,8 @@ export type State = {
   directoryAvatars: boolean;
   /** The directory has a game library (`GET /api/games/:id`, docs/features/games.md): names and icons of launcher game ids. */
   directoryGameLibrary: boolean;
+  /** The directory filters the game display by the user's rule who may see it (`features.gameAudience`, docs/features/games.md). */
+  directoryGameAudience: boolean;
   /** Servers the handle has signed in on (directory, AccountStatus.servers): the server rail. null = unknown/no account. */
   accountServers: AccountServer[] | null;
   /**
@@ -229,6 +232,8 @@ export class Store {
   private accountBlocked: string[] | null = null;
   /** The switch for link previews in direct messages as the account holds it (null = the blob says nothing). */
   private accountDmPreviews: boolean | null = null;
+  private accountMirror: boolean | null = null;
+  private accountAudience: GameAudienceSetting | null = null;
   private settingsKey: { publicKey: string; key: Promise<CryptoKey> } | null = null;
   private settingsPushTimer: ReturnType<typeof setTimeout> | null = null;
   /** The chat servers the directory's operator refused (refusedServers.ts): the list of before counts until a new one arrived. */
@@ -256,12 +261,13 @@ export class Store {
     this.state = {
       identity: null, serverAccounts: handlesOf(loadServerAccounts()), homeHost: this.homeHost, activeHost: this.homeHost, servers: home ? { [home.state.host]: home.state } : {},
       signedIn: false, localHosts: [], clientLogin: { busy: false, error: null }, joinInvites: {},
-      directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, accountServers: null, devices: [], devicesKnown: false, deviceRevoke: false, devicesEnforced: false, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
+      directoryUrl: null, directoryAccount: undefined, directoryError: null, directoryEmailRequired: false, directoryAvatars: false, directoryGameLibrary: false, directoryGameAudience: false, accountServers: null, devices: [], devicesKnown: false, deviceRevoke: false, devicesEnforced: false, settingsSyncError: null, settingsSealed: false, accountHiddenGames: null, localeReloadPending: false, blocked: loadBlockedLists(),
       directoryLink: "idle", directoryLinkError: null, dmReports: false, dmReportProof: false, reportKinds: [], notices: [], suspendedUntil: null, suspendedReason: null, friends: null, conversations: {}, dms: {}, homeOpen: false, currentPeer: null, friendsError: null, missed: 0, starting: true,
     };
     // The list of refused chat servers is good for an hour (refusedServers.ts).
     setInterval(() => { void this.refreshRefused(); }, REFUSED_LIST_MAX_AGE_MS);
-    subscribeVoiceSettings((_s, source) => { if (source === "user") this.scheduleSettingsPush(); });
+    // The rule who may see the game is part of these settings: every save tells the sockets (they skip what did not change).
+    subscribeVoiceSettings((_s, source) => { if (source === "user") this.scheduleSettingsPush(); this.applyGame(); });
     // Another tab of this browser signed out, or signed in anew: the keys live in storage all tabs share, and this tab follows.
     if (typeof window !== "undefined") window.addEventListener("storage", (e) => { if (e.key === IDENTITY_STORAGE_KEY || e.key === sealedKeyOf(IDENTITY_STORAGE_KEY) || e.key === null) void this.followStorage(); });
     // AFK detection: every chat server and the directory hear when the user turns idle or comes back (activity.ts).
@@ -295,7 +301,7 @@ export class Store {
       isRefused: () => this.isRefused(host),
     });
     conn.setIdle(activity.idle);
-    conn.setGame(this.gameOnServers ? this.game : null);
+    conn.setGame(this.gameOnServers ? this.game : null, this.gameAudience());
     this.conns.set(host, conn);
     return conn;
   }
@@ -1026,9 +1032,9 @@ export class Store {
     if (this.isSuspended()) return;
     this.dmPreviewsAtDirectory = health.features.dmPreviews;
     this.set({ dmReports: health.features.reports, dmReportProof: health.features.reportProof });
-    const link = new DirectoryLink(url, id, (e) => this.handleDirectory(e), (status, error) => this.set({ directoryLink: status, directoryLinkError: error ?? null }), health.features.afk);
+    const link = new DirectoryLink(url, id, (e) => this.handleDirectory(e), (status, error) => this.set({ directoryLink: status, directoryLinkError: error ?? null }), health.features.afk, health.features.gameAudience);
     link.setIdle(activity.idle);
-    link.setGame(this.game);
+    link.setGame(this.game, this.gameAudience());
     this.link = link;
     link.connect();
   }
@@ -1386,7 +1392,7 @@ export class Store {
       this.accountRefused = new Set(refusedNow.map((s) => this.hostFor(s.host)));
       const allowed = status.servers.filter((s) => !this.accountRefused.has(this.hostFor(s.host))).map((s) => ({ ...s, refused: false }));
       // The avatar's version comes along: an image changed on the account page shows in the settings without a reload of the lookup.
-      this.set({ directoryAvatars: health.features.avatars, directoryGameLibrary: health.features.gameLibrary, ...(acc ? { directoryAccount: { ...acc, displayName: status.displayName, avatarUpdatedAt: status.avatarUpdatedAt, hasBackup: status.hasBackup } } : {}) });
+      this.set({ directoryAvatars: health.features.avatars, directoryGameLibrary: health.features.gameLibrary, directoryGameAudience: health.features.gameAudience, ...(acc ? { directoryAccount: { ...acc, displayName: status.displayName, avatarUpdatedAt: status.avatarUpdatedAt, hasBackup: status.hasBackup } } : {}) });
       this.set({ devices: status.devices, devicesKnown: health.features.devices, deviceRevoke: health.features.deviceRevoke, devicesEnforced: status.devicesEnforced });
       // Measures of the directory's operator (docs/features/reports.md): the notices, and whether the account is suspended.
       const wasSuspended = this.isSuspended();
@@ -1434,16 +1440,16 @@ export class Store {
   private async adoptAccountSettings(status: AccountStatus): Promise<void> {
     const id = this.state.identity;
     let remote = this.settingsSupported ? status.settings : null;
-    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null; let dmPreviews: boolean | null = null; let dismissed: string[] | null = null;
+    let sealed = false; let hidden: string[] | null = null; let order: string[] | null = null; let blocked: string[] | null = null; let dmPreviews: boolean | null = null; let mirror: boolean | null = null; let audience: GameAudienceSetting | null = null; let dismissed: string[] | null = null;
     const blob = this.sealedSupported ? status.settingsSealed : null;
     if (id && blob) {
       const content = await this.settingsKeyOf(id).then((key) => openSettings(key, id.publicKey, blob), () => null);
       if (this.state.identity !== id) return;
       // A blob this key does not open counts as none: the device's settings make a new one.
-      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; dmPreviews = content.dmLinkPreviews ?? null; dismissed = content.hiddenServers ?? null; sealed = true; }
+      if (content) { remote = content.settings; hidden = content.hiddenGames ?? null; order = content.serverOrder ?? null; blocked = content.blockedUsers ?? null; dmPreviews = content.dmLinkPreviews ?? null; mirror = content.cameraMirror ?? null; audience = content.gameAudience ?? null; dismissed = content.hiddenServers ?? null; sealed = true; }
     }
     const first = !this.settingsLoaded;
-    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmPreviews; this.accountDismissed = dismissed; this.settingsLoaded = true;
+    this.accountSealed = sealed; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmPreviews; this.accountMirror = mirror; this.accountAudience = audience; this.accountDismissed = dismissed; this.settingsLoaded = true;
     // A change the user just made here is newer than what the status says; the pending push brings the account in step.
     if (this.settingsPushTimer || this.pushWanted) {
       // The hide list too, with one exception: a push that waited for this first status knows nothing of the account's list
@@ -1463,13 +1469,17 @@ export class Store {
     if (order && !sameServerOrder(order, local.serverOrder)) { local = { ...local, serverOrder: order }; saveVoiceSettings(local, "directory"); }
     // The switch for link previews in direct messages the same way.
     if (dmPreviews !== null && dmPreviews !== local.dmLinkPreviews) { local = { ...local, dmLinkPreviews: dmPreviews }; saveVoiceSettings(local, "directory"); }
+    // The mirrored own camera picture the same way.
+    if (mirror !== null && mirror !== local.cameraMirror) { local = { ...local, cameraMirror: mirror }; saveVoiceSettings(local, "directory"); }
+    // Who may see my game the same way (the save tells the sockets through the settings' subscriber).
+    if (audience && !sameAudienceSetting(audience, local.gameAudience)) { local = { ...local, gameAudience: audience }; saveVoiceSettings(local, "directory"); }
     // The blocked people the same way: the account's list wins on this device; a device that blocked somebody just now is the pending-push case.
     if (blocked && id && !sameBlocked(blocked, this.state.blocked[id.publicKey])) this.storeBlockedList(id.publicKey, blocked);
     // The refused servers removed from the rail the same way (refreshAccountServers goes on with this list).
     if (dismissed && !sameHidden(this.dismissedRefused, dismissed)) { this.dismissedRefused = dismissed; saveDismissedRefused(dismissed); }
     if (!remote) {
       // Nothing stored yet (or an older directory): cue settings stored by an older client still win, the rest is seeded from this device.
-      const sounds = status.soundSettings ? normalizeSoundSettings({ ...status.soundSettings, message: status.soundSettings.message ?? local.sounds.message }) : null;
+      const sounds = status.soundSettings ? normalizeSoundSettings({ ...status.soundSettings, message: status.soundSettings.message ?? local.sounds.message, shareStart: status.soundSettings.shareStart ?? local.sounds.shareStart }) : null;
       if (sounds && !sameSoundSettings(local.sounds, sounds)) saveVoiceSettings({ ...local, sounds }, "directory");
       this.accountSettings = sounds && !this.settingsSupported ? this.localAccountSettings() : null;
       this.scheduleSettingsPush(0);
@@ -1478,7 +1488,7 @@ export class Store {
     this.accountSettings = remote;
     if (!sameAccountSettings(toAccountSettings(local, remote.locale), remote, true)) saveVoiceSettings(applyAccountSettings(local, remote), "directory");
     // Settings still in the open, or a hide list, a server order or a block list the account lacks: the push seals them.
-    if (this.sealedSupported && (!sealed || !sameHiddenGames(this.hiddenForAccount(), hidden) || !sameServerOrder(order ?? [], local.serverOrder) || !sameBlocked(this.mainBlocked(), blocked) || dmPreviews !== local.dmLinkPreviews)) this.scheduleSettingsPush(0);
+    if (this.sealedSupported && (!sealed || !sameHiddenGames(this.hiddenForAccount(), hidden) || !sameServerOrder(order ?? [], local.serverOrder) || !sameBlocked(this.mainBlocked(), blocked) || dmPreviews !== local.dmLinkPreviews || mirror !== local.cameraMirror || !audience || !sameAudienceSetting(audience, local.gameAudience))) this.scheduleSettingsPush(0);
     // Language: a choice made on this device since it was last in step with the account (login footer) wins and is pushed;
     // otherwise the account's applies, with a reload only when the texts actually change.
     const pref = localePreference(); const synced = accountLocalePreference();
@@ -1518,14 +1528,14 @@ export class Store {
     const next = this.localAccountSettings(); const known = this.accountSettings;
     try {
       if (this.sealedSupported) {
-        const local = loadVoiceSettings(); const hidden = this.hiddenForAccount(); const order = local.serverOrder; const blocked = this.mainBlocked(); const dmLinkPreviews = local.dmLinkPreviews; const hiddenServers = this.dismissedRefused;
-        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked) && dmLinkPreviews === this.accountDmPreviews && sameHidden(hiddenServers, this.accountDismissed)) return;
+        const local = loadVoiceSettings(); const hidden = this.hiddenForAccount(); const order = local.serverOrder; const blocked = this.mainBlocked(); const dmLinkPreviews = local.dmLinkPreviews; const cameraMirror = local.cameraMirror; const gameAudience = local.gameAudience; const hiddenServers = this.dismissedRefused;
+        if (this.accountSealed && known && sameAccountSettings(known, next) && sameHiddenGames(hidden, this.accountHidden) && sameServerOrder(order, this.accountOrder ?? []) && sameBlocked(blocked, this.accountBlocked) && dmLinkPreviews === this.accountDmPreviews && cameraMirror === this.accountMirror && !!this.accountAudience && sameAudienceSetting(gameAudience, this.accountAudience) && sameHidden(hiddenServers, this.accountDismissed)) return;
         // The block list always goes along, an empty one too: "nobody" must win over a device's stale list after an unblock elsewhere
         // (only a blob from before the feature says nothing about it). The refused servers removed from the rail the same way.
-        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked, dmLinkPreviews, hiddenServers });
+        const blob = await sealSettings(await this.settingsKeyOf(id), id.publicKey, { settings: next, ...(hidden ? { hiddenGames: hidden } : {}), ...(order.length ? { serverOrder: order } : {}), blockedUsers: blocked, dmLinkPreviews, cameraMirror, gameAudience, hiddenServers });
         await api.directorySetSealedSettings(url, id, blob);
         markAccountLocalePreference(next.locale);
-        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmLinkPreviews; this.accountDismissed = hiddenServers;
+        this.accountSealed = true; this.accountHidden = hidden; this.accountOrder = order; this.accountBlocked = blocked; this.accountDmPreviews = dmLinkPreviews; this.accountMirror = cameraMirror; this.accountAudience = gameAudience; this.accountDismissed = hiddenServers;
         this.set({ settingsSealed: true, accountHiddenGames: hidden });
       } else if (this.settingsSupported) {
         if (known && sameAccountSettings(known, next)) return;
@@ -1548,8 +1558,14 @@ export class Store {
   setGame(game: GamePresence | null, onServers: boolean): void {
     this.game = game;
     this.gameOnServers = onServers;
-    for (const conn of this.conns.values()) conn.setGame(onServers ? game : null);
-    this.link?.setGame(game);
+    this.applyGame();
+  }
+  /** The rule who may see the game as it travels with every report (this device's setting; null = everybody). The relays enforce it. */
+  private gameAudience(): GameAudience | null { return gameAudienceOf(loadVoiceSettings().gameAudience); }
+  private applyGame(): void {
+    const audience = this.gameAudience();
+    for (const conn of this.conns.values()) conn.setGame(this.gameOnServers ? this.game : null, audience);
+    this.link?.setGame(this.game, audience);
   }
 
   /** Change the UI language: stored on this device, saved in the account first (the reload would cut a pending push off), then reload. */

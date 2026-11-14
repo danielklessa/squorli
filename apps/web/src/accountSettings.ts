@@ -14,7 +14,7 @@ export function toAccountSettings(s: VoiceSettings, locale: LocalePreference): A
     locale,
     voice: { mode: s.mode, pttKey: s.pttKey, vadThreshold: s.vadThreshold, vadHangoverMs: s.vadHangoverMs },
     camera: { quality: s.cameraQuality, blur: s.cameraBlur },
-    sounds: { selfJoin: s.sounds.selfJoin, selfLeave: s.sounds.selfLeave, peerJoin: s.sounds.peerJoin, peerLeave: s.sounds.peerLeave, message: s.sounds.message, volume: s.sounds.volume },
+    sounds: { selfJoin: s.sounds.selfJoin, selfLeave: s.sounds.selfLeave, peerJoin: s.sounds.peerJoin, peerLeave: s.sounds.peerLeave, message: s.sounds.message, shareStart: s.sounds.shareStart, volume: s.sounds.volume },
     stage: { featureSelf: s.featureSelfInSpeakerView },
     games: { enabled: s.games.enabled, servers: s.games.servers },
   };
@@ -27,7 +27,7 @@ export function applyAccountSettings(local: VoiceSettings, remote: AccountSettin
     mode: remote.voice.mode, pttKey: remote.voice.pttKey, vadThreshold: remote.voice.vadThreshold, vadHangoverMs: remote.voice.vadHangoverMs,
     cameraQuality: remote.camera.quality, cameraBlur: remote.camera.blur,
     // An account stored before the message cue existed (or by a directory that does not know it) says nothing about it: this device's value stays.
-    sounds: { ...remote.sounds, message: remote.sounds.message ?? local.sounds.message },
+    sounds: { ...remote.sounds, message: remote.sounds.message ?? local.sounds.message, shareStart: remote.sounds.shareStart ?? local.sounds.shareStart },
     featureSelfInSpeakerView: remote.stage.featureSelf,
     // Like the message cue: an account from before the game display says nothing about it.
     games: remote.games ? { enabled: remote.games.enabled, servers: remote.games.servers } : local.games,
@@ -47,6 +47,7 @@ export function sameHiddenGames(a: string[] | null, b: string[] | null): boolean
  */
 export function sameAccountSettings(a: AccountSettings, b: AccountSettings, tolerateMissing = false): boolean {
   if (!(tolerateMissing && (a.sounds.message === undefined || b.sounds.message === undefined)) && a.sounds.message !== b.sounds.message) return false;
+  if (!(tolerateMissing && (a.sounds.shareStart === undefined || b.sounds.shareStart === undefined)) && a.sounds.shareStart !== b.sounds.shareStart) return false;
   if (!(tolerateMissing && (a.games === undefined || b.games === undefined)) && (a.games?.enabled !== b.games?.enabled || a.games?.servers !== b.games?.servers)) return false;
   const canon = (s: AccountSettings) => JSON.stringify([
     s.locale, s.voice.mode, s.voice.pttKey, s.voice.vadThreshold, s.voice.vadHangoverMs, s.camera.quality, s.camera.blur,

@@ -138,6 +138,10 @@ describe("sealed settings", () => {
     expect((await openSettings(key, publicKey, on))?.dmLinkPreviews).toBe(true);
     const none = await sealSettings(key, publicKey, { settings: content.settings });
     expect((await openSettings(key, publicKey, none))?.dmLinkPreviews).toBeUndefined();
+    const view = await sealSettings(key, publicKey, { settings: content.settings, cameraMirror: false, gameAudience: { mode: "only", only: ["c".repeat(64)], except: [] } });
+    expect(await openSettings(key, publicKey, view)).toMatchObject({ cameraMirror: false, gameAudience: { mode: "only", only: ["c".repeat(64)], except: [] } });
+    expect((await openSettings(key, publicKey, none))?.cameraMirror).toBeUndefined();
+    expect((await openSettings(key, publicKey, none))?.gameAudience).toBeUndefined();
     const odd = await sealSettings(key, publicKey, { settings: content.settings, dmLinkPreviews: "no" as unknown as boolean });
     expect((await openSettings(key, publicKey, odd))?.dmLinkPreviews).toBeUndefined();
   });

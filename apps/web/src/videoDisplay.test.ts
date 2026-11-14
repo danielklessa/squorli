@@ -8,6 +8,11 @@ describe("mirroring the own camera", () => {
     expect(mirrorsOwnCamera("user")).toBe(true);
     expect(mirrorsOwnCamera("environment")).toBe(false);
   });
+  it("shows the picture as the others get it when the user turned mirroring off", () => {
+    expect(mirrorsOwnCamera(undefined, false)).toBe(false);
+    expect(mirrorsOwnCamera("user", false)).toBe(false);
+    expect(mirrorsOwnCamera("environment", true)).toBe(false);
+  });
 });
 
 describe("video window sizing", () => {

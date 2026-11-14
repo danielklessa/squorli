@@ -1,8 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { AccountSettings, ClientEvent, DirectoryClientEvent, DirectoryServerEvent, Friend, GamePresence, Member } from "./index";
+import { AccountSettings, ClientEvent, DirectoryClientEvent, DirectoryServerEvent, Friend, GAME_AUDIENCE_MAX, GamePresence, Member, cleanGameAudienceSetting, gameAudienceOf, gameVisibleTo, sameGameAudience } from "./index";
 
 const KEY = "a".repeat(64);
 const UUID = "6f1c2a4e-1b2c-4d3e-8f90-000000000000";
+
+describe("who may see my game", () => {
+  const A = "a".repeat(64), B = "b".repeat(64), C = "c".repeat(64);
+  it("turns the setting into what travels: nothing for everybody, the list of the mode otherwise", () => {
+    expect(gameAudienceOf(null)).toBeNull();
+    expect(gameAudienceOf({ mode: "all", only: [A], except: [B] })).toBeNull();
+    expect(gameAudienceOf({ mode: "only", only: [A], except: [B] })).toEqual({ mode: "only", keys: [A] });
+    expect(gameAudienceOf({ mode: "except", only: [A], except: [B] })).toEqual({ mode: "except", keys: [B] });
+  });
+  it("lets the listed see it or keeps them out, and an empty allow list shows it to nobody", () => {
+    expect(gameVisibleTo(null, A)).toBe(true);
+    expect(gameVisibleTo({ mode: "only", keys: [A] }, A)).toBe(true);
+    expect(gameVisibleTo({ mode: "only", keys: [A] }, A.toUpperCase())).toBe(true);
+    expect(gameVisibleTo({ mode: "only", keys: [A] }, B)).toBe(false);
+    expect(gameVisibleTo({ mode: "only", keys: [] }, A)).toBe(false);
+    expect(gameVisibleTo({ mode: "only", keys: [A] }, null)).toBe(false);
+    expect(gameVisibleTo({ mode: "except", keys: [A] }, A)).toBe(false);
+    expect(gameVisibleTo({ mode: "except", keys: [A] }, B)).toBe(true);
+    expect(gameVisibleTo({ mode: "except", keys: [A] }, null)).toBe(true);
+  });
+  it("compares rules without the order of the keys", () => {
+    expect(sameGameAudience(null, undefined)).toBe(true);
+    expect(sameGameAudience({ mode: "only", keys: [A, B] }, { mode: "only", keys: [B, A] })).toBe(true);
+    expect(sameGameAudience({ mode: "only", keys: [A] }, { mode: "except", keys: [A] })).toBe(false);
+    expect(sameGameAudience({ mode: "only", keys: [A] }, { mode: "only", keys: [C] })).toBe(false);
+    expect(sameGameAudience({ mode: "only", keys: [] }, null)).toBe(false);
+  });
+  it("cleans a stored setting: an unknown mode is everybody, odd keys go alone, the lists are capped", () => {
+    expect(cleanGameAudienceSetting(null)).toEqual({ mode: "all", only: [], except: [] });
+    expect(cleanGameAudienceSetting({ mode: "nobody", only: [A, "x", 3, A.toUpperCase()], except: "no" })).toEqual({ mode: "all", only: [A], except: [] });
+    const many = Array.from({ length: GAME_AUDIENCE_MAX + 5 }, (_, i) => i.toString(16).padStart(64, "0"));
+    expect(cleanGameAudienceSetting({ mode: "except", except: many }).except).toHaveLength(GAME_AUDIENCE_MAX);
+  });
+  it("rides on the activity report of both sockets next to the game", () => {
+    for (const Event of [ClientEvent, DirectoryClientEvent]) {
+      const e = Event.parse({ type: "activity", idle: false, game: { name: "A" }, gameAudience: { mode: "only", keys: [A] } });
+      expect(e.type === "activity" && e.gameAudience).toEqual({ mode: "only", keys: [A] });
+      const open = Event.parse({ type: "activity", idle: false, game: { name: "A" } });
+      expect(open.type === "activity" && open.gameAudience).toBeUndefined();
+      expect(Event.safeParse({ type: "activity", idle: false, game: { name: "A" }, gameAudience: { mode: "all", keys: [] } }).success).toBe(false);
+      expect(Event.safeParse({ type: "activity", idle: false, game: { name: "A" }, gameAudience: { mode: "only", keys: ["nokey"] } }).success).toBe(false);
+    }
+  });
+});
 
 describe("game display", () => {
   it("takes a launcher's id with a name, or a name alone", () => {

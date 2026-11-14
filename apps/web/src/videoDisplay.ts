@@ -66,8 +66,10 @@ export function attachVideoView<T>(track: ViewTrack<T>, element: T) {
 /**
  * Is the own camera shown mirrored? Yes, like a mirror, as every video app does, EXCEPT a phone's rear camera
  * (`facingMode: "environment"` in the track's settings): what it shows is in front of the user, and mirrored text there reads backwards.
+ * `mirror` is the user's switch (`VoiceSettings.cameraMirror`, 14 November 2026): off shows the picture as the others get it. Only the
+ * own view is ever mirrored; what is sent never is.
  */
-export const mirrorsOwnCamera = (facingMode: string | undefined): boolean => facingMode !== "environment";
+export const mirrorsOwnCamera = (facingMode: string | undefined, mirror = true): boolean => mirror && facingMode !== "environment";
 
 export const HIDDEN_PAUSE_DELAY_MS = 5000;
 export function watchDocumentHidden(doc: { hidden: boolean; addEventListener: (type: "visibilitychange", fn: () => void) => void; removeEventListener: (type: "visibilitychange", fn: () => void) => void },

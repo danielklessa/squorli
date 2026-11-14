@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Icon } from "./Icon";
 import { askInput } from "./dialogs";
+import { loadAudienceNames, saveAudienceName, suggestAudiencePeople, withAudiencePerson, type AudiencePerson } from "./gameAudience";
 import type { GameDetection } from "./gameDetection";
 import { t, tOr } from "./i18n";
 import type { DetectedGame } from "./platform/bridge";
@@ -12,19 +13,39 @@ import { useVoiceSettings } from "./voice/useVoiceSettings";
  * servers too; user settings that follow the account, voice/settings.ts `games`), what is detected right now, and the list
  * of installed games and added programs with a tick each: no tick = never shown. The hide list is kept on this device, and
  * follows the account where that stores the settings sealed (`hiddenInAccount`; gameDetection.ts); the text says which.
+ * "Wer mein Spiel sehen darf" (14 November 2026, gameAudience.ts): everybody, only the listed people, or all but the listed;
+ * the lists are filled from the friends and the members of the connected servers (`audience.people`), and `audience.unsupported`
+ * names the relays that cannot enforce a rule yet and therefore hear of no game while one is set.
  */
 const SEARCH_FROM = 12;
 
 export function GamesTab({
   games,
   hiddenInAccount,
+  audience,
 }: {
   games: GameDetection;
   hiddenInAccount: boolean;
+  audience: { people: AudiencePerson[]; unsupported: string[]; inAccount: boolean };
 }) {
   const state = useSyncExternalStore(games.subscribe, () => games.state);
   const { settings, running } = state;
-  const display = useVoiceSettings().games;
+  const voiceSettings = useVoiceSettings();
+  const display = voiceSettings.games;
+  const rule = voiceSettings.gameAudience;
+  const setRule = (next: typeof rule) => saveVoiceSettings({ ...loadVoiceSettings(), gameAudience: next });
+  const listName = rule.mode === "all" ? null : rule.mode;
+  const listed = listName ? rule[listName] : [];
+  const [personQuery, setPersonQuery] = useState("");
+  const remembered = loadAudienceNames();
+  const nameOf = (key: string) => audience.people.find((p) => p.publicKey === key)?.name ?? remembered[key] ?? `${key.slice(0, 16)}…`;
+  const suggestions = listName ? suggestAudiencePeople(audience.people, personQuery, new Set(listed)) : [];
+  const setPerson = (key: string, name: string, on: boolean) => {
+    if (!listName) return;
+    const next = withAudiencePerson(loadVoiceSettings().gameAudience, listName, key, on);
+    setRule(next);
+    saveAudienceName(key, name, next);
+  };
   const setDisplay = (next: Partial<typeof display>) => {
     const all = loadVoiceSettings();
     saveVoiceSettings({ ...all, games: { ...all.games, ...next } });
@@ -84,6 +105,59 @@ export function GamesTab({
             {t("games.servers")}
           </label>
           <span className="muted small">{t("games.serversHint")}</span>
+
+          <h3>{t("games.audienceHead")}</h3>
+          <div className="seg wide" role="radiogroup" aria-label={t("games.audienceHead")}>
+            {(["all", "only", "except"] as const).map((mode) => (
+              <button key={mode} role="radio" aria-checked={rule.mode === mode} className={rule.mode === mode ? "active" : ""} onClick={() => setRule({ ...rule, mode })}>
+                {t(`games.audience.${mode}`)}
+              </button>
+            ))}
+          </div>
+          <span className="muted small">{t(`games.audienceHint.${rule.mode}`)}</span>
+          {listName && (
+            <>
+              {listed.length === 0 ? (
+                <span className="muted">{t(listName === "only" ? "games.audienceEmptyOnly" : "games.audienceEmptyExcept")}</span>
+              ) : (
+                <ul className="blocked-list">
+                  {listed.map((key) => (
+                    <li key={key}>
+                      <span className="blocked-name">{nameOf(key)}</span>
+                      <span className="muted small">{key.slice(0, 16)}…</span>
+                      <button className="secondary small" onClick={() => setPerson(key, "", false)}>
+                        <Icon name="x" /> {t("common.remove")}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <input
+                type="search"
+                value={personQuery}
+                placeholder={t("games.audienceSearch")}
+                aria-label={t("games.audienceSearch")}
+                onChange={(e) => setPersonQuery(e.target.value)}
+              />
+              {personQuery.trim() && (
+                <ul className="audience-suggest">
+                  {suggestions.map((p) => (
+                    <li key={p.publicKey}>
+                      <button className="secondary" onClick={() => { setPerson(p.publicKey, p.name, true); setPersonQuery(""); }}>
+                        <Icon name="plus" /> <span>{p.name}</span>
+                        {p.handle && <span className="muted small">{p.handle}</span>}
+                      </button>
+                    </li>
+                  ))}
+                  {suggestions.length === 0 && <li className="muted small">{t("games.audienceNoMatch")}</li>}
+                </ul>
+              )}
+              <span className="muted small">{t(audience.inAccount ? "games.audiencePrivacyAccount" : "games.audiencePrivacy")}</span>
+              {audience.unsupported.length > 0 && (
+                <span className="error small">{t("games.audienceUnsupported", { names: audience.unsupported.join(", ") })}</span>
+              )}
+            </>
+          )}
 
           <h3>{t("games.nowHead")}</h3>
           <span>

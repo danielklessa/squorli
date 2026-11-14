@@ -34,6 +34,17 @@ describe("account settings", () => {
     expect(sameAccountSettings(toAccountSettings(next, "auto"), remote, true)).toBe(true);
   });
 
+  it("treats the share cue like the message cue: an account without the field leaves it to the device", () => {
+    const silent = { ...device, sounds: { ...device.sounds, shareStart: false } };
+    const old = AccountSettings.parse({});
+    expect(old.sounds.shareStart).toBeUndefined();
+    expect(applyAccountSettings(silent, old).sounds.shareStart).toBe(false);
+    expect(sameAccountSettings(toAccountSettings(silent, "auto"), old, true)).toBe(true);
+    expect(sameAccountSettings(toAccountSettings(silent, "auto"), old)).toBe(false);
+    const known = AccountSettings.parse({ sounds: { ...old.sounds, shareStart: true } });
+    expect(applyAccountSettings(silent, known).sounds.shareStart).toBe(true);
+  });
+
   it("keeps this device's message cue when the account says nothing about it, and pushes it all the same", () => {
     const silent = { ...device, sounds: { ...device.sounds, message: false } };
     const old = AccountSettings.parse({}); // stored before the cue existed, or by a directory that drops the field

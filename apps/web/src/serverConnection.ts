@@ -1,4 +1,4 @@
-import { DEVICE_REFUSED, PROTOCOL_VERSION, PrivacyPolicyUrl, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, sessionEndReasonOf, suspendedUntilOf, type ClientEvent, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
+import { DEVICE_REFUSED, PROTOCOL_VERSION, PrivacyPolicyUrl, ServerEvent, VOTEKICK_RESULT_MS, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, sessionEndReasonOf, suspendedUntilOf, type ClientEvent, sameGameAudience, type GameAudience, type GamePresence, type Me, type Message, type ServerState, type VoiceMember, type VerifyResponse, type VoiceStatus, type VoteKickResult } from "@squorli/protocol";
 import { ServerApi, explainLoginError, suspendedText, suspendedUntilOfError, type Health } from "./api";
 import type { VoteKickState } from "./voteKick";
 import { deviceSignerOf, type Identity } from "./identity";
@@ -200,6 +200,8 @@ export class ServerConnection {
   /** AFK detection: what the user's activity tracker says (activity.ts); reported to servers that know the `activity` event. */
   private idle = false;
   private game: GamePresence | null = null;
+  /** Who may see that game on this server (protocol `GameAudience`); null = every member. */
+  private gameAudience: GameAudience | null = null;
 
   constructor(host: string, base: string, private readonly identity: () => Identity | null, private readonly hooks: ConnectionHooks) {
     this.api = new ServerApi(base);
@@ -536,15 +538,19 @@ export class ServerConnection {
     this.reportIdle();
   }
   /** Game display: what the user plays, as it may be shown on this server (store.ts; null = nothing or kept to friends). A fresh connection knows none. */
-  setGame(game: GamePresence | null) {
-    if (game?.id === this.game?.id && game?.name === this.game?.name) return;
+  setGame(game: GamePresence | null, audience: GameAudience | null = null) {
+    if (game?.id === this.game?.id && game?.name === this.game?.name && sameGameAudience(audience, this.gameAudience)) return;
     this.game = game;
+    this.gameAudience = audience;
     this.reportIdle();
   }
   private reportIdle() {
     // Servers from before the AFK detection do not send the setting and would answer the event with `bad_message`; one from
     // before the game display drops `game` unread.
-    if (this.state.server?.settings.afkChannelId !== undefined) this.send({ type: "activity", idle: this.idle, game: this.game });
+    if (this.state.server?.settings.afkChannelId === undefined) return;
+    // A rule who may see the game is enforced by the server. One from before it would show the game to every member, so it hears of none.
+    const game = this.gameAudience && this.state.server.gameAudience !== true ? null : this.game;
+    this.send({ type: "activity", idle: this.idle, game, ...(game && this.gameAudience ? { gameAudience: this.gameAudience } : {}) });
   }
 
   send(e: ClientEvent) {

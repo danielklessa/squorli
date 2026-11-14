@@ -1,4 +1,4 @@
-import { AFK_AFTER_MS, type GamePresence, type ServerEvent } from "@squorli/protocol";
+import { AFK_AFTER_MS, gameVisibleTo, sameGameAudience, type GameAudience, type GamePresence, type ServerEvent } from "@squorli/protocol";
 import type { WebSocket } from "ws";
 
 /**
@@ -15,6 +15,9 @@ import type { WebSocket } from "ws";
  * member's game is the one reported last among their connections and goes when that connection does. The server only
  * relays it (viewers ask the directory's game library), and it is independent of the AFK state. Presence listeners fire
  * when it changes.
+ * Who may see the game (14 November 2026): a report may carry a rule (`GameAudience`: only these keys, or all but these). It
+ * is kept next to the game per connection, in memory only, never stored and never logged; `gameFor` answers every viewer by
+ * it, and state.ts masks the member list per recipient. A changed rule alone fires the presence listeners too.
  */
 export class Hub {
   private readonly byUser = new Map<string, Set<WebSocket>>();
@@ -28,6 +31,8 @@ export class Hub {
   private readonly afk = new Set<string>();
   /** What a connection's client says its user plays; insertion order = the order of the reports, the last one counts. */
   private readonly games = new Map<WebSocket, GamePresence>();
+  /** The rule that came with a connection's game (none = every member); gone with the game. */
+  private readonly audiences = new Map<WebSocket, GameAudience>();
   /** Users whose active connection just closed: not AFK before this time (ms), with the timer that looks again then. */
   private readonly grace = new Map<string, { until: number; timer: NodeJS.Timeout }>();
   private readonly listeners = new Set<(userId: string, online: boolean) => void>();
@@ -56,8 +61,9 @@ export class Hub {
   remove(ws: WebSocket) {
     const userId = this.userOf.get(ws);
     if (!userId) return;
-    const gameBefore = this.gameOf(userId);
+    const gameBefore = this.gameOf(userId); const audienceBefore = this.audienceOf(userId);
     this.games.delete(ws);
+    this.audiences.delete(ws);
     this.userOf.delete(ws);
     this.sessionOf.delete(ws);
     const wasStale = this.stale.delete(ws);
@@ -77,17 +83,36 @@ export class Hub {
       this.grace.set(userId, { until: Date.now() + AFK_AFTER_MS, timer });
     }
     // The connection that reported the game is gone while the member stays online on another one.
-    if (this.isOnline(userId) && !sameGame(gameBefore, this.gameOf(userId))) for (const fn of this.listeners) fn(userId, true);
+    if (this.isOnline(userId) && (!sameGame(gameBefore, this.gameOf(userId)) || !sameGameAudience(audienceBefore, this.audienceOf(userId)))) for (const fn of this.listeners) fn(userId, true);
   }
 
-  /** A connection reports what its user plays (null = nothing). */
-  setGame(ws: WebSocket, game: GamePresence | null) {
+  /** A connection reports what its user plays (null = nothing) and who may see it (null = every member). */
+  setGame(ws: WebSocket, game: GamePresence | null, audience: GameAudience | null = null) {
     const userId = this.userOf.get(ws);
     if (!userId) return;
-    const before = this.gameOf(userId);
-    this.games.delete(ws);
-    if (game) this.games.set(ws, game);
-    if (!sameGame(before, this.gameOf(userId))) for (const fn of this.listeners) fn(userId, true);
+    const before = this.gameOf(userId); const audienceBefore = this.audienceOf(userId);
+    this.games.delete(ws); this.audiences.delete(ws);
+    if (game) { this.games.set(ws, game); if (audience) this.audiences.set(ws, audience); }
+    if (!sameGame(before, this.gameOf(userId)) || !sameGameAudience(audienceBefore, this.audienceOf(userId))) for (const fn of this.listeners) fn(userId, true);
+  }
+
+  /** The rule of the game that counts (the connection that reported last); null = every member. */
+  private audienceOf(userId: string): GameAudience | null {
+    let last: WebSocket | null = null;
+    for (const ws of this.games.keys()) if (this.userOf.get(ws) === userId) last = ws;
+    return last ? this.audiences.get(last) ?? null : null;
+  }
+
+  /** Does any reported game carry a rule right now? (state.ts skips the per-recipient masking otherwise.) */
+  hasGameAudiences(): boolean { return this.audiences.size > 0; }
+
+  /** A member's game as the holder of this key may see it (null = a viewer without a key, who passes only a game without a rule). */
+  gameFor(userId: string, viewerKey: string | null): GamePresence | null {
+    const game = this.gameOf(userId);
+    if (!game) return null;
+    const audience = this.audienceOf(userId);
+    if (!audience) return game;
+    return viewerKey && gameVisibleTo(audience, viewerKey) ? game : null;
   }
 
   /** The game a member plays: the last report among their connections, null = none. */

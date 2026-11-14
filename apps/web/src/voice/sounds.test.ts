@@ -1,6 +1,6 @@
 import { SoundSettings as SoundSettingsSchema, directorySoundSettingsPayload } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
-import { CUE_TONES, DEFAULT_SOUND_SETTINGS, SOUND_CUES, cueDurationMs, normalizeSoundSettings, shouldPlayCue } from "./sounds";
+import { CUE_TONES, DEFAULT_SOUND_SETTINGS, SHARE_CUE_REST_MS, SOUND_CUES, VOICE_CUES, cueDurationMs, normalizeSoundSettings, shareCueDue, shouldPlayCue } from "./sounds";
 
 describe("join/leave cues", () => {
   it("knows how long a cue sounds, the leave cue well under a second", () => {
@@ -52,6 +52,26 @@ describe("join/leave cues", () => {
     expect(SoundSettingsSchema.parse(DEFAULT_SOUND_SETTINGS)).toEqual(DEFAULT_SOUND_SETTINGS);
     expect(SoundSettingsSchema.safeParse({ ...DEFAULT_SOUND_SETTINGS, volume: 1.5 }).success).toBe(false);
     expect(directorySoundSettingsPayload({ ...DEFAULT_SOUND_SETTINGS, peerLeave: false, volume: 0.35 })).toBe("1110\n0.35");
+  });
+
+  it("has a cue for a screen share somebody else starts, optional in the account like the message cue", () => {
+    expect(VOICE_CUES).toContain("shareStart");
+    expect(CUE_TONES.shareStart.length).toBe(3);
+    expect(normalizeSoundSettings({}).shareStart).toBe(true);
+    expect(normalizeSoundSettings({ shareStart: false }).shareStart).toBe(false);
+    expect(SoundSettingsSchema.parse({ selfJoin: true, selfLeave: true, peerJoin: true, peerLeave: true, volume: 0.6 }).shareStart).toBeUndefined();
+  });
+
+  it("plays the share cue only for a share that starts while I am there, may be watched, and not in a row", () => {
+    const ok = { now: 100_000, cuesFrom: 50_000, afkRoom: false, mayView: true, blocked: false, last: undefined as number | undefined };
+    expect(shareCueDue(ok)).toBe(true);
+    expect(shareCueDue({ ...ok, cuesFrom: 0 })).toBe(false); // not connected
+    expect(shareCueDue({ ...ok, cuesFrom: 100_500 })).toBe(false); // just connected: that share was already there
+    expect(shareCueDue({ ...ok, afkRoom: true })).toBe(false);
+    expect(shareCueDue({ ...ok, mayView: false })).toBe(false);
+    expect(shareCueDue({ ...ok, blocked: true })).toBe(false);
+    expect(shareCueDue({ ...ok, last: 100_000 - SHARE_CUE_REST_MS + 1 })).toBe(false);
+    expect(shareCueDue({ ...ok, last: 100_000 - SHARE_CUE_REST_MS })).toBe(true);
   });
 
   it("has a cue for messages that an account without the field leaves to the device", () => {

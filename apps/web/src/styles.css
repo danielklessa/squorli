@@ -812,6 +812,10 @@ button.icon.on { color: var(--brand); }
 .camera-preview { aspect-ratio: 16 / 9; background: #000; border-radius: var(--r); overflow: hidden; margin-top: 0.5rem; }
 .camera-preview video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .camera-preview video.mirror { transform: scaleX(-1); }
+/* Einstellungen > Kamera before the preview is started (SettingsDialog.tsx): the same box with the start button in its middle. */
+.camera-preview-off { display: grid; place-items: center; background: var(--bg4); max-width: 30rem; }
+.settings-body .camera-preview { max-width: 30rem; margin-top: 0; }
+.camera-picker label.check { margin-top: 0.6rem; }
 .camera-list { list-style: none; margin: 0.6rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 .camera-option { width: 100%; text-align: left; background: var(--bg4); color: var(--text); display: flex; align-items: center; gap: 0.6rem; }
 .camera-picker h3 { margin: 0.7rem 0 0.3rem; }
@@ -1491,3 +1495,6 @@ h3 > .category-btn:hover { color: var(--text); }
 .blocked-list li { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .blocked-list .blocked-name { font-weight: 600; }
 .blocked-list button { margin-left: auto; }
+/* Einstellungen > Spiele, "Wer mein Spiel sehen darf" (GamesTab.tsx): the people a search found, one button each. */
+.audience-suggest { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.audience-suggest button { width: 100%; display: flex; align-items: center; gap: 0.5rem; text-align: left; }

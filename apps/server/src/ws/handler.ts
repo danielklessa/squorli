@@ -1,4 +1,4 @@
-import { ClientEvent, PROTOCOL_VERSION, Permission, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, displayNameOf, suspendedCloseReason, type GamePresence, type ServerEvent } from "@squorli/protocol";
+import { ClientEvent, PROTOCOL_VERSION, Permission, WS_CLOSE_ACCOUNT_SUSPENDED, WS_CLOSE_SESSION_ENDED, displayNameOf, suspendedCloseReason, type GameAudience, type GamePresence, type ServerEvent } from "@squorli/protocol";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
@@ -73,13 +73,14 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
     // what arrives in between waits, and only the last one counts.
     let lastGameAt = 0;
     let gameTimer: NodeJS.Timeout | null = null;
-    let waitingGame: GamePresence | null = null;
-    const applyGame = (game: GamePresence | null) => { lastGameAt = Date.now(); hub.setGame(socket, game); };
-    const reportGame = (game: GamePresence | null) => {
+    // Who may see it (`GameAudience`, 14 November 2026) rides with the game and waits with it; kept in the hub's memory only.
+    let waitingGame: { game: GamePresence | null; audience: GameAudience | null } = { game: null, audience: null };
+    const applyGame = (game: GamePresence | null, audience: GameAudience | null) => { lastGameAt = Date.now(); hub.setGame(socket, game, audience); };
+    const reportGame = (game: GamePresence | null, audience: GameAudience | null) => {
       const wait = lastGameAt + GAME_CHANGE_MS - Date.now();
-      if (wait <= 0 && !gameTimer) return applyGame(game);
-      waitingGame = game;
-      gameTimer ??= setTimeout(() => { gameTimer = null; applyGame(waitingGame); }, Math.max(wait, 0));
+      if (wait <= 0 && !gameTimer) return applyGame(game, audience);
+      waitingGame = { game, audience };
+      gameTimer ??= setTimeout(() => { gameTimer = null; applyGame(waitingGame.game, waitingGame.audience); }, Math.max(wait, 0));
     };
 
     socket.on("pong", () => { liveness.heard(socket, false); });
@@ -242,7 +243,7 @@ export async function registerWs(app: FastifyInstance, db: Db, hub: Hub, presenc
           // AFK detection: the hub turns the connections' reports into the member's state (index.ts broadcasts and moves).
           hub.setIdle(socket, ev.data.idle);
           // Game display: left out = the client says nothing about it (one from before the feature).
-          if (ev.data.game !== undefined) reportGame(ev.data.game);
+          if (ev.data.game !== undefined) reportGame(ev.data.game, ev.data.gameAudience ?? null);
           return;
         case "typing": {
           const now = Date.now();

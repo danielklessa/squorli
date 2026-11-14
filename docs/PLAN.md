@@ -79,6 +79,7 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 ### 3.3 Clients
 
+
 - **macOS desktop app, signing** (user: medium): the app is built since 21 October 2026 (two DMGs, Apple Silicon and Intel, on the macos-latest runner; `docs/features/desktop.md` "macOS build"), but only ad-hoc signed and not notarized, because there is no Apple Developer account (the user's decision, 21 October 2026): Gatekeeper refuses the first start until the user allows it, and the app cannot update itself (it shows the notice and links to the download page). Open, once an Apple Developer account exists: the Developer ID certificate and the notarization in the release workflow (`CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` in the `signing` environment; `hardenedRuntime` with entitlements; `notarize`), the zip target for Squirrel.Mac, `updateMode` "self" on darwin, start with the system (login items are unreliable for an unsigned app). System audio in a share is a documented limitation there, not a requirement (the user, 3 October 2026); the matrix in `docs/features/voice-video.md` says so.
 
 ### 3.4 A screen share that adapts by itself (user: medium)
@@ -93,7 +94,7 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 ## 4. Priority 3: later
 
-- **Games** (`docs/features/games.md`): detection on Linux, more launchers (Ubisoft, EA, Battle.net, Riot), a rule list for games behind another executable (Minecraft Java = `javaw.exe`), larger icons.
+- **Games** (`docs/features/games.md`): detection on Linux, more launchers (Ubisoft, EA, Battle.net, Riot), a rule list for games behind another executable (Minecraft Java = `javaw.exe`), larger icons. Who may see my game (built 14 November 2026): a rule per game, a test with two real clients.
 - **Linux desktop:** system-wide push-to-talk and hotkeys on Wayland (X11 only today), window audio (Windows only; also macOS).
 - **Push-to-talk:** mouse buttons as the key, a short tone when it opens, offering push-to-talk on the first join (`docs/features/hotkeys.md`).
 - **Link previews:** an "embed links" permission, an admin setting instead of `LINK_PREVIEWS`, smaller copies of large pictures, Twitch clips and Vimeo (`docs/features/link-previews.md`).

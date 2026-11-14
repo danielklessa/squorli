@@ -1,12 +1,9 @@
-import { BackgroundBlur, type BackgroundProcessorWrapper } from "@livekit/track-processors";
-import { VideoPresets, createLocalVideoTrack, type LocalVideoTrack } from "livekit-client";
 import { useEffect, useRef, useState } from "react";
 import { useBackClose } from "./backStack";
+import { CameraPreview, type CameraPreviewHandle } from "./CameraPreview";
 import { Icon } from "./Icon";
 import { VoiceClient } from "./voice/voiceClient";
 import { t } from "./i18n";
-import { retryCameraBusy } from "./voice/cameraRetry";
-import { mirrorsOwnCamera } from "./videoDisplay";
 
 type Props = {
   cameras: MediaDeviceInfo[];
@@ -14,6 +11,9 @@ type Props = {
   initial: string | null;
   /** Preselected background blur (0 = off). */
   initialBlur: number;
+  /** The user's switch "show my picture mirrored", and its change (stored at once: it is a view setting, not part of the pick). */
+  mirror: boolean;
+  onMirror: (mirror: boolean) => void;
   onPick: (deviceId: string, blur: number) => void;
   onCancel: () => void;
   /** The window the dialog is shown in (the stage's own window, StageWindow.tsx). */
@@ -28,59 +28,18 @@ export const BLUR_OPTIONS: { value: number; label: string }[] = [
 
 /**
  * Camera picker at switch-on time (as the user specified: always ask when there are several cameras), including the background.
- * Own modal with a live preview; the preview is an unpublished LiveKit track so the blur
- * (BackgroundBlur processor) looks exactly as it later will in the channel. No browser dialog.
+ * Own modal with a live preview (CameraPreview.tsx: an unpublished LiveKit track with the channel's blur processor). No browser dialog.
  */
-export function CameraPicker({ cameras, initial, initialBlur, onPick, onCancel, win = window }: Props) {
+export function CameraPicker({ cameras, initial, initialBlur, mirror, onMirror, onPick, onCancel, win = window }: Props) {
   const [selected, setSelected] = useState(() => (initial && cameras.some((c) => c.deviceId === initial) ? initial : cameras[0]?.deviceId ?? ""));
   const [blur, setBlur] = useState(VoiceClient.supportsBlur() ? initialBlur : 0);
-  const [err, setErr] = useState<string | null>(null);
-  const [track, setTrack] = useState<LocalVideoTrack | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const processor = useRef<BackgroundProcessorWrapper | null>(null);
+  const preview = useRef<CameraPreviewHandle>(null);
   const canBlur = VoiceClient.supportsBlur();
-
-  // The preview track and how to release it; `pick()` releases it BEFORE the channel opens the camera (see there).
-  const preview = useRef<{ alive: boolean; track: LocalVideoTrack | null } | null>(null);
-  const releasePreview = () => {
-    const p = preview.current;
-    if (!p) return;
-    p.alive = false;
-    processor.current = null;
-    if (p.track) { p.track.detach(); void p.track.stopProcessor().catch(() => {}); p.track.stop(); p.track = null; }
-    preview.current = null;
-  };
-
-  // Preview of the highlighted camera; release the camera again when switching and when closing.
-  useEffect(() => {
-    const p = { alive: true, track: null as LocalVideoTrack | null };
-    preview.current = p;
-    setErr(null);
-    // Firefox may still be releasing the camera that was just switched off; retry once (voice/cameraRetry.ts).
-    retryCameraBusy(() => createLocalVideoTrack({ deviceId: selected, resolution: VideoPresets.h360.resolution }))
-      .then((t) => { if (!p.alive) { t.stop(); return; } p.track = t; setTrack(t); if (videoRef.current) t.attach(videoRef.current); })
-      .catch((e: unknown) => { if (p.alive) setErr(e instanceof Error ? e.message : String(e)); });
-    return () => { if (preview.current === p) releasePreview(); else p.alive = false; setTrack(null); };
-  }, [selected]);
-
-  // Apply the blur to the preview (the same processor as in the channel).
-  useEffect(() => {
-    if (!track || !canBlur) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        if (blur <= 0) { if (processor.current) { await track.stopProcessor(); processor.current = null; } }
-        else if (processor.current) await processor.current.switchTo({ mode: "background-blur", blurRadius: blur });
-        else { const p = BackgroundBlur(blur); await track.setProcessor(p); if (!cancelled) processor.current = p; }
-      } catch (e) { if (!cancelled) setErr(t("camera.bgError", { err: e instanceof Error ? e.message : String(e) })); }
-    })();
-    return () => { cancelled = true; };
-  }, [track, blur, canBlur]);
 
   // Release the preview first, then switch on: otherwise the camera is grabbed twice. Must happen here and synchronously:
   // the effect cleanup runs only when React unmounts the dialog, after `onPick` has already asked LiveKit for the camera,
   // and Firefox then failed with "Starting videoinput failed" (18 September 2026).
-  const pick = () => { if (!selected) return; releasePreview(); setTrack(null); onPick(selected, blur); };
+  const pick = () => { if (!selected) return; preview.current?.release(); onPick(selected, blur); };
 
   useBackClose(onCancel);
   useEffect(() => {
@@ -93,10 +52,11 @@ export function CameraPicker({ cameras, initial, initialBlur, onPick, onCancel, 
     <div className="modal-backdrop dialog-backdrop" onMouseDown={onCancel}>
       <div className="modal dialog camera-picker" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
         <h2>{t("camera.title")}</h2>
-        <div className="camera-preview">
-          <video ref={videoRef} autoPlay playsInline muted className={mirrorsOwnCamera(track?.mediaStreamTrack.getSettings().facingMode) ? "mirror" : ""} />
-          {err && <p className="error small">{err}</p>}
-        </div>
+        <CameraPreview ref={preview} deviceId={selected || null} blur={blur} mirror={mirror} />
+        <label className="check">
+          <input type="checkbox" className="switch" role="switch" checked={mirror} onChange={(e) => onMirror(e.target.checked)} />
+          {t("camera.mirror")}
+        </label>
         <h3>{t("camera.camera")}</h3>
         <ul className="camera-list">
           {cameras.map((c, i) => (

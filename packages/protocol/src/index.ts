@@ -26,7 +26,7 @@ export * from "./reactions";
 export { EMOJI_SOURCE, Iso, PublicKey, REACTION_EMOJI_MAX_CHARS, REPORT_REASONS, REPORT_TEXT_MAX, ReactionEmoji, ReportReason, Signature, Uuid, emojiKey, isSingleEmoji } from "./primitives";
 import { ReactionChip } from "./reactions";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
-import { DeviceProofFields, DisplayName } from "./directory";
+import { DeviceProofFields, DisplayName, GameAudience } from "./directory";
 import { GamePresence } from "./friends";
 import { ChannelNotification, SlowmodeSeconds, UserLimit, VoiceLock } from "./channels";
 import { VoteKick, VoteKickResult } from "./votekick";
@@ -715,6 +715,12 @@ export const ServerState = z.object({
    */
   openReports: z.number().int().nonnegative().optional(),
   /**
+   * Who may see my game (directory.ts `GameAudience`, 14 November 2026): present (true) = this server takes the rule with the
+   * `activity` report and filters the member list by it. Missing = a server from before, which would show the game to every
+   * member: a client with a rule reports no game to it.
+   */
+  gameAudience: z.boolean().optional(),
+  /**
    * Reactions and reaction roles (reactions.ts): present (true) = this server does them, the client offers the picker button
    * on a message, the rules dialog and Verwaltung > Reaktionsrollen only then; missing = a server from before.
    */
@@ -794,6 +800,8 @@ export const ClientActivity = z.object({
   type: z.literal("activity"), idle: z.boolean(),
   /** Game display (friends.ts `GamePresence`): what this connection's user plays, null = nothing; left out = says nothing about it. A server from before it drops the field unread. */
   game: GamePresence.nullable().optional(),
+  /** Who among the members may see that game (directory.ts `GameAudience`, 14 November 2026): counts together with `game`, replaced with every report that names a game or none; left out or null = every member. Only sent to a server whose state says `gameAudience`. */
+  gameAudience: GameAudience.nullable().optional(),
 });
 
 export const ClientEvent = z.discriminatedUnion("type", [ClientHello, ClientPing, ClientVoiceJoin, ClientVoiceLeave, ClientVoiceStatus, ClientTyping, ClientActivity]);

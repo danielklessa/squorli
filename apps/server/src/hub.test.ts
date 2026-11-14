@@ -91,6 +91,32 @@ describe("Hub AFK state", () => {
 });
 
 describe("Hub game display", () => {
+  it("answers every viewer by the rule that came with the game and fires the listeners when the rule alone changes", () => {
+    const hub = new Hub();
+    const A = "a".repeat(64), B = "b".repeat(64);
+    const s = sock();
+    hub.add("u1", s, "s1");
+    let told = 0;
+    hub.onPresence(() => { told++; });
+    hub.setGame(s, { name: "Balatro" });
+    expect(hub.hasGameAudiences()).toBe(false);
+    expect(hub.gameFor("u1", null)).toEqual({ name: "Balatro" });
+    told = 0;
+    hub.setGame(s, { name: "Balatro" }, { mode: "only", keys: [A] });
+    expect(told).toBe(1);
+    expect(hub.hasGameAudiences()).toBe(true);
+    expect(hub.gameFor("u1", A)).toEqual({ name: "Balatro" });
+    expect(hub.gameFor("u1", B)).toBeNull();
+    expect(hub.gameFor("u1", null)).toBeNull();
+    hub.setGame(s, { name: "Balatro" }, { mode: "only", keys: [A] });
+    expect(told).toBe(1);
+    hub.setGame(s, { name: "Balatro" }, { mode: "except", keys: [A] });
+    expect(hub.gameFor("u1", A)).toBeNull();
+    expect(hub.gameFor("u1", B)).toEqual({ name: "Balatro" });
+    hub.setGame(s, null);
+    expect(hub.hasGameAudiences()).toBe(false);
+  });
+
   const cs2 = { id: "steam:730", name: "Counter-Strike 2" };
   const balatro = { name: "Balatro" };
 

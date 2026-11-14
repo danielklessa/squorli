@@ -6,6 +6,7 @@ import type { ServerApi } from "./api";
 import type { BlockControls } from "./blocked";
 import { askConfirm, askInput } from "./dialogs";
 import { Icon } from "./Icon";
+import { GameAudienceMenuItem } from "./GameAudienceMenuItem";
 import { GameLine } from "./GameLine";
 import { t } from "./i18n";
 import { assignableRoles, canSetRolesOf, rolesByRank, topRoleOf } from "./memberRank";
@@ -156,6 +157,7 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
             {blocked && !isMe && (blocked.has(m.publicKey)
               ? <button role="menuitem" className="secondary small" onClick={() => { closeMenu(); blocked.onUnblock(m.publicKey); }}><Icon name="undo-2" /> {t("block.unblock")}</button>
               : <button role="menuitem" className="secondary small danger" onClick={() => { closeMenu(); blocked.onBlock(m.publicKey, m.displayName, !!m.handle); }}><Icon name="ban" /> {t("block.block")}</button>)}
+            {!isMe && <GameAudienceMenuItem publicKey={m.publicKey} name={m.displayName} className="secondary small" onDone={closeMenu} />}
             {/* The directory account as it shows everywhere (name, picture): to the directory's operator, not to this server's moderators. */}
             {onReportAccount && !isMe && m.handle && <button role="menuitem" className="secondary small" onClick={() => { closeMenu(); onReportAccount(m.publicKey, `@${m.handle}`); }}><Icon name="flag" /> {t("report.reportAccount")}</button>}
             <VoiceMemberActions api={api} member={m} myUserId={myUserId} permsIn={permsIn} voice={voice} channels={channels}

@@ -6,6 +6,7 @@ import type { VoiceClient, VideoTile } from "./voice/voiceClient";
 import { Icon } from "./Icon";
 import { VideoAudioControls } from "./VideoAudioControls";
 import { t } from "./i18n";
+import { useVoiceSettings } from "./voice/useVoiceSettings";
 import { platform } from "./platform";
 import { activity, watchActivity } from "./activity";
 import { attachVideoView, fitVideoWindow, mirrorsOwnCamera, toggleVideoFullscreen, watchDocumentHidden } from "./videoDisplay";
@@ -20,7 +21,8 @@ export function TrackVideo({ tile }: { tile: VideoTile }) {
     const element = ref.current!;
     return attachVideoView(tile.track, element);
   }, [tile.track, unseen]);
-  const mirror = tile.isLocal && tile.source === "camera" && mirrorsOwnCamera(tile.track.mediaStreamTrack?.getSettings().facingMode);
+  const mirrorOn = useVoiceSettings().cameraMirror;
+  const mirror = tile.isLocal && tile.source === "camera" && mirrorsOwnCamera(tile.track.mediaStreamTrack?.getSettings().facingMode, mirrorOn);
   return <video ref={ref} className={mirror ? "mirror" : ""} autoPlay playsInline muted />;
 }
 
