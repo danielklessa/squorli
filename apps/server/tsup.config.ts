@@ -5,7 +5,7 @@ export default defineConfig({
   // (src/preview-worker.ts); index.ts starts the worker from the file next to its own.
   entry: { index: "src/index.ts", "preview-worker": "src/preview-worker.ts" },
   format: ["esm"],
-  target: "node24",
+  target: "node26",
   clean: true,
   // The protocol package only exists as TypeScript source; include it in the bundle
   // so dist/index.js runs without type stripping and without a workspace link.

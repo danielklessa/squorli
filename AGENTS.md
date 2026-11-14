@@ -113,7 +113,7 @@ Dockerfile             Multi-stage build, target `app` (web + server); `pnpm dep
 .env.development       Template for local development (copy to apps/server/.env)
 ```
 
-Workspace: pnpm 10 (`packageManager` in package.json, `corepack enable`), Node >= 24 (LTS, tested with Node 24.21.0).
+Workspace: pnpm 12 (`packageManager` in package.json; `corepack enable` up to Node 24, Node 26 ships no corepack: `npm install -g pnpm@<that version>`, as the CI and the Dockerfile do), Node >= 24 (the image, the CI and the package for Windows run Node 26 LTS since 12 November 2026, `.nvmrc`; a development machine with Node 24 still works).
 Package names: `@squorli/server`, `@squorli/web`, `@squorli/desktop`, `@squorli/mobile`, `@squorli/protocol` (the directory service `@squorli/directory` lives in `../squorli-directory`). The protocol package is consumed as TypeScript source (no build step). `packages/protocol/src/permissions.ts` = permission bitmask (append new bits at the end) and `PERMISSION_GROUPS` = display order and grouping in the role editor (sort every new permission in by meaning and re-check the arrangement, `packages/protocol/AGENTS.md`).
 
 ## 2a. Sibling repo `../squorli-directory` (not published) and synchronized copies
