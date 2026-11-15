@@ -8,7 +8,7 @@
 #             networks, plus the IP of a proxy on another host), PROXY_BIND_IP (default 127.0.0.1 = a proxy on this host; a proxy on
 #             another host needs this host's LAN/VPN address here, since 5 October 2026 never 0.0.0.0 by default, security audit M-6)
 #   optional: APP_IMAGE, SERVER_NAME, OWNER_PUBLIC_KEY, OWNER_SETUP_CODE, MAX_UPLOAD_MB, LINK_PREVIEWS (true/false), LIVEKIT_PUBLIC_URL, DIRECTORY_PROOF_URL, LOCAL_ACCOUNTS (true/false), RATE_LIMIT_FACTOR, LOG_LEVEL, LOG_REQUESTS (true/false), STORAGE_QUOTA_MB, VOICE_SEATS_MAX, MEMBER_MAX, DB_POOL_MAX (docs/features/limits.md),
-#             PLUGINS (owner/operator/off), PLUGIN_MAX, PLUGIN_CPU_MS, PLUGIN_MEMORY_MB, PLUGIN_STORAGE_MB, PLUGIN_NET (docs/features/plugins.md; a
+#             PLUGINS (owner/operator/off), PLUGIN_MAX, PLUGIN_CPU_MS, PLUGIN_MEMORY_MB, PLUGIN_STORAGE_MB, PLUGIN_NET, PLUGIN_CATALOG (docs/features/plugins.md; a
 #             Portainer stack has no `squorli` command, so with the default owner plugins are uploaded in the admin panel)
 # The image defaults to the newest published release (:stable, signed) in the GitHub Container Registry; APP_IMAGE pins a
 # version (e.g. :v0.5.0) or names another registry. Portainer pulls without checking the signature (README, "Signed releases"). See the Portainer section in README.md.
@@ -64,6 +64,7 @@ services:
       PLUGIN_MEMORY_MB: ${PLUGIN_MEMORY_MB:-}
       PLUGIN_STORAGE_MB: ${PLUGIN_STORAGE_MB:-}
       PLUGIN_NET: ${PLUGIN_NET:-}
+      PLUGIN_CATALOG: ${PLUGIN_CATALOG:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_REQUESTS: ${LOG_REQUESTS:-false}
     volumes: [appdata:/app/data]   # attachments, server icon

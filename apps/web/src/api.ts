@@ -11,7 +11,7 @@ import {
   localClaimMessage,
   NoticeReadResponse, RefusedServersResponse, directoryRefusedServersUrl, directoryReportPayload, reportKindsOf, suspendedUntilOf, type AccountNotice, type DirectoryReportContent,
   DeviceRevokeResponse, DevicesResponse, type DeviceRevokeTarget, type DirectoryAction,
-  PluginActionResult, PluginInfo, PluginLogResponse, PluginSettingsResponse, PluginViewResponse, PluginsResponse,
+  PluginActionResult, PluginInfo, PluginLogResponse, PluginSettingsResponse, PluginViewResponse, PluginCatalogResponse, PluginsResponse,
   DEVICE_PROOF_REQUIRED, SESSION_PROOF_HEADER, deviceProofMessage, sessionBodyHash, sessionProofHeader, sessionProofMessage, type BackupKdfName, type SessionProof,
 } from "@squorli/protocol";
 import { z } from "zod";
@@ -373,7 +373,9 @@ export class ServerApi {
   // ---------- Plugins (docs/features/plugins.md): Verwaltung > Plugins with MANAGE_SERVER; installing, enabling and removing only as an owner
   plugins() { return this.request<PluginsResponse>("GET", "/api/plugins").then((r) => PluginsResponse.parse(r)); }
   /** A plugin file's text with its name, or the id of one that ships with the server (the list "Verfügbar"). */
-  installPlugin(body: { source: string; fileName: string } | { bundled: string }) { return this.request<PluginInfo>("POST", "/api/plugins", body).then((r) => PluginInfo.parse(r)); }
+  installPlugin(body: { source: string; fileName: string } | { bundled: string } | { catalog: string }) { return this.request<PluginInfo>("POST", "/api/plugins", body).then((r) => PluginInfo.parse(r)); }
+  /** The catalogue of signed plugins: the server asks GitHub for it when this is called (`refresh`: again, not from its copy). */
+  pluginCatalog(refresh = false) { return this.request<PluginCatalogResponse>("GET", `/api/plugins/catalog${refresh ? "?refresh=1" : ""}`).then((r) => PluginCatalogResponse.parse(r)); }
   /** `grant` = the capabilities the owner saw and confirmed; anything but exactly what the plugin asks for is a 409 `capabilities_changed` whose body lists them. */
   setPluginEnabled(id: string, enabled: boolean, grant?: string[]) { return this.request<PluginInfo>("PUT", `/api/plugins/${encodeURIComponent(id)}/enabled`, { enabled, ...(grant ? { grant } : {}) }).then((r) => PluginInfo.parse(r)); }
   removePlugin(id: string, messages: "keep" | "delete") { return this.request<{ ok: true }>("DELETE", `/api/plugins/${encodeURIComponent(id)}?messages=${messages}`); }

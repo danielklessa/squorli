@@ -101,6 +101,34 @@ export class LinkPreviews {
     if (updated && JSON.stringify(visiblePreviews(after)) !== JSON.stringify(visiblePreviews(before))) await this.onChange(updated);
   }
 
+  /**
+   * The pictures of a plugin's card (docs/features/plugins.md): the addresses the plugin named are fetched like a preview's
+   * picture (public hosts only, a picture and nothing else, the same size limit, the same files under DATA_DIR/previews) and
+   * the card then carries their paths. Returns at once; the pictures arrive as `message.update`. An address that is no
+   * picture, or one too many for the minute, leaves the card without it.
+   */
+  attachCardPictures(messageId: string, pictures: { image?: string; thumbnail?: string }): void {
+    if (!this.enabled) return;
+    void this.enqueue(messageId, async () => {
+      const [row] = await this.db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+      if (!row?.plugin?.card) return;
+      const found: { image?: string; thumbnail?: string } = {};
+      for (const key of ["thumbnail", "image"] as const) {
+        const url = pictures[key];
+        if (!url || !this.mayLookUp(`card:${row.authorId}`)) continue;
+        const looked = await this.lookUp(url);
+        // Only an address that is a picture itself: a page's own preview picture is not what the plugin named.
+        if (looked?.image && looked.title === null && looked.description === null) found[key] = looked.image;
+      }
+      if (!found.image && !found.thumbnail) return;
+      // Read again: the message may be gone or edited by now. Only the card's two pictures are written.
+      const [now] = await this.db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
+      if (!now?.plugin?.card) return;
+      const [updated] = await this.db.update(messages).set({ plugin: { ...now.plugin, card: { ...now.plugin.card, ...found } } }).where(eq(messages.id, messageId)).returning();
+      if (updated) await this.onChange(updated);
+    }).catch((err) => this.log.warn({ err, messageId }, "card pictures"));
+  }
+
   /** The author takes a preview away. false = the message has no such preview. */
   remove(messageId: string, url: string): Promise<boolean> {
     return this.enqueue(messageId, async () => {
@@ -167,6 +195,9 @@ export class LinkPreviews {
   async sweep(): Promise<number> {
     const rows = await this.db.execute<{ image: string | null }>(sql`select distinct p->>'image' as image from ${messages}, jsonb_array_elements(${messages.previews}) p where ${messages.previews} is not null`);
     const used = new Set([...rows].map((r) => r.image?.replace("/api/previews/", "")).filter(Boolean));
+    // The pictures of plugins' cards are the same kind of file (`messages.plugin`, attachCardPictures).
+    const cards = await this.db.execute<{ image: string | null; thumbnail: string | null }>(sql`select distinct ${messages.plugin}->'card'->>'image' as image, ${messages.plugin}->'card'->>'thumbnail' as thumbnail from ${messages} where ${messages.plugin}->'card' is not null`);
+    for (const r of cards) for (const path of [r.image, r.thumbnail]) if (path) used.add(path.replace("/api/previews/", ""));
     let removed = 0;
     for (const file of await readdir(this.dir)) {
       if (!PREVIEW_FILE_RE.test(file) || used.has(file)) continue;

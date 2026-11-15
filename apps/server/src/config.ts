@@ -68,6 +68,13 @@ const Env = z.object({
    */
   PLUGIN_NET: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").prefault("true"),
   /**
+   * The catalogue of signed plugins in Verwaltung > Plugins: when somebody opens it there, the server fetches the list from
+   * the public repository squorli-plugins at GitHub (raw.githubusercontent.com), and it downloads a plugin an owner
+   * installs from it from that repository's releases (github.com). Never by itself. false = no catalogue and no such
+   * request; plugins are then installed from a file as before.
+   */
+  PLUGIN_CATALOG: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").prefault("true"),
+  /**
    * For tests only: one more key whose signature on a plugin file counts, as `<id>:<base64 of the 32-byte public key>`, so
    * the smoke test can sign its probe plugin. A production start refuses it (`testKeyProblems`): whoever holds that key
    * could give any plugin the network.

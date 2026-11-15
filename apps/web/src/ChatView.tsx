@@ -12,6 +12,7 @@ import { Icon } from "./Icon";
 import { Reactions } from "./Reactions";
 import { ReactionRolesDialog } from "./ReactionRolesDialog";
 import { LinkPreviews } from "./LinkPreviews";
+import { PluginCard } from "./PluginCard";
 import { MentionContext, MessageText } from "./MessageText";
 import { useMentionSuggest } from "./MentionSuggest";
 import { useCommandSuggest } from "./CommandSuggest";
@@ -328,13 +329,16 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
                     </div>
                   ) : (
                     <>
-                      {m.content && <MessageText text={m.content} edited={m.editedAt !== null} />}
+                      {/* A plugin's card stands in the place of the text (which is what an app from before cards shows) and of the link previews. */}
+                      {plugin?.card
+                        ? <PluginCard card={plugin.card} image={plugin.card.image ? conn.api.abs(plugin.card.image) : null} thumbnail={plugin.card.thumbnail ? conn.api.abs(plugin.card.thumbnail) : null} />
+                        : m.content && <MessageText text={m.content} edited={m.editedAt !== null} />}
                       {m.attachments.map((a) => (
                         a.mimeType.startsWith("image/")
                           ? <a key={a.id} href={safeHref(conn.api.abs(a.url))} target="_blank" rel="noreferrer"><img className="attachment-img" src={conn.api.abs(a.url)} alt={a.name} loading="lazy" /></a>
                           : <a key={a.id} className="attachment" href={safeHref(conn.api.abs(a.url))} target="_blank" rel="noreferrer"><Icon name="paperclip" /> {a.name} <span className="muted">({fmtSize(a.size)})</span></a>
                       ))}
-                      {m.previews && <LinkPreviews messageId={m.id} previews={m.previews} mine={mine} conn={conn} onError={setErr} />}
+                      {m.previews && !plugin?.card && <LinkPreviews messageId={m.id} previews={m.previews} mine={mine} conn={conn} onError={setErr} />}
                       {m.reactions && m.reactions.length > 0 && <Reactions chips={m.reactions} canReact={canReact} roles={roles} onToggle={(emoji, on) => react(m, emoji, on)} whoOf={whoOf(m.id)} onError={setErr} />}
                     </>
                   )}

@@ -1,10 +1,10 @@
-import { pluginText, type Channel, type Member, type PluginField, type PluginText, type Role } from "@squorli/protocol";
+import { PLUGIN_LIST_ITEMS_DEFAULT, pluginText, type Channel, type Member, type PluginField, type PluginText, type Role } from "@squorli/protocol";
 import { useEffect, useId, useState } from "react";
 import { DateInput } from "./DateInput";
 import { DurationInput } from "./DurationInput";
 import { Icon } from "./Icon";
 import { locale, t } from "./i18n";
-import { channelOptions, isKnownFieldType, roleOptions } from "./pluginFields";
+import { channelOptions, isDrawableField, listItems, newListItem, roleOptions } from "./pluginFields";
 
 /** What the fields of a plugin's form choose from: the server's state as this member sees it. */
 export type PluginFormContext = { roles: readonly Role[]; channels: readonly Channel[]; members: readonly Member[]; me: Member | null };
@@ -47,7 +47,7 @@ export function PluginForm({ fields, values, onChange, errors = {}, context, set
         const problem = error ? <small className="error" role="alert">{pluginText(error, locale)}</small> : null;
         const title = <span className="plugin-label">{label}{f.required && <span className="plugin-required" title={t("plugin.field.required")} aria-label={t("plugin.field.required")}> *</span>}</span>;
 
-        if (!isKnownFieldType(f.type)) {
+        if (!isDrawableField(f)) {
           return <div key={f.key} className="plugin-field"><span className="plugin-label">{label}</span><small className="muted plugin-newer"><Icon name="circle-alert" /> {t(f.required ? "plugin.field.needsNewerAppRequired" : "plugin.field.needsNewerApp")}</small></div>;
         }
         if (f.type === "boolean") {
@@ -56,6 +56,42 @@ export function PluginForm({ fields, values, onChange, errors = {}, context, set
               <label className="check"><input type="checkbox" className="switch" role="switch" checked={value === true} disabled={disabled} onChange={(e) => set(e.target.checked)} /> {label}</label>
               {help}{problem}
             </div>
+          );
+        }
+        if (f.type === "list") {
+          // Entries an admin adds and removes; each is a row of the list's few simple fields, labelled for screen readers by its column.
+          const items = listItems(value);
+          const columns = f.fields ?? [];
+          const max = f.maxItems ?? PLUGIN_LIST_ITEMS_DEFAULT;
+          const setItem = (index: number, key: string, v: unknown) => set(items.map((item, i) => (i === index ? { ...item, [key]: v } : item)));
+          return (
+            <fieldset key={f.key} className="plugin-field plugin-list-field" disabled={disabled}>
+              <legend>{title}</legend>
+              {items.length === 0 && <span className="muted small">{t("plugin.field.listEmpty")}</span>}
+              {items.map((item, index) => (
+                <div key={index} className="plugin-list-item">
+                  {columns.map((x) => {
+                    const columnLabel = pluginText(x.label, locale);
+                    const v = item[x.key];
+                    if (x.type === "boolean") return <label key={x.key} className="check"><input type="checkbox" checked={v === true} onChange={(e) => setItem(index, x.key, e.target.checked)} /> {columnLabel}</label>;
+                    if (x.type === "select") return (
+                      <select key={x.key} aria-label={columnLabel} title={columnLabel} value={(x.options ?? []).some((o) => o.value === v) ? (v as string) : ""} onChange={(e) => setItem(index, x.key, e.target.value || undefined)}>
+                        {!x.required && x.default === undefined && <option value="">{t("plugin.field.choose")}</option>}
+                        {(x.options ?? []).map((o) => <option key={o.value} value={o.value}>{pluginText(o.label, locale)}</option>)}
+                      </select>
+                    );
+                    if (x.type === "number") return <input key={x.key} type="text" inputMode="decimal" autoComplete="off" aria-label={columnLabel} placeholder={columnLabel} className="plugin-list-number" value={typeof v === "number" ? String(v) : ""} onChange={(e) => { const n = Number(e.target.value.trim().replace(",", ".")); setItem(index, x.key, e.target.value.trim() && Number.isFinite(n) ? n : undefined); }} />;
+                    return <input key={x.key} type="text" className="plugin-list-text" aria-label={columnLabel} placeholder={columnLabel} value={text(v)} maxLength={Math.min(200, x.maxLength ?? 200)} onChange={(e) => setItem(index, x.key, e.target.value)} />;
+                  })}
+                  <button type="button" className="icon" title={t("plugin.field.listRemove")} aria-label={t("plugin.field.listRemove")} onClick={() => set(items.filter((_, i) => i !== index))}><Icon name="x" /></button>
+                </div>
+              ))}
+              <div className="row">
+                <button type="button" className="secondary small" disabled={items.length >= max} onClick={() => set([...items, newListItem(f)])}><Icon name="plus" /> {t("plugin.field.listAdd")}</button>
+                {items.length >= max && <small className="muted">{t("plugin.field.listFull", { max })}</small>}
+              </div>
+              {help}{problem}
+            </fieldset>
           );
         }
         if (f.type === "roles" || f.type === "channels") {

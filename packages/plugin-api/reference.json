@@ -46,6 +46,7 @@
   "events": [
     "enable",
     "disable",
+    "settings.check",
     "settings.change",
     "member.join",
     "member.leave",
@@ -94,7 +95,8 @@
     "channels",
     "member",
     "duration",
-    "date"
+    "date",
+    "list"
   ],
   "viewColumnTypes": [
     "text",

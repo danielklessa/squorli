@@ -49,6 +49,35 @@ describe("a plugin's form", () => {
     expect(html).not.toContain('<option value="30">');   // February without a year has 29 days
     expect(html).not.toContain("2000");
   });
+  it("draws a list as rows of its fields, each with a remove button, and a button to add one", () => {
+    const games = field("games", "list", { maxItems: 2, help: { en: "One game per entry." }, fields: [
+      { key: "game", type: "text", label: { en: "Game <b>name</b>" }, required: true, maxLength: 40 },
+      { key: "show", type: "select", label: { en: "What to post" }, required: false, default: "all", options: [{ value: "all", label: { en: "All announcements" } }, { value: "patch", label: { en: "Patch notes only" } }] },
+      { key: "pin", type: "boolean", label: { en: "Pin" }, required: false },
+    ] });
+    const empty = form([games], {}, { settings: true });
+    expect(empty).toContain(t("plugin.field.listEmpty"));
+    expect(empty).toContain(t("plugin.field.listAdd"));
+    expect(empty).toContain("One game per entry.");
+    const filled = form([games], { games: [{ game: "Counter-Strike 2 (730)", show: "patch", pin: true }, { game: "<i>x</i>" }] }, { settings: true, errors: { games: { en: "Several games fit." } } });
+    expect(filled.split('class="plugin-list-item"').length - 1).toBe(2);
+    expect(filled).toContain('value="Counter-Strike 2 (730)"');
+    expect(filled).toMatch(/<option value="patch" selected="">Patch notes only<\/option>/);
+    expect(filled.split(`aria-label="${t("plugin.field.listRemove")}"`).length - 1).toBe(2);
+    // A plugin's texts stay text, also as a column's label and as an entry's value.
+    expect(filled).toContain("Game &lt;b&gt;name&lt;/b&gt;");
+    expect(filled).toContain("&lt;i&gt;x&lt;/i&gt;");
+    expect(filled).not.toContain("<i>x</i>");
+    expect(filled).toContain("Several games fit.");
+    // Full: the button rests and the list says why.
+    expect(filled).toContain(t("plugin.field.listFull", { max: 2 }));
+    expect(filled).toMatch(/<button type="button" class="secondary small" disabled="">/);
+  });
+  it("shows a list with a column of a later version as one line, not as rows that would lose that column", () => {
+    const html = form([field("later", "list", { fields: [{ key: "c", type: "colour", label: { en: "C" }, required: false }] })], { later: [{ c: "#fff" }] }, { settings: true });
+    expect(html).toContain(t("plugin.field.needsNewerApp"));
+    expect(html).not.toContain("plugin-list-item");
+  });
   it("shows one line for a field type it does not know, and no control", () => {
     const html = form([field("later", "colour", { label: { en: "Accent colour" } })], { later: "#fff" });
     expect(html).toContain("Accent colour");

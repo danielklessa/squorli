@@ -1,6 +1,6 @@
 import { Permission, PluginSurface, type Channel, type PluginCommand, type PluginField, type PluginMemberAction, type Role } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
-import { blockedByUnknown, channelOptions, commandQueryAt, dateDraftOf, dateValueOf, daysWithoutYear, initialValues, pickerValueOf, withDayMonth, withPicked, isKnownFieldType, matchCommands, parseCommandDraft, permissionBit, roleOptions, submitValues, targetFits, usableCommands, usableMemberActions } from "./pluginFields";
+import { blockedByUnknown, isDrawableField, listItems, newListItem, channelOptions, commandQueryAt, dateDraftOf, dateValueOf, daysWithoutYear, initialValues, pickerValueOf, withDayMonth, withPicked, isKnownFieldType, matchCommands, parseCommandDraft, permissionBit, roleOptions, submitValues, targetFits, usableCommands, usableMemberActions } from "./pluginFields";
 
 const role = (id: string, position: number, permissions = 0, isDefault = false): Role => ({ id, name: id, color: null, permissions, position, isDefault });
 const roles = [role("guest", 0, Permission.VIEW_CHANNELS, true), role("member", 1, Permission.SEND_MESSAGES), role("lend", 2), role("kicker", 3, Permission.KICK_MEMBERS), role("mod", 5, Permission.MANAGE_ROLES | Permission.SEND_MESSAGES), role("admin", 9, Permission.ADMINISTRATOR)];
@@ -78,6 +78,31 @@ describe("a plugin's fields", () => {
   });
   it("sends only what it drew: an unknown field's value never goes out, an emptied one goes out as empty", () => {
     expect(submitValues(fields, { note: "x", on: true, many: ["a"], later: "#000", stray: 1 })).toEqual({ note: "x", on: true, many: ["a"], rooms: [], one: null, n: null });
+  });
+
+  const games = field("games", "list", { fields: [{ key: "game", type: "text", label: { en: "Game" }, required: true }, { key: "show", type: "select", label: { en: "Show" }, required: false, default: "all", options: [{ value: "all", label: { en: "All" } }] }, { key: "pin", type: "boolean", label: { en: "Pin" }, required: false }] });
+  it("draws a list whose entries are made of fields it knows, and none with a column of a later version", () => {
+    expect(isDrawableField(games)).toBe(true);
+    expect(isDrawableField(field("x", "list", { fields: [{ key: "c", type: "colour", label: { en: "C" }, required: false }] }))).toBe(false);
+    expect(isDrawableField(field("x", "list"))).toBe(false);
+    expect(isDrawableField(field("x", "list", { fields: [] }))).toBe(false);
+    expect(isDrawableField(field("x", "text"))).toBe(true);
+    expect(isDrawableField(field("x", "colour"))).toBe(false);
+    expect(blockedByUnknown([field("x", "list", { required: true, fields: [{ key: "c", type: "colour", label: { en: "C" }, required: false }] })])).toBe(true);
+  });
+  it("starts a list empty and a new entry with its fields' defaults; a list it cannot draw is left as the server has it", () => {
+    expect(initialValues([games])).toEqual({ games: [] });
+    expect(newListItem(games)).toEqual({ show: "all", pin: false });
+    expect(submitValues([games], {})).toEqual({ games: [] });
+    expect(submitValues([games], { games: [{ game: "A" }] })).toEqual({ games: [{ game: "A" }] });
+    const later = field("later", "list", { fields: [{ key: "c", type: "colour", label: { en: "C" }, required: false }] });
+    expect(initialValues([later])).toEqual({});
+    expect(submitValues([later], { later: [{ c: "#fff" }] })).toEqual({});
+  });
+  it("reads a stored list as its entries, whatever else is in it", () => {
+    expect(listItems([{ game: "A" }, "x", null, 5, ["y"], { game: "B" }])).toEqual([{ game: "A" }, { game: "B" }]);
+    expect(listItems(undefined)).toEqual([]);
+    expect(listItems("A")).toEqual([]);
   });
 
   it("a dialog's role field offers the plugin's scope and of that only what the member may assign", () => {

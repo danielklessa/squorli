@@ -89,6 +89,12 @@ export async function registerPluginRoutes(app: FastifyInstance, db: Db, service
     return service.list();
   });
 
+  // The catalogue of signed plugins (plugins/catalog.ts): fetched from GitHub when this is asked, never before.
+  app.get<{ Querystring: { refresh?: string } }>("/api/plugins/catalog", async (req, reply) => {
+    if (!(await manager(req, reply))) return;
+    return answer(reply, () => service.catalog(req.query.refresh === "1"));
+  });
+
   app.post("/api/plugins", async (req, reply) => {
     const m = await owner(req, reply);
     if (!m) return;

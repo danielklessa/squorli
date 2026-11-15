@@ -1,4 +1,4 @@
-import { PLUGIN_API_MIN, PLUGIN_API_VERSION, PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_SOURCE_MAX_BYTES, PluginManifest, parsePluginDate, type ManifestField, type PluginCapability, type PluginField, type PluginText } from "@squorli/protocol";
+import { PLUGIN_API_MIN, PLUGIN_API_VERSION, PLUGIN_LIST_ITEMS_DEFAULT, PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_SOURCE_MAX_BYTES, PluginManifest, parsePluginDate, type ManifestField, type ManifestListItemField, type PluginCapability, type PluginField, type PluginText } from "@squorli/protocol";
 
 /**
  * Reading a plugin file and its values without running anything (docs/features/plugins.md); pure and tested.
@@ -86,6 +86,8 @@ export type FieldError = "required" | "invalid" | "too_long" | "out_of_range";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEXT_MAX = 2000;
 const LIST_MAX = 50;
+/** A text inside an entry of a `list` field. */
+const LIST_TEXT_MAX = 200;
 /** Ten years: a duration beyond that is a typing mistake. */
 export const DURATION_MAX_SECONDS = 10 * 365 * 86_400;
 
@@ -104,7 +106,7 @@ export function checkValues(fields: readonly ManifestField[], given: Record<stri
     const stillEmpty = v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
     if (stillEmpty) {
       if (f.required) errors[f.key] = "required";
-      else if (f.type === "roles" || f.type === "channels") values[f.key] = [];
+      else if (f.type === "roles" || f.type === "channels" || f.type === "list") values[f.key] = [];
       else if (f.type === "boolean") values[f.key] = false;
       continue;
     }
@@ -136,12 +138,53 @@ function checkOne(f: ManifestField, v: unknown): { value: unknown } | { error: F
       return { value: [...new Set((v as string[]).map((x) => x.toLowerCase()))] };
     }
     case "date": return typeof v === "string" && parsePluginDate(v, f.yearOptional === true) ? { value: v } : { error: "invalid" };
+    case "list": {
+      // Entries of a few simple fields each. An entry whose fields are all empty is dropped (a row somebody added and left).
+      if (!Array.isArray(v) || !f.fields) return { error: "invalid" };
+      const out: Record<string, unknown>[] = [];
+      for (const raw of v) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "invalid" };
+        const item = listItem(f.fields, raw as Record<string, unknown>);
+        if (item === "empty") continue;
+        if ("error" in item) return { error: item.error };
+        out.push(item.value);
+      }
+      if (out.length > (f.maxItems ?? PLUGIN_LIST_ITEMS_DEFAULT)) return { error: "too_long" };
+      return { value: out };
+    }
     case "duration": {
       if (typeof v !== "number" || !Number.isInteger(v)) return { error: "invalid" };
       if (v < Math.max(1, f.min ?? 1) || v > Math.min(DURATION_MAX_SECONDS, f.max ?? DURATION_MAX_SECONDS)) return { error: "out_of_range" };
       return { value: v };
     }
   }
+}
+
+/** One entry of a `list` field against its columns: its values, "empty" for a row with nothing in it, or what is wrong with it. */
+function listItem(fields: readonly ManifestListItemField[], given: Record<string, unknown>): { value: Record<string, unknown> } | { error: FieldError } | "empty" {
+  const value: Record<string, unknown> = {};
+  // A row is there by what somebody typed into it: a switch or a choice alone does not make one (a row that was added, set
+  // to another choice and left stands for nothing). A list without anything to type keeps every row.
+  let filled = !fields.some((x) => x.type === "text" || x.type === "number");
+  for (const x of fields) {
+    let v = given[x.key];
+    if (typeof v === "string") v = v.replace(/[\r\n]+/g, " ").trim();
+    const empty = v === undefined || v === null || v === "";
+    if (!empty && (x.type === "text" || x.type === "number")) filled = true;
+    if (empty) {
+      if (x.default !== undefined) value[x.key] = x.default;
+      else if (x.type === "boolean") value[x.key] = false;
+      else if (x.required) value[x.key] = null;
+      continue;
+    }
+    if (x.type === "text") { if (typeof v !== "string") return { error: "invalid" }; if (v.length > (x.maxLength ?? LIST_TEXT_MAX)) return { error: "too_long" }; value[x.key] = v; }
+    else if (x.type === "number") { if (typeof v !== "number" || !Number.isFinite(v)) return { error: "invalid" }; if ((x.min !== undefined && v < x.min) || (x.max !== undefined && v > x.max)) return { error: "out_of_range" }; value[x.key] = v; }
+    else if (x.type === "boolean") { if (typeof v !== "boolean") return { error: "invalid" }; value[x.key] = v; }
+    else { if (typeof v !== "string" || !x.options?.some((o) => o.value === v)) return { error: "invalid" }; value[x.key] = v; }
+  }
+  if (!filled) return "empty";
+  for (const x of fields) if (x.required && (value[x.key] === null || value[x.key] === undefined)) return { error: "required" };
+  return { value };
 }
 
 /** The role ids and channel ids a set of settings names: the plugin's scope before the server's own checks. */

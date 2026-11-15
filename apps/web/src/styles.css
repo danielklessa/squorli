@@ -1563,6 +1563,30 @@ button.plugin-row-main:hover strong { text-decoration: underline; }
 .badge.plugin-signed { margin: 0; text-transform: none; letter-spacing: 0; font-size: 0.75rem; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.25rem; background: var(--bg4); color: var(--text); }
 .badge.plugin-signed > .ic { color: var(--ok); font-size: 0.85rem; }
 .plugin-enable-signed { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.5rem; margin: 0; }
+/* A plugin's card (PluginCard.tsx): the look of a link preview's card, with room for a text. The bar is always Squorli Blue: a plugin chooses no colour. */
+.plugin-card { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; width: min(34rem, 100%); margin: 0.25rem 0 0.2rem; padding: 0.75rem 0.9rem; background: var(--bg2); border-left: 3px solid var(--brand); border-radius: calc(var(--r) - 4px); }
+.plugin-card-head { display: flex; align-items: flex-start; gap: 0.8rem; min-width: 0; }
+.plugin-card-titles { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; flex: 1; }
+.plugin-card-kicker { font-size: 0.8125rem; font-weight: 600; overflow-wrap: anywhere; }
+.plugin-card-title { font-weight: 600; overflow-wrap: anywhere; }
+.plugin-card-thumb { flex: none; max-width: 7.5rem; max-height: 4rem; border-radius: 6px; object-fit: contain; }
+.plugin-card > .md { font-size: 0.9375rem; }
+.plugin-card > .md :is(.md-h1, .md-h2, .md-h3) { font-size: 1.05rem; }
+.plugin-card-image { display: block; min-width: 0; }
+.plugin-card-image img { display: block; max-width: 100%; max-height: 18rem; border-radius: calc(var(--r) - 4px); }
+.plugin-list-field { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.plugin-list-item { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-width: 0; }
+/* Every basis is a length: `.plugin-field` gives inputs and selects a width of 100 %, which an `auto` basis would take and put each control on a line of its own. */
+.plugin-list-item > .plugin-list-text { flex: 2 1 12rem; min-width: 0; }
+.plugin-list-item > .plugin-list-number { flex: 1 1 5rem; min-width: 0; }
+.plugin-list-item > select { flex: 1 1 12rem; min-width: 0; max-width: 100%; }
+.plugin-list-item > button.icon { flex: none; }
+.plugin-catalog-tools { align-items: center; }
+.plugin-catalog-tools > input { flex: 1; min-width: 0; }
+.plugin-catalog-row { align-items: flex-start; flex-wrap: wrap; }
+.plugin-catalog-row > .plugin-row-main { flex-basis: 16rem; }
+.plugin-catalog-row > .plugin-row-main > a { align-self: flex-start; }
+.plugin-catalog-state { flex: none; align-self: center; white-space: nowrap; }
 .badge.plugin-state-suspended { background: var(--danger); color: var(--on-light); }
 .badge.plugin-state-needs_approval, .badge.plugin-state-incompatible { background: var(--warn); color: var(--on-light); }
 .plugin-caps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }

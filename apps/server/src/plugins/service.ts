@@ -1,6 +1,6 @@
 import {
-  PLUGIN_ID_PATTERN, PLUGIN_VIEW_ROWS_MAX, Permission, cleanPluginText, displayNameOf, hasPermission,
-  type ManifestField, type Message, type PluginActionResult, type PluginAvailable, type PluginCapability, type PluginField, type PluginInfo, type PluginLogResponse,
+  PLUGIN_API_VERSION, PLUGIN_CAPABILITIES, PLUGIN_CARD_API_VERSION, PLUGIN_ID_PATTERN, PLUGIN_SOURCE_MAX_BYTES, PLUGIN_VIEW_ROWS_MAX, Permission, cleanPluginText, displayNameOf, hasPermission,
+  type ManifestField, type Message, type PluginActionResult, type PluginAvailable, type PluginCapability, type PluginCatalogResponse, type PluginField, type PluginInfo, type PluginLogResponse,
   type PluginManifest, type PluginSettingsResponse, type PluginSurface, type PluginText, type PluginViewResponse, type PluginsResponse,
 } from "@squorli/protocol";
 import { and, asc, count, desc, eq, inArray, lt, sql, sum } from "drizzle-orm";
@@ -22,6 +22,8 @@ import { loadMessages } from "../routes/messages";
 import { actorOf, loadMembers, loadSettings } from "../state";
 import { visibility } from "../visibility";
 import { safeGet } from "@squorli/link-preview";
+import { readCard, type CardPictures } from "./card";
+import { CATALOG_CACHE_MS, CATALOG_MAX_BYTES, CATALOG_REFRESH_MIN_MS, CATALOG_REPOSITORY, catalogAddress, catalogAllowed, catalogStatus, readCatalog, releaseAddress, type CatalogFileEntry } from "./catalog";
 import { CAPABILITY_INFO, apiSupported, capabilityText, checkValues, fieldErrorText, readPluginFile, scopeIds, wireField } from "./manifest";
 import { HOST_FUNCTIONS, type HostFunction } from "./prelude";
 import { PluginFailure, PluginRunner, type InvocationContext } from "./runner";
@@ -160,6 +162,31 @@ export function actionResult(value: unknown): PluginActionResult {
   return out;
 }
 
+/**
+ * What a plugin answered to `settings.check` (pure, tested): field errors refuse the save, each with the plugin's sentence;
+ * values it handed back replace the admin's for the fields that carry no scope, when they pass the same check. Anything
+ * else it says is ignored.
+ */
+export function settingsCheckAnswer(fields: readonly ManifestField[], values: Record<string, unknown>, answer: unknown): { ok: true; values: Record<string, unknown> } | { ok: false; fieldErrors: Record<string, PluginText> } {
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) return { ok: true, values: {} };
+  const a = answer as { fieldErrors?: unknown; values?: unknown };
+  const errors: Record<string, PluginText> = {};
+  if (a.fieldErrors && typeof a.fieldErrors === "object" && !Array.isArray(a.fieldErrors)) {
+    for (const [key, text] of Object.entries(a.fieldErrors as Record<string, unknown>).slice(0, 30)) {
+      const t = textOf(text, 500);
+      if (t && fields.some((f) => f.key === key)) errors[key] = t;
+    }
+  }
+  if (Object.keys(errors).length) return { ok: false, fieldErrors: errors };
+  if (!a.values || typeof a.values !== "object" || Array.isArray(a.values)) return { ok: true, values: {} };
+  const scoped = (type: string) => type === "role" || type === "roles" || type === "channel" || type === "channels" || type === "member";
+  const free = fields.filter((f) => !scoped(f.type) && Object.prototype.hasOwnProperty.call(a.values, f.key));
+  const checked = checkValues(free, { ...Object.fromEntries(free.map((f) => [f.key, values[f.key]])), ...(a.values as Record<string, unknown>) });
+  // A plugin that hands back something its own manifest does not take has a fault; the admin's values stand.
+  if (!checked.ok) return { ok: true, values: {} };
+  return { ok: true, values: checked.values };
+}
+
 /** May a plugin give or take this role right now? (Pure, tested: the scope's snapshot against the role as it is.) */
 export function roleInScope(scope: PluginScope, role: { id: string; isDefault: boolean; permissions: number }): "ok" | "not_in_scope" | "default_role" | "administrator" | "role_changed" {
   if (role.isDefault) return "default_role";
@@ -211,8 +238,15 @@ export class Plugins {
   /** Per installed plugin, worked out in `reload`: whose signature its file carries, and what keeps it from running. */
   private signatures = new Map<string, Signed>();
   private gates = new Map<string, Gate>();
+  /** The catalogue of signed plugins as it was last fetched (catalog.ts); fetched only when somebody opens it or installs from it. */
+  private catalogCache: { at: number; entries: CatalogFileEntry[] } | null = null;
+  private catalogBusy: Promise<void> | null = null;
+  /** The last try to fetch the list failed: what is served is an older one. */
+  private catalogFailed = false;
   /** Set by index.ts once the link previews exist: the messages of a plugin with the network get previews like a member's. */
   schedulePreview: ((messageId: string) => void) | null = null;
+  /** Set by index.ts with them: the pictures of a card are fetched by the server and arrive with a `message.update`. */
+  fetchCardPictures: ((messageId: string, pictures: CardPictures) => void) | null = null;
 
   constructor(private readonly opts: PluginsOptions) {
     this.db = opts.db; this.hub = opts.hub; this.log = opts.log; this.config = opts.config;
@@ -363,7 +397,77 @@ export class Plugins {
       if (installed && installed.manifest.version === b.manifest.version) continue;
       available.push({ id: b.id, name: b.manifest.name, description: b.manifest.description, version: b.manifest.version, capabilities: this.capabilityInfos(b.manifest, []), installedVersion: installed?.manifest.version ?? null, signature: b.signature });
     }
-    return { plugins: [...this.rows.values()].map((r) => this.info(r, jobs.get(r.id) ?? 0)), available, mode: this.mode, max: this.config.PLUGIN_MAX };
+    return { plugins: [...this.rows.values()].map((r) => this.info(r, jobs.get(r.id) ?? 0)), available, mode: this.mode, max: this.config.PLUGIN_MAX, catalog: this.config.PLUGIN_CATALOG };
+  }
+
+  // ---------- The catalogue of signed plugins (catalog.ts)
+
+  private get testOrigin(): string | undefined {
+    return this.config.LINK_PREVIEW_TEST_ORIGIN ? new URL(this.config.LINK_PREVIEW_TEST_ORIGIN).origin : undefined;
+  }
+
+  /**
+   * The list as GitHub has it, at most `CATALOG_CACHE_MS` old (`refresh`: at most `CATALOG_REFRESH_MIN_MS`). When GitHub
+   * does not answer, the last list that could be fetched is served as stale; without one the catalogue is unavailable.
+   */
+  private async catalogEntries(refresh: boolean): Promise<{ at: number; entries: CatalogFileEntry[]; stale: boolean }> {
+    if (!this.config.PLUGIN_CATALOG) throw new PluginError(404, "plugin_catalog_off", "this server offers no plugin catalogue (PLUGIN_CATALOG=false)");
+    const testOrigin = this.testOrigin;
+    const maxAge = testOrigin ? 0 : refresh ? CATALOG_REFRESH_MIN_MS : CATALOG_CACHE_MS;
+    if (!this.catalogCache || Date.now() - this.catalogCache.at >= maxAge) {
+      // One fetch at a time: whoever asks meanwhile waits for it.
+      this.catalogBusy ??= (async () => {
+        const got = await safeGet(catalogAddress(testOrigin), { accept: "application/json, text/plain;q=0.9", maxBytes: () => CATALOG_MAX_BYTES, cut: () => false, testOrigin, allowHost: (url) => catalogAllowed(url, "catalog", testOrigin) });
+        let entries: CatalogFileEntry[] | null = null;
+        if (got) { try { entries = readCatalog(JSON.parse(got.body.toString("utf8"))); } catch { entries = null; } }
+        this.catalogFailed = !entries;
+        if (entries) this.catalogCache = { at: Date.now(), entries };
+        else this.log.warn({ reached: !!got }, "Plugin-Katalog nicht lesbar");
+      })().finally(() => { this.catalogBusy = null; });
+      await this.catalogBusy;
+    }
+    const cache = this.catalogCache;
+    if (!cache) throw new PluginError(502, "catalog_unavailable", "the plugin catalogue at GitHub did not answer or could not be read");
+    return { ...cache, stale: this.catalogFailed };
+  }
+
+  /** Verwaltung > Plugins > Katalog: every signed plugin of the public list, with what this server knows about it. */
+  async catalog(refresh: boolean): Promise<PluginCatalogResponse> {
+    const { at, entries, stale } = await this.catalogEntries(refresh);
+    const known = (id: string): id is PluginCapability => (PLUGIN_CAPABILITIES as readonly string[]).includes(id);
+    return {
+      fetchedAt: new Date(at).toISOString(), stale,
+      plugins: entries.map((e) => {
+        const installedVersion = this.rows.get(e.id)?.manifest.version ?? null;
+        const manifest = e.hosts.length ? { network: { hosts: e.hosts } } : {};
+        return {
+          id: e.id, name: e.name, description: e.description, author: e.author, homepage: e.homepage, version: e.version,
+          // A capability of a later server has no sentence here: its name, marked, and the entry needs a newer server anyway.
+          capabilities: e.capabilities.map((id) => (known(id) ? { id, text: capabilityText(id, manifest), risk: CAPABILITY_INFO[id].risk, granted: false } : { id, text: { en: id }, risk: "high", granted: false })),
+          hosts: e.hosts, signature: { key: e.key ?? "", kind: e.kind }, signedAt: e.signedAt ?? null, source: `${CATALOG_REPOSITORY}/tree/main/plugins/${e.id}`,
+          installedVersion, status: catalogStatus(e, installedVersion),
+        };
+      }),
+    };
+  }
+
+  /**
+   * The signed file of a catalogue entry, downloaded from the repository's release. It must be the file the list names (the
+   * hash of its content) and carry a signature this server takes, of the kind the list says: a list that was tampered
+   * with can then at most offer a file Squorli signed anyway.
+   */
+  private async fromCatalog(id: string): Promise<{ source: string; fileName: string; entry: CatalogFileEntry }> {
+    const entry = (await this.catalogEntries(false)).entries.find((e) => e.id === id);
+    if (!entry) throw new PluginError(404, "catalog_unknown", "the catalogue lists no plugin with this id");
+    if (entry.apiVersion > PLUGIN_API_VERSION) throw new PluginError(409, "plugin_api_too_new", `the plugin needs interface version ${entry.apiVersion}, this server offers ${PLUGIN_API_VERSION}; update the server`);
+    const testOrigin = this.testOrigin;
+    const got = await safeGet(releaseAddress(entry, testOrigin), { accept: "*/*", maxBytes: () => PLUGIN_SOURCE_MAX_BYTES + 1024, cut: () => false, timeoutMs: 15_000, testOrigin, allowHost: (url) => catalogAllowed(url, "release", testOrigin) });
+    if (!got) throw new PluginError(502, "catalog_unavailable", `the file of ${entry.id} ${entry.version} could not be downloaded from GitHub`);
+    const source = got.body.toString("utf8");
+    const check = this.check(source);
+    if (check.status === "revoked") throw new PluginError(409, "plugin_signature_revoked", GATE_TEXT.plugin_signature_revoked);
+    if (check.status !== "valid" || check.kind !== entry.kind || check.hash !== entry.sha256) throw new PluginError(502, "catalog_mismatch", "the downloaded file is not the signed file the catalogue names; nothing was installed");
+    return { source, fileName: entry.file, entry };
   }
 
   /**
@@ -371,17 +475,22 @@ export class Plugins {
    * that grants its capabilities. An update keeps the settings that still fit, the storage and the jobs; when the new
    * version asks for more than was granted, the plugin stops until an owner confirms.
    */
-  async install(input: { source: string; fileName: string } | { bundled: string }, by: Installer, via: "upload" | "cli"): Promise<PluginInfo> {
+  async install(input: { source: string; fileName: string } | { bundled: string } | { catalog: string }, by: Installer, via: "upload" | "cli"): Promise<PluginInfo> {
     let source: string, fileName: string, how: string = via;
+    let listed: CatalogFileEntry | null = null;
     if ("bundled" in input) {
       const b = this.bundled.get(input.bundled);
       if (!b) throw new PluginError(404, "unknown_plugin");
       ({ source, fileName } = b);
       how = "bundled";
+    } else if ("catalog" in input) {
+      ({ source, fileName, entry: listed } = await this.fromCatalog(input.catalog));
+      how = "catalog";
     } else ({ source, fileName } = input);
     const read = readPluginFile(source, fileName);
     if (!read.ok) throw new PluginError(read.code === "api_too_new" || read.code === "api_too_old" ? 409 : 400, `plugin_${read.code}`, read.message);
     const { manifest, language } = read;
+    if (listed && (manifest.id !== listed.id || manifest.version !== listed.version)) throw new PluginError(502, "catalog_mismatch", "the downloaded file is another plugin or version than the catalogue names; nothing was installed");
     // The signature before anything else of the file is looked at: a file changed after it was signed is refused whatever it asks for.
     const check = this.check(source);
     if (check.status === "invalid") throw new PluginError(400, "plugin_signature_invalid", check.reason);
@@ -536,6 +645,21 @@ export class Plugins {
       } else if (f.type === "member" && typeof v === "string" && !memberIds.has(v)) errors[f.key] = fieldErrorText("unknown");
     }
     if (Object.keys(errors).length) return { ok: false, fieldErrors: errors };
+    // The plugin's own word on what is about to be saved (interface version 2, `settings.check`): it may refuse fields with a
+    // sentence each, and it may hand values back in another form (a typed name resolved to what it stands for). Only a
+    // plugin that runs is asked; what it hands back is checked like what the admin sent, and it never changes a field of
+    // its scope (roles, channels, members): the saving admin's rank was checked for those above.
+    if (this.runnable(row) && this.runner.has(id)) {
+      let answer: unknown;
+      try { answer = (await this.runner.invoke(id, "settings.check", { values, by: saver.userId }, { event: "settings.check", depth: 0 })).value; }
+      catch (err) {
+        if (err instanceof PluginFailure) throw new PluginError(err.kind === "timeout" ? 504 : 502, err.kind === "timeout" ? "plugin_timeout" : "plugin_failed");
+        throw err;
+      }
+      const said = settingsCheckAnswer(fields, values, answer);
+      if (!said.ok) return { ok: false, fieldErrors: said.fieldErrors };
+      Object.assign(values, said.values);
+    }
     await this.db.update(plugins).set({ settings: values, scope, updatedAt: new Date() }).where(eq(plugins.id, id));
     await this.reload();
     await this.note(id, "info", `settings saved by ${displayNameOf(saver)}`);
@@ -864,14 +988,25 @@ export class Plugins {
           const content = typeof args.content === "string" ? args.content.trim() : "";
           if (!content || content.length > MESSAGE_MAX) throw new Error(`a message has 1 to ${MESSAGE_MAX} characters`);
           if (!row.userId) throw new Error("the plugin has no author; install it again");
+          // A card (interface version 2): the message drawn as a framed box. Its texts are stored with the message, its
+          // pictures are addresses the server fetches itself. `content` stays what an app from before cards shows.
+          let card: ReturnType<typeof readCard> | null = null;
+          if (args.card !== undefined && args.card !== null) {
+            if (row.manifest.apiVersion < PLUGIN_CARD_API_VERSION) throw new Error(`a card needs "apiVersion": ${PLUGIN_CARD_API_VERSION} in the manifest`);
+            card = readCard(args.card, this.testOrigin);
+          }
           this.take(row.id, "messages");
-          const plugin = { id: row.id, name: row.manifest.name, ...(ctx.by ? { by: ctx.by } : {}), ...(ctx.command ? { command: ctx.command } : {}) };
+          const plugin = { id: row.id, name: row.manifest.name, ...(ctx.by ? { by: ctx.by } : {}), ...(ctx.command ? { command: ctx.command } : {}), ...(card ? { card: card.card } : {}) };
           const [saved] = await db.insert(messages).values({ channelId, authorId: row.userId, content, plugin }).returning();
           const message = await this.wireMessage(saved!);
           this.hub.broadcastToChannel(channelId, { type: "message.create", message });
           // No link previews for a plugin's message: the lookup would be a way to make the server fetch addresses. A plugin
           // that holds the network (signed by Squorli, confirmed by the owner) may do that anyway, and its news read better with them.
-          if (row.granted.includes("net.fetch")) this.schedulePreview?.(message.id);
+          // A card takes the previews' place: its pictures are fetched instead, under the same condition.
+          if (row.granted.includes("net.fetch")) {
+            if (!card) this.schedulePreview?.(message.id);
+            else if (card.pictures.image || card.pictures.thumbnail) this.fetchCardPictures?.(message.id, card.pictures);
+          }
           serverEvents.emit("message.create", { message }, this.origin(row, ctx));
           return { id: message.id, seq: message.seq };
         },
@@ -886,7 +1021,8 @@ export class Plugins {
           const [updated] = await db.update(messages).set({ content, editedAt: new Date() }).where(eq(messages.id, msg.id)).returning();
           const message = await this.wireMessage(updated!);
           this.hub.broadcastToChannel(msg.channelId, { type: "message.update", message });
-          if (row.granted.includes("net.fetch")) this.schedulePreview?.(message.id);
+          // A message with a card keeps it through an edit of its text, and gets no previews then either.
+          if (row.granted.includes("net.fetch") && !msg.plugin?.card) this.schedulePreview?.(message.id);
           serverEvents.emit("message.update", { message }, this.origin(row, ctx));
           return true;
         },

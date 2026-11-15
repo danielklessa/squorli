@@ -11,5 +11,5 @@
     "moduleDetection": "force",
     "noEmit": true
   },
-  "files": ["index.d.ts", "check.ts", "../../apps/server/plugins/timed-roles.ts", "../../apps/server/plugins/birthdays.ts", "../../apps/server/plugins/game-news.ts"]
+  "files": ["index.d.ts", "check.ts", "../../apps/server/plugins/timed-roles.ts", "../../apps/server/plugins/birthdays.ts"]
 }

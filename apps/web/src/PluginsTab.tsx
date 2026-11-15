@@ -6,6 +6,7 @@ import { pluginProblem, type PluginProblem } from "./apiErrorText";
 import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { fmtDateTime, locale, t } from "./i18n";
+import { PluginCatalog } from "./PluginCatalog";
 import { CapabilityList, PluginDetail, PluginSignedBadge, PluginStateBadge, blockedText, type CapabilityInfo } from "./PluginDetail";
 import { PluginChrome, PluginProblemText } from "./PluginFormDialog";
 
@@ -39,7 +40,7 @@ export function PluginsTab({ api, server, myUserId }: { api: ServerApi; server: 
     setProblem(null); setNote(null); setBusy(true);
     try { await fn(); } catch (e) { setProblem(pluginProblem(e)); } finally { setBusy(false); void load(); }
   };
-  const install = (body: { source: string; fileName: string } | { bundled: string }) => run(async () => {
+  const install = (body: { source: string; fileName: string } | { bundled: string } | { catalog: string }) => run(async () => {
     const info = await api.installPlugin(body);
     setNote(t(info.enabled ? "admin.plugins.updatedNote" : "admin.plugins.installedNote", { name: pluginText(info.name, locale), version: info.version }));
   });
@@ -122,6 +123,7 @@ export function PluginsTab({ api, server, myUserId }: { api: ServerApi; server: 
             {data.available.map((a) => <AvailableRow key={a.id} plugin={a} mayInstall={mayInstall} busy={busy} onInstall={() => void install({ bundled: a.id })} />)}
           </ul>
         </>}
+        {data.catalog && <PluginCatalog api={api} mayInstall={mayInstall} busy={busy} stamp={data} onInstall={(id) => void install({ catalog: id })} />}
       </>}
       {dialog}
     </div>

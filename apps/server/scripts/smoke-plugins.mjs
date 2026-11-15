@@ -363,6 +363,51 @@ await api("POST", "/api/plugins", { source: CLASH, fileName: "clash.ts" }, owner
 const [sClash, clash] = await api("PUT", "/api/plugins/hello-clash/enabled", { enabled: true, grant: [] }, owner.token);
 check("commands: a second plugin with a command name that is taken cannot be enabled", sClash === 409 && clash.error === "command_taken" && clash.command === "hello", `${sClash} ${JSON.stringify(clash)}`);
 
+// ---------- A list in the settings, and the plugin's word before they are saved (interface version 2)
+{
+  const LIST = `/* squorli-plugin
+{
+  "id": "smoke-list", "name": "Smoke list", "description": "A list field and settings.check.", "version": "1.0.0", "apiVersion": 2,
+  "settings": [
+    { "key": "items", "type": "list", "maxItems": 3, "label": "Items", "fields": [
+      { "key": "name", "type": "text", "label": "Name", "required": true, "maxLength": 30 },
+      { "key": "mode", "type": "select", "label": "Mode", "default": "a", "options": [{ "value": "a", "label": "A" }, { "value": "b", "label": "B" }] }
+    ] },
+    { "key": "note", "type": "text", "label": "Note" }
+  ]
+}
+*/
+squorli.on("settings.check", async (e) => {
+  const items = e.values.items || [];
+  const bad = items.find((i) => i.name === "bad");
+  if (bad) return { fieldErrors: { items: { en: "No entry may be named bad.", de: "Kein Eintrag darf bad heißen." } } };
+  if (e.values.note === "throw") throw new Error("on purpose");
+  await squorli.storage.set("checkedBy", e.by);
+  return { values: { items: items.map((i) => ({ name: i.name.toUpperCase(), mode: i.mode })), note: e.values.note === "scope" ? "x" : e.values.note } };
+});
+`;
+  const [sList, listInfo] = await api("POST", "/api/plugins", { source: LIST, fileName: "smoke-list.js" }, owner.token);
+  check("list: a version 2 plugin with a list field installs, unsigned, since it asks for no network", sList === 200 && listInfo.apiVersion === 2 && listInfo.signature === null, `${sList} ${JSON.stringify(listInfo).slice(0, 160)}`);
+  const [, listFields] = await api("GET", "/api/plugins/smoke-list/settings", undefined, owner.token);
+  check("list: the settings tell the client the columns of an entry", listFields.fields?.[0]?.type === "list" && listFields.fields[0].fields?.map((f) => `${f.key}:${f.type}`).join(",") === "name:text,mode:select" && listFields.fields[0].maxItems === 3, JSON.stringify(listFields.fields?.[0]).slice(0, 200));
+  const saveList = (values) => api("PUT", "/api/plugins/smoke-list/settings", { values }, owner.token);
+  // Switched off: nobody to ask, the values are saved as they were sent (after the server's own check).
+  const [sOff, off] = await saveList({ items: [{ name: " one " }, {}, { mode: "b" }, { name: "two", mode: "b", stray: 1 }] });
+  check("list: entries are saved with their defaults, a row nobody typed into is dropped", sOff === 200 && off.values.items?.map((i) => `${i.name}:${i.mode}:${Object.keys(i).length}`).join(",") === "one:a:2,two:b:2", `${sOff} ${JSON.stringify(off.values ?? off)}`);
+  const [sTooMany, tooMany] = await saveList({ items: [1, 2, 3, 4].map((n) => ({ name: `n${n}` })) });
+  const [sBadMode] = await saveList({ items: [{ name: "x", mode: "z" }] });
+  check("list: more entries than the list holds and an entry that does not fit are refused at the field", sTooMany === 400 && !!tooMany.fieldErrors?.items && sBadMode === 400, `${sTooMany} ${sBadMode}`);
+  await api("PUT", "/api/plugins/smoke-list/enabled", { enabled: true, grant: [] }, owner.token);
+  const [sOn, on] = await saveList({ items: [{ name: "one" }, { name: "two", mode: "b" }], note: "hello" });
+  check("settings.check: values the plugin hands back are what is saved", sOn === 200 && on.values.items?.map((i) => `${i.name}:${i.mode}`).join(",") === "ONE:a,TWO:b" && on.values.note === "hello", `${sOn} ${JSON.stringify(on.values ?? on)}`);
+  const [sBad, bad] = await saveList({ items: [{ name: "bad" }], note: "changed" });
+  const [, afterBad] = await api("GET", "/api/plugins/smoke-list/settings", undefined, owner.token);
+  check("settings.check: the plugin refuses a field with its own sentence, and nothing is saved then", sBad === 400 && bad.error === "invalid_values" && bad.fieldErrors?.items?.de === "Kein Eintrag darf bad heißen." && afterBad.values.note === "hello" && afterBad.values.items[0].name === "ONE", `${sBad} ${JSON.stringify(bad)}`);
+  const [sThrow, thrown] = await saveList({ note: "throw" });
+  check("settings.check: a plugin that fails while it is asked fails the save", sThrow === 502 && thrown.error === "plugin_failed" && (await api("GET", "/api/plugins/smoke-list/settings", undefined, owner.token))[1].values.note === "hello", `${sThrow} ${thrown.error}`);
+  await api("DELETE", "/api/plugins/smoke-list", undefined, owner.token);
+}
+
 // ---------- The network and Squorli's signature (interface version 2)
 // A plugin that asks for `net.fetch` is installed only with Squorli's signature. The script signs with a key of its own
 // (made from a fixed seed, so no private key stands in the repository); the server takes that key only when it was
@@ -379,7 +424,7 @@ check("commands: a second plugin with a command name that is taken cannot be ena
   "id": "smoke-net", "name": { "en": "Smoke net", "de": "Rauchtest Netz" }, "description": "Fetches what the smoke test asks for.", "version": "1.0.0", "apiVersion": 2,
   "capabilities": ["messages.write", "net.fetch"],
   "network": { "hosts": ["feeds.example.org"] },
-  "commands": [{ "name": "net", "input": "text", "description": "get <address> | post <text> | flood <address>" }]
+  "commands": [{ "name": "net", "input": "text", "description": "get <address> | post <text> | flood <address> | card <json>" }]
 }
 */
 squorli.on("command", async (e) => {
@@ -390,6 +435,10 @@ squorli.on("command", async (e) => {
     catch (err) { return "refused: " + String(err.message).slice(0, 300); }
   }
   if (what === "post") return (await squorli.messages.send(e.channelId, rest)).id;
+  if (what === "card") {
+    try { const said = JSON.parse(rest); return (await squorli.messages.send(e.channelId, said.content, { card: said.card })).id; }
+    catch (err) { return "refused: " + String(err.message).slice(0, 300); }
+  }
   if (what === "flood") {
     let n = 0;
     try { for (let i = 0; i < 40; i++) { await squorli.net.get(rest); n++; } } catch (err) { return n + " then " + String(err.message).slice(0, 120); }
@@ -410,8 +459,9 @@ squorli.on("command", async (e) => {
   check("net: a file changed after it was signed is refused, whoever signed it", sTampered === 400 && tampered.error === "plugin_signature_invalid", `${sTampered} ${tampered.error}`);
   check("net: an unsigned plugin without the network installs as before and carries no mark", probe.signature === null && probe.blocked === null, JSON.stringify([probe.signature, probe.blocked]));
   const [, listNow] = await api("GET", "/api/plugins", undefined, owner.token);
-  const shippedNews = listNow.available.find((a) => a.id === "game-news");
-  check("net: the game news plugin is offered only signed as Squorli's own", !shippedNews || shippedNews.signature?.kind === "official", JSON.stringify(shippedNews?.signature ?? null));
+  // No plugin that asks for the network ships with the server (the game news plugin comes from the catalogue); if one ever does, only signed as Squorli's own.
+  const shippedNet = listNow.available.filter((a) => (a.capabilities ?? []).some((c) => c.id === "net.fetch"));
+  check("net: a plugin with the network is offered from the server's own files only signed as Squorli's own", shippedNet.every((a) => a.signature?.kind === "official") && !listNow.available.some((a) => a.id === "game-news"), JSON.stringify(shippedNet.map((a) => [a.id, a.signature ?? null])));
 
   const [sNet, netInfo] = await upload(signed);
   if (sNet === 400 && netInfo.error === "plugin_signature_invalid") {
@@ -475,10 +525,119 @@ squorli.on("command", async (e) => {
       const plainMessage = (await api("GET", `/api/channels/${general.id}/messages?limit=100`, undefined, owner.token))[1].messages.filter((m) => m.plugin?.id === "smoke-probe").at(-1);
       check("net: a plugin without the network still gets none, and its link is never fetched", said.ok !== false && (plainMessage?.previews ?? []).length === 0 && hits.length === hitsBefore && !!(await stored(plainMessage?.id)), `${JSON.stringify(plainMessage?.previews)} hits ${hits.length - hitsBefore}`);
 
+      // ---------- Cards (interface version 2): a message drawn as a box; its pictures are fetched by the server, never named to a client.
+      {
+        const card = async (content, c) => net(`card ${JSON.stringify({ content, card: c })}`);
+        // The database hands a stored object back with its keys in its own order.
+        const sameCard = (a, b) => JSON.stringify(Object.entries(a ?? {}).sort()) === JSON.stringify(Object.entries(b).sort());
+        const created = ownerWs.waitNew((e) => e.type === "message.create" && e.message?.plugin?.id === "smoke-net" && !!e.message.plugin.card, 8000).catch(() => null);
+        const pictured = ownerWs.waitNew((e) => e.type === "message.update" && e.message?.plugin?.id === "smoke-net" && !!e.message.plugin.card?.image, 8000).catch(() => null);
+        const cardId = await card(`Karte: ${SITE}/seite`, { kicker: " Smoke ", title: "Patch\n1.3", url: "https://example.org/notes", text: "**Neu**\n- eins", image: `${SITE}/bild.png`, thumbnail: `${SITE}/seite` });
+        const first = await created;
+        check("card: a message with a card goes out at once with its texts, and without any address of a picture", /^[0-9a-f-]{36}$/.test(cardId) && sameCard(first?.message.plugin.card, { kicker: "Smoke", title: "Patch 1.3", url: "https://example.org/notes", text: "**Neu**\n- eins" }) && first.message.content.startsWith("Karte:"), `${cardId} ${JSON.stringify(first?.message?.plugin ?? null)}`);
+        const second = await pictured;
+        const path = second?.message.plugin.card.image ?? "";
+        const file = /^\/api\/previews\/[0-9a-f]{32}\.png$/.test(path) ? await fetch(`${BASE}${path}`) : null;
+        check("card: the picture arrives as a file of this server; an address that is a page and no picture is left out", file?.status === 200 && file.headers.get("content-type") === "image/png" && second.message.plugin.card.thumbnail === undefined && second.message.plugin.card.title === "Patch 1.3", `${path} ${file?.status} ${JSON.stringify(second?.message?.plugin?.card ?? null)}`);
+        await sleep(1200);
+        const kept = await stored(cardId);
+        check("card: the card is stored with the message, and it takes the link previews' place", kept?.plugin?.card?.image === path && (kept?.previews ?? []).length === 0, JSON.stringify([kept?.plugin?.card, kept?.previews]));
+        const refused = [await card("x", { kicker: "nur das" }), await card("x", { title: "t", image: "http://example.org/a.png" }), await card("x", { title: "t", colour: "#f00" }), await card("x", { title: "t".repeat(201) }), await card("x", "keine Karte")];
+        check("card: one without a title or text, with an address that is not https, with a key that is none, or too long is refused", refused.every((r) => r.startsWith("refused: ")), JSON.stringify(refused));
+
+        // A plugin without the network may send a card; its pictures are never fetched. One written for interface version 1 may not.
+        const PLAIN = (id, apiVersion) => `/* squorli-plugin
+{ "id": "${id}", "name": "Smoke card", "description": "Sends a card.", "version": "1.0.0", "apiVersion": ${apiVersion}, "capabilities": ["messages.write"],
+  "commands": [{ "name": "${id}", "description": "a card" }] }
+*/
+squorli.on("command", async (e) => {
+  try { return (await squorli.messages.send(e.channelId, "Ohne Netz", { card: { title: "Ohne Netz", image: "${SITE}/bild.png" } })).id; }
+  catch (err) { return "refused: " + String(err.message).slice(0, 200); }
+});
+`;
+        for (const [id, apiVersion] of [["smoke-card", 2], ["smoke-card-old", 1]]) {
+          await api("POST", "/api/plugins", { source: PLAIN(id, apiVersion), fileName: `${id}.js` }, owner.token);
+          await api("PUT", `/api/plugins/${id}/enabled`, { enabled: true, grant: ["messages.write"] }, owner.token);
+        }
+        const hitsBeforeCard = hits.length;
+        const run = async (id) => (await api("POST", `/api/channels/${general.id}/commands`, { plugin: id, name: id }, owner.token))[1].message?.en ?? "";
+        const plainId = await run("smoke-card");
+        await sleep(1500);
+        const plainCard = await stored(plainId);
+        check("card: a plugin without the network sends a card too, and its picture is never fetched", JSON.stringify(plainCard?.plugin?.card) === JSON.stringify({ title: "Ohne Netz" }) && hits.length === hitsBeforeCard, `${plainId} ${JSON.stringify(plainCard?.plugin ?? null)} hits ${hits.length - hitsBeforeCard}`);
+        const old = await run("smoke-card-old");
+        check("card: a plugin written for interface version 1 is told to name version 2", /^refused: .*apiVersion/.test(old), old);
+        await api("DELETE", "/api/plugins/smoke-card?messages=delete", undefined, owner.token);
+        await api("DELETE", "/api/plugins/smoke-card-old", undefined, owner.token);
+      }
+
       const flood = await net(`flood ${SITE}/feed.json`);
       const floodCount = Number(flood.split(" ")[0]);
       check("net: thirty requests a minute, then the limit", /^\d+ then .*rate limit/.test(flood) && floodCount > 0 && floodCount <= 30, flood);
-      await new Promise((r) => site.close(r)); site.closeAllConnections?.();
+      // ---------- The catalogue of signed plugins: the script plays the repository (the list and a release's file) on the same origin.
+      {
+        const { bodyHash, bodyOf } = await import("../../../tools/plugin-sign.mjs");
+        const CAT = (version, extra = "") => NET.replace('"id": "smoke-net"', '"id": "smoke-cat"').replace('"version": "1.0.0"', `"version": "${version}"`).replace('"name": "net"', '"name": "cat"') + extra;
+        const signedCat = (version) => signSource(CAT(version), testKey, "smoke", "reviewed");
+        const listed = (version, over = {}) => ({
+          id: "smoke-cat", name: { en: "Smoke <b>cat</b>\nalogue", de: "Rauchtest Katalog" }, description: { en: "Listed by the smoke test." }, author: "Somebody", homepage: "javascript:alert(1)",
+          kind: "reviewed", version, apiVersion: 2, capabilities: ["messages.write", "net.fetch"], hosts: ["feeds.example.org"], language: "js", file: "smoke-cat.js",
+          sha256: bodyHash(bodyOf(signedCat(version))), key: "smoke", signedAt: "2026-11-15", download: "https://evil.example/x.js", ...over,
+        });
+        let catalogFile = { version: 1, plugins: [listed("1.0.0"), { id: "broken" }, listed("9.9.9", { id: "smoke-later", file: "smoke-later.js", apiVersion: 99 })] };
+        let releases = { "/releases/download/smoke-cat-v1.0.0/smoke-cat.js": signedCat("1.0.0") };
+        const catalogSite = createServer((req, res) => {
+          hits.push(req.url);
+          if (req.url === "/catalog.json") return res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(JSON.stringify(catalogFile));
+          if (releases[req.url]) return res.writeHead(200, { "content-type": "application/octet-stream" }).end(releases[req.url]);
+          res.writeHead(404).end();
+        });
+        // The same origin as the played sources: that server makes way for this one.
+        await new Promise((r) => site.close(r)); site.closeAllConnections?.();
+        await new Promise((r) => catalogSite.listen(Number(new URL(SITE).port), "127.0.0.1", r));
+        const catalog = async () => (await api("GET", "/api/plugins/catalog", undefined, owner.token))[1];
+        const fromCatalog = (id) => api("POST", "/api/plugins", { catalog: id }, owner.token);
+
+        check("catalog: the plugin list says the server offers one", (await api("GET", "/api/plugins", undefined, owner.token))[1].catalog === true);
+        check("catalog: it is for managers of the server", (await api("GET", "/api/plugins/catalog", undefined, member.token))[0] === 403);
+        const c1 = await catalog();
+        const e1 = c1.plugins?.find((p) => p.id === "smoke-cat");
+        check("catalog: lists the entries it can read, as new, with the kind and the hosts in the server's own words", c1.plugins?.length === 2 && e1?.status === "new" && e1.signature?.kind === "reviewed" && /feeds\.example\.org/.test(e1.capabilities.find((x) => x.id === "net.fetch")?.text?.de ?? ""), JSON.stringify(c1).slice(0, 300));
+        check("catalog: an author's texts are cleaned, a homepage that is no https address is dropped, the source points into the repository", e1?.name?.en === "Smoke <b>cat</b> alogue" && e1.homepage === null && e1.source === "https://github.com/danielklessa/squorli-plugins/tree/main/plugins/smoke-cat" && !("download" in e1), JSON.stringify(e1).slice(0, 300));
+        check("catalog: an entry for a later plugin interface is listed as needing a newer server and cannot be installed", c1.plugins.find((p) => p.id === "smoke-later")?.status === "needs_server" && (await fromCatalog("smoke-later"))[0] === 409);
+        check("catalog: an id the list does not name is unknown", (await fromCatalog("not-listed"))[1].error === "catalog_unknown");
+        check("catalog: installing needs an owner", (await api("POST", "/api/plugins", { catalog: "smoke-cat" }, mod.token))[0] === 403);
+
+        const [sCat, cat] = await fromCatalog("smoke-cat");
+        check("catalog: one request installs the signed file from the release, switched off", sCat === 200 && cat.id === "smoke-cat" && cat.version === "1.0.0" && cat.installedVia === "catalog" && cat.enabled === false && cat.signature?.kind === "reviewed" && hits.includes("/releases/download/smoke-cat-v1.0.0/smoke-cat.js"), `${sCat} ${JSON.stringify(cat).slice(0, 200)}`);
+        check("catalog: the entry is installed then", (await catalog()).plugins.find((p) => p.id === "smoke-cat")?.status === "installed");
+
+        // A new version in the list: an update, and the file must be the one the list names.
+        catalogFile = { version: 1, plugins: [listed("1.1.0")] };
+        releases = { "/releases/download/smoke-cat-v1.1.0/smoke-cat.js": signedCat("1.0.0") };
+        const upd = (await catalog()).plugins.find((p) => p.id === "smoke-cat");
+        check("catalog: a higher version in the list is an update", upd?.status === "update" && upd.installedVersion === "1.0.0" && upd.version === "1.1.0", JSON.stringify(upd).slice(0, 160));
+        const [sWrong, wrong] = await fromCatalog("smoke-cat");
+        check("catalog: a release that holds another file than the list names is not installed", sWrong === 502 && wrong.error === "catalog_mismatch", `${sWrong} ${wrong.error}`);
+        releases = { "/releases/download/smoke-cat-v1.1.0/smoke-cat.js": CAT("1.1.0") };
+        const [sBare, bare] = await fromCatalog("smoke-cat");
+        check("catalog: nor is an unsigned file, whatever the list says", sBare === 502 && bare.error === "catalog_mismatch", `${sBare} ${bare.error}`);
+        releases = { "/releases/download/smoke-cat-v1.1.0/smoke-cat.js": signSource(CAT("1.1.0"), stranger, "stranger", "reviewed") };
+        check("catalog: nor is one signed with a key the server does not know", (await fromCatalog("smoke-cat"))[1].error === "catalog_mismatch");
+        releases = {};
+        check("catalog: a file that cannot be downloaded says so", (await fromCatalog("smoke-cat"))[1].error === "catalog_unavailable");
+        check("catalog: after all that the installed version is still the first", (await api("GET", "/api/plugins", undefined, owner.token))[1].plugins.find((p) => p.id === "smoke-cat")?.version === "1.0.0");
+        releases = { "/releases/download/smoke-cat-v1.1.0/smoke-cat.js": signedCat("1.1.0") };
+        const [sUp, up] = await fromCatalog("smoke-cat");
+        check("catalog: the right file updates the plugin", sUp === 200 && up.version === "1.1.0" && (await catalog()).plugins.find((p) => p.id === "smoke-cat")?.status === "installed", `${sUp} ${up.version}`);
+
+        // The list is gone: the last one that could be read is served, marked.
+        catalogFile = "no list";
+        const stale = await catalog();
+        check("catalog: when the list cannot be read the last one is served as stale", stale.stale === true && stale.plugins?.length === 1, JSON.stringify(stale).slice(0, 120));
+        await api("DELETE", "/api/plugins/smoke-cat?messages=delete", undefined, owner.token);
+        await new Promise((r) => catalogSite.close(r)); catalogSite.closeAllConnections?.();
+      }
       await new Promise((r) => inside.close(r));
     }
     for (const id of ["smoke-net", "smoke-signed"]) await api("DELETE", `/api/plugins/${id}?messages=delete`, undefined, owner.token);

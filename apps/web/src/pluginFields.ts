@@ -1,4 +1,4 @@
-import { PLUGIN_FIELD_TYPES, Permission, hasPermission, parsePluginDate, type Channel, type Member, type PluginCommand, type PluginField, type PluginMemberAction, type PluginSurface, type Role } from "@squorli/protocol";
+import { PLUGIN_FIELD_TYPES, PLUGIN_LIST_ITEM_TYPES, Permission, hasPermission, parsePluginDate, type Channel, type Member, type PluginCommand, type PluginField, type PluginMemberAction, type PluginSurface, type Role } from "@squorli/protocol";
 import { assignableRoles, outranks, rolesByRank } from "./memberRank";
 
 /**
@@ -53,19 +53,45 @@ export function isKnownFieldType(type: string): boolean {
   return (PLUGIN_FIELD_TYPES as readonly string[]).includes(type);
 }
 
+/**
+ * Can this app draw the field? A type it knows, and for a `list` every column of its entries too: a list with a column of
+ * a later server is shown as "needs a newer app" as a whole, because an entry drawn without one of its fields would be
+ * saved without it.
+ */
+export function isDrawableField(field: Pick<PluginField, "type" | "fields">): boolean {
+  if (!isKnownFieldType(field.type)) return false;
+  if (field.type !== "list") return true;
+  return !!field.fields?.length && field.fields.every((x) => (PLUGIN_LIST_ITEM_TYPES as readonly string[]).includes(x.type));
+}
+
 /** A required field of a type this app cannot draw: the form cannot be sent from here. */
 export function blockedByUnknown(fields: readonly PluginField[]): boolean {
-  return fields.some((f) => f.required && !isKnownFieldType(f.type));
+  return fields.some((f) => f.required && !isDrawableField(f));
+}
+
+/** A new, empty entry of a `list` field: each column's default; a switch starts off. */
+export function newListItem(field: Pick<PluginField, "fields">): Record<string, unknown> {
+  const item: Record<string, unknown> = {};
+  for (const x of field.fields ?? []) {
+    if (x.default !== undefined && x.default !== null) item[x.key] = x.default;
+    else if (x.type === "boolean") item[x.key] = false;
+  }
+  return item;
+}
+
+/** The entries of a `list` field as the form holds them: objects only, whatever the server stored. */
+export function listItems(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x)) : [];
 }
 
 /** What a form starts with: each known field's default; switches start off, lists empty. */
 export function initialValues(fields: readonly PluginField[]): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const f of fields) {
-    if (!isKnownFieldType(f.type)) continue;
+    if (!isDrawableField(f)) continue;
     if (f.default !== undefined && f.default !== null) values[f.key] = f.default;
     else if (f.type === "boolean") values[f.key] = false;
-    else if (f.type === "roles" || f.type === "channels") values[f.key] = [];
+    else if (f.type === "roles" || f.type === "channels" || f.type === "list") values[f.key] = [];
   }
   return values;
 }
@@ -77,9 +103,9 @@ export function initialValues(fields: readonly PluginField[]): Record<string, un
 export function submitValues(fields: readonly PluginField[], values: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of fields) {
-    if (!isKnownFieldType(f.type)) continue;
+    if (!isDrawableField(f)) continue;
     const v = values[f.key];
-    out[f.key] = v === undefined ? (f.type === "roles" || f.type === "channels" ? [] : null) : v;
+    out[f.key] = v === undefined ? (f.type === "roles" || f.type === "channels" || f.type === "list" ? [] : null) : v;
   }
   return out;
 }

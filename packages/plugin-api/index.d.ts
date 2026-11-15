@@ -98,6 +98,15 @@ declare namespace Squorli {
   interface DisableEvent {}
   /** An admin saved the plugin's settings. Read them with `settings.get()`. */
   interface SettingsChangeEvent {}
+  /**
+   * Interface version 2. An admin is about to save the plugin's settings: `values` is what would be saved, checked against
+   * the manifest's fields already. Sent only while the plugin runs, and the admin waits for the answer, so be quick.
+   * Return nothing to let it pass; `fieldErrors` to refuse fields with a sentence each (nothing is saved then); `values`
+   * to save some fields in another form, for example a typed name as the name and number it stands for. Values handed back
+   * are checked like the admin's; a role, channel or member field cannot be changed this way.
+   */
+  interface SettingsCheckEvent { values: Record<string, unknown>; by: string }
+  interface SettingsCheckResult { fieldErrors?: Record<string, Text>; values?: Record<string, unknown> }
 
   /** Needs `members.read`. A new membership (not a sign-in of somebody who was a member already). */
   interface MemberJoinEvent { userId: string }
@@ -150,6 +159,7 @@ declare namespace Squorli {
   interface Events {
     "enable": [EnableEvent, void];
     "disable": [DisableEvent, void];
+    "settings.check": [SettingsCheckEvent, SettingsCheckResult | void];
     "settings.change": [SettingsChangeEvent, void];
     "member.join": [MemberJoinEvent, void];
     "member.leave": [MemberLeaveEvent, void];
@@ -188,15 +198,41 @@ declare namespace Squorli {
     list(): Promise<Channel[]>;
   }
 
+  /**
+   * A card: a message drawn as a framed box (interface version 2). It needs a `title` or a `text`; everything else is
+   * optional. The app draws it with its own components, a plugin chooses no colours and no layout.
+   */
+  interface Card {
+    /** A small line above the title, at most 80 characters: what the card is about (a game's name, a source). */
+    kicker?: string;
+    /** One line, at most 200 characters. A link when `url` is given. */
+    title?: string;
+    /** Where the title leads: an https address of at most 500 characters. */
+    url?: string;
+    /** At most 2000 characters, Markdown as in a message (headings, lists, quotes, bold). */
+    text?: string;
+    /**
+     * A large picture below the text and a small one in the corner: https addresses of pictures (PNG, JPEG, WebP, GIF, up
+     * to 2 MB). The server fetches them itself and serves its own copies, so nobody's app asks a foreign host; they appear
+     * a moment after the message. Only for a plugin that holds `net.fetch`, and only while the server makes link previews;
+     * otherwise, or when an address is no picture, the card is shown without it.
+     */
+    image?: string;
+    thumbnail?: string;
+  }
+
   interface Messages {
     /** Messages of a channel of the scope, oldest first; `before` = a `seq` to page backwards. At most 50. Needs `messages.read`. */
     history(channelId: string, options?: { before?: number; limit?: number }): Promise<{ messages: Message[]; hasMore: boolean }>;
     /**
      * Write a message (1 to 4000 characters, Markdown as members write it, no files). Needs `messages.write`. Links get a
      * preview only in the messages of a plugin that holds `net.fetch`.
+     *
+     * With `options.card` (interface version 2) the message is drawn as a card; `content` is then what an app from before
+     * cards shows and what notifications quote, so write it as a message that stands on its own.
      */
-    send(channelId: string, content: string): Promise<{ id: string; seq: number }>;
-    /** Change one of the plugin's own messages. Needs `messages.write`. */
+    send(channelId: string, content: string, options?: { card?: Card }): Promise<{ id: string; seq: number }>;
+    /** Change the text of one of the plugin's own messages (a card it carries stays as it is). Needs `messages.write`. */
     edit(messageId: string, content: string): Promise<boolean>;
     /** Delete one of the plugin's own messages. Needs `messages.write`. */
     delete(messageId: string): Promise<boolean>;

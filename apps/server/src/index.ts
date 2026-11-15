@@ -328,7 +328,10 @@ async function main() {
   }, join(here, import.meta.url.endsWith(".ts") ? "preview-worker.ts" : "preview-worker.js"));
   previews.meter = meter;
   await previews.init();
-  if (plugins) plugins.schedulePreview = (messageId) => previews.schedule(messageId);
+  if (plugins) {
+    plugins.schedulePreview = (messageId) => previews.schedule(messageId);
+    plugins.fetchCardPictures = (messageId, pictures) => previews.attachCardPictures(messageId, pictures);
+  }
   app.addHook("onClose", async () => previews.close());
   await registerMessageRoutes(app, db, hub, previews);
   // Reactions and reaction roles (docs/features/reactions.md): routes about one message, same visibility rules as the messages'.

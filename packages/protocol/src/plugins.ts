@@ -20,8 +20,9 @@ import { Iso, Uuid } from "./primitives";
 
 /**
  * The interface version this server offers plugins (`squorli.apiVersion`), and the oldest one it still runs. Version 2
- * (server 0.15.0) added the network: the capability `net.fetch`, the manifest's `network` and `squorli.net.get`. A plugin
- * that uses none of it stays at version 1 and runs on servers from before.
+ * (server 0.15.0) added the network (the capability `net.fetch`, the manifest's `network` and `squorli.net.get`), the
+ * settings field type `list` and the event `settings.check`. A plugin that uses none of it stays at version 1 and runs on
+ * servers from before.
  */
 export const PLUGIN_API_VERSION = 2;
 export const PLUGIN_API_MIN = 1;
@@ -40,6 +41,13 @@ export const PLUGIN_VIEW_ROWS_MAX = 500;
 export const PLUGIN_NETWORK_HOSTS_MAX = 20;
 /** The interface version from which a manifest may name `network` and the capability `net.fetch`. */
 export const PLUGIN_NETWORK_API_VERSION = 2;
+/** A `list` field (interface version 2): how many columns an entry may have, and how many entries a list holds at most and by default. */
+export const PLUGIN_LIST_API_VERSION = 2;
+export const PLUGIN_LIST_FIELDS_MAX = 4;
+export const PLUGIN_LIST_ITEMS_MAX = 100;
+export const PLUGIN_LIST_ITEMS_DEFAULT = 50;
+/** What an entry of a `list` field is made of. */
+export const PLUGIN_LIST_ITEM_TYPES = ["text", "number", "boolean", "select"] as const;
 /** What a slash command's text argument may hold. */
 export const PLUGIN_COMMAND_TEXT_MAX = 2000;
 
@@ -69,8 +77,11 @@ export function parsePluginDate(value: string, yearOptional = false): { year: nu
   return day <= last.getUTCDate() ? { year, month, day } : null;
 }
 
-/** The field types of version 1 (settings, a member action's dialog, a command's form). */
-export const PLUGIN_FIELD_TYPES = ["text", "number", "boolean", "select", "role", "roles", "channel", "channels", "member", "duration", "date"] as const;
+/**
+ * The field types (settings, a member action's dialog, a command's form). `list` came with interface version 2 and stands in
+ * settings only: entries an admin adds and removes, each made of a few simple fields (`fields`).
+ */
+export const PLUGIN_FIELD_TYPES = ["text", "number", "boolean", "select", "role", "roles", "channel", "channels", "member", "duration", "date", "list"] as const;
 export type PluginFieldType = (typeof PLUGIN_FIELD_TYPES)[number];
 export const PLUGIN_VIEW_COLUMN_TYPES = ["text", "member", "role", "channel", "time", "duration"] as const;
 
@@ -108,6 +119,21 @@ const manifestText = (max: number) => z.union([
 /** The name of a permission (`packages/protocol/src/permissions.ts`), e.g. "MANAGE_ROLES". */
 const PermissionName = z.string().refine((name) => Object.prototype.hasOwnProperty.call(Permission, name), "unknown permission");
 
+/** One column of a `list` field's entries: a simple field without a scope (no role, channel or member). */
+export const ManifestListItemField = z.object({
+  key: z.string().regex(/^[a-z][a-zA-Z0-9]{0,31}$/),
+  type: z.enum(PLUGIN_LIST_ITEM_TYPES),
+  label: manifestText(80),
+  required: z.boolean().default(false),
+  default: z.unknown().optional(),
+  options: z.array(z.object({ value: line(64), label: manifestText(80) }).strict()).min(1).max(50).optional(),
+  min: z.number().finite().optional(),
+  max: z.number().finite().optional(),
+  /** `text`: the longest value (default and cap 200 inside a list). */
+  maxLength: z.number().int().min(1).max(200).optional(),
+}).strict();
+export type ManifestListItemField = z.infer<typeof ManifestListItemField>;
+
 const ManifestFieldBase = {
   /** The key of the value in `settings.get()` or in a handler's `values`. */
   key: z.string().regex(/^[a-z][a-zA-Z0-9]{0,31}$/),
@@ -134,6 +160,13 @@ const ManifestFieldBase = {
    * instead of `YYYY-MM-DD`. The app draws a date picker either way.
    */
   yearOptional: z.boolean().optional(),
+  /**
+   * `list` (settings only, interface version 2): what one entry is made of, one to four simple fields. The value is an array
+   * of objects keyed by these fields' keys.
+   */
+  fields: z.array(ManifestListItemField).min(1).max(PLUGIN_LIST_FIELDS_MAX).optional(),
+  /** `list`: how many entries it holds at most (default 50, cap 100). */
+  maxItems: z.number().int().min(1).max(PLUGIN_LIST_ITEMS_MAX).optional(),
 };
 /** A field of the settings. Its `role`/`roles` and `channel`/`channels` values are the plugin's scope (what it may touch). */
 export const ManifestSettingsField = z.object(ManifestFieldBase).strict();
@@ -217,6 +250,19 @@ export const PluginManifest = z.object({
     if (f.type !== "select" && f.options) issue(`${where}: only a select field has options`);
     if (f.min !== undefined && f.max !== undefined && f.min > f.max) issue(`${where}: min is above max`);
     if (f.yearOptional !== undefined && f.type !== "date") issue(`${where}: only a date field has yearOptional`);
+    if (f.type === "list") {
+      if (!f.fields) issue(`${where}: a list field needs fields`);
+      else {
+        if (!unique(f.fields.map((x) => x.key))) issue(`${where}: two fields of the list share a key`);
+        for (const x of f.fields) {
+          if (x.type === "select" && !x.options) issue(`${where}.${x.key}: a select field needs options`);
+          if (x.type !== "select" && x.options) issue(`${where}.${x.key}: only a select field has options`);
+          if (x.min !== undefined && x.max !== undefined && x.min > x.max) issue(`${where}.${x.key}: min is above max`);
+        }
+      }
+      if (m.apiVersion < PLUGIN_LIST_API_VERSION) issue(`${where}: a list field needs "apiVersion": ${PLUGIN_LIST_API_VERSION}`);
+      if (!where.startsWith("settings.")) issue(`${where}: a list field stands in the settings only`);
+    } else if (f.fields !== undefined || f.maxItems !== undefined) issue(`${where}: only a list field has fields and maxItems`);
     if (f.from !== undefined) {
       const source = m.settings.find((s) => s.key === f.from);
       if (!source || scopeKind(source.type) === null || scopeKind(source.type) !== scopeKind(f.type)) issue(`${where}: "from" must name a settings field of the same kind (roles or channels)`);
@@ -262,6 +308,12 @@ export const PluginField = z.object({
   presets: z.array(z.number()).optional(),
   channelKind: z.string().optional(),
   yearOptional: z.boolean().optional(),
+  /** `list`: the columns of an entry. A column of a type this app cannot draw makes the whole field "needs a newer app". */
+  fields: z.array(z.object({
+    key: z.string(), type: z.string(), label: PluginText, required: z.boolean().default(false), default: z.unknown().optional(),
+    options: z.array(z.object({ value: z.string(), label: PluginText })).optional(), min: z.number().optional(), max: z.number().optional(), maxLength: z.number().optional(),
+  })).optional(),
+  maxItems: z.number().optional(),
   /**
    * `role`/`roles`/`channel`/`channels` in a dialog or form: the ids the server takes for this field (the plugin's scope).
    * The client offers these and nothing else, and of the roles only those the member may assign (memberRank.ts).
@@ -302,8 +354,35 @@ export type PluginMemberAction = z.infer<typeof PluginMemberAction>;
 export const PluginSurface = z.object({ commands: lenientList(PluginCommand), memberActions: lenientList(PluginMemberAction) });
 export type PluginSurface = z.infer<typeof PluginSurface>;
 
-/** On a message a plugin wrote: which plugin, who caused it (a command's caller) and by which command. */
-export const MessagePlugin = z.object({ id: z.string(), name: PluginText, by: Uuid.optional(), command: z.string().optional() });
+/**
+ * A card: a plugin's message drawn as a framed box instead of a line of text (interface version 2, docs/features/plugins.md).
+ * Everything in it is data the client draws with its own components: a small line above the title (`kicker`, a game's
+ * name), the title (a link when `url` is given), a text in the Markdown of messages, a small picture in the corner and a
+ * large one below. The pictures are files of this server (the server fetched them, as it does for link previews), never
+ * addresses of a foreign host. A message with a card still has its `content`: an app from before cards shows that.
+ */
+export const PLUGIN_CARD_API_VERSION = 2;
+export const PLUGIN_CARD_KICKER_MAX = 80;
+export const PLUGIN_CARD_TITLE_MAX = 200;
+export const PLUGIN_CARD_TEXT_MAX = 2000;
+export const PLUGIN_CARD_URL_MAX = 500;
+export const MessageCard = z.object({
+  kicker: z.string().optional(),
+  title: z.string().optional(),
+  url: z.string().optional(),
+  text: z.string().optional(),
+  /** Paths on this server (`/api/previews/<file>`); they arrive with a `message.update` shortly after the message. */
+  image: z.string().optional(),
+  thumbnail: z.string().optional(),
+});
+export type MessageCard = z.infer<typeof MessageCard>;
+
+/** On a message a plugin wrote: which plugin, who caused it (a command's caller), by which command, and its card if it sent one. */
+export const MessagePlugin = z.object({
+  id: z.string(), name: PluginText, by: Uuid.optional(), command: z.string().optional(),
+  // A card of a later server that this client cannot read costs the card, never the message: the text is still there.
+  card: MessageCard.optional().catch(undefined),
+});
 export type MessagePlugin = z.infer<typeof MessagePlugin>;
 
 /** What a member action, a command or a settings change answers. `message` is shown to the caller only. */
@@ -396,7 +475,39 @@ export const PluginsResponse = z.object({
   /** `PLUGINS`: "operator" = only the `squorli plugin` command installs, "owner" = an owner may upload here too. */
   mode: z.string(),
   max: z.number().int(),
+  /** Does this server offer the catalogue of signed plugins (`GET /api/plugins/catalog`, `PLUGIN_CATALOG`)? Missing on a server from before. */
+  catalog: z.boolean().default(false).catch(false),
 });
+
+/**
+ * One plugin of the catalogue of signed plugins, as this server offers it: the entry of the public list (its texts are the
+ * author's, shown as text) with the capabilities in the server's own words and what the server knows about it.
+ */
+export const PluginCatalogEntry = z.object({
+  id: z.string(),
+  name: PluginText,
+  description: PluginText,
+  author: z.string().nullable().default(null),
+  homepage: z.string().nullable().default(null),
+  version: z.string(),
+  capabilities: z.array(PluginCapabilityInfo).default([]),
+  /** The hosts it fetches from; empty for a plugin without the network. */
+  hosts: z.array(z.string()).default([]),
+  /** Whose plugin it is, as its signature will say: the server checks the downloaded file, not this field. */
+  signature: PluginSignatureInfo.nullable().default(null).catch(null),
+  /** `YYYY-MM-DD`. */
+  signedAt: z.string().nullable().default(null),
+  /** Where its source can be read. */
+  source: z.string().nullable().default(null),
+  installedVersion: z.string().nullable().default(null),
+  /** "new", "update" (the catalogue's version is above the installed one), "installed", "needs_server" (a later plugin interface). */
+  status: z.string(),
+});
+export type PluginCatalogEntry = z.infer<typeof PluginCatalogEntry>;
+
+/** GET /api/plugins/catalog[?refresh=1]. `stale` = the list could not be fetched just now; this is the last one that could. */
+export const PluginCatalogResponse = z.object({ plugins: lenientList(PluginCatalogEntry), fetchedAt: Iso, stale: z.boolean().default(false) });
+export type PluginCatalogResponse = z.infer<typeof PluginCatalogResponse>;
 export type PluginsResponse = z.infer<typeof PluginsResponse>;
 
 /**
@@ -407,6 +518,8 @@ export type PluginsResponse = z.infer<typeof PluginsResponse>;
 export const PluginInstallRequest = z.union([
   z.object({ source: z.string().min(1).max(PLUGIN_SOURCE_MAX_BYTES * 3), fileName: z.string().min(1).max(200) }).strict(),
   z.object({ bundled: z.string().regex(PLUGIN_ID_PATTERN) }).strict(),
+  /** The id of a plugin of the catalogue: the server downloads its signed file itself. */
+  z.object({ catalog: z.string().regex(PLUGIN_ID_PATTERN) }).strict(),
 ]);
 /** PUT /api/plugins/:id/enabled. `grant` = the capabilities the owner saw and confirmed; it must be what the plugin asks for. */
 export const PluginEnableRequest = z.object({ enabled: z.boolean(), grant: z.array(z.string().max(64)).max(32).optional() });

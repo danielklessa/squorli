@@ -119,6 +119,50 @@ describe("checkValues", () => {
   });
 });
 
+describe("a list field's values", () => {
+  const games = field({ key: "games", type: "list", maxItems: 3, fields: [
+    { key: "game", type: "text", label: { en: "Game" }, required: true, maxLength: 20 },
+    { key: "show", type: "select", label: { en: "Show" }, required: false, default: "all", options: [{ value: "all", label: { en: "All" } }, { value: "patch", label: { en: "Patch" } }] },
+    { key: "pin", type: "boolean", label: { en: "Pin" }, required: false },
+    { key: "n", type: "number", label: { en: "N" }, required: false, min: 1, max: 9 },
+  ] });
+
+  it("takes entries of the list's fields, with their defaults, and nothing an entry does not declare", () => {
+    expect(checkValues([games], { games: [{ game: "  A\ngame ", show: "patch", pin: true, n: 3, stray: 1 }, { game: "B" }] }))
+      .toEqual({ ok: true, values: { games: [{ game: "A game", show: "patch", pin: true, n: 3 }, { game: "B", show: "all", pin: false }] } });
+  });
+
+  it("is an empty list for nothing, and drops a row nobody typed into", () => {
+    expect(checkValues([games], {})).toEqual({ ok: true, values: { games: [] } });
+    expect(checkValues([games], { games: [{}, { game: "" }, { show: "patch", pin: true }, { game: "A" }] })).toEqual({ ok: true, values: { games: [{ game: "A", show: "all", pin: false }] } });
+    expect(checkValues([{ ...games, required: true }], { games: [] })).toEqual({ ok: false, errors: { games: "required" } });
+  });
+
+  it("refuses the field for an entry that does not fit, too many entries and anything that is no list of objects", () => {
+    const bad = (value: unknown) => checkValues([games], { games: value });
+    expect(bad([{ n: 5 }])).toEqual({ ok: false, errors: { games: "required" } }); // typed into, but the required text is missing
+    expect(bad([{ game: "x".repeat(21) }])).toEqual({ ok: false, errors: { games: "too_long" } });
+    expect(bad([{ game: "A", show: "sometimes" }])).toEqual({ ok: false, errors: { games: "invalid" } });
+    expect(bad([{ game: "A", n: 10 }])).toEqual({ ok: false, errors: { games: "out_of_range" } });
+    expect(bad([{ game: "A", pin: "yes" }])).toEqual({ ok: false, errors: { games: "invalid" } });
+    expect(bad([{ game: 5 }])).toEqual({ ok: false, errors: { games: "invalid" } });
+    expect(bad(["A"])).toEqual({ ok: false, errors: { games: "invalid" } });
+    expect(bad("A")).toEqual({ ok: false, errors: { games: "invalid" } });
+    expect(bad([{ game: "A" }, { game: "B" }, { game: "C" }, { game: "D" }])).toEqual({ ok: false, errors: { games: "too_long" } });
+    // Rows that are dropped do not count against the limit.
+    expect(bad([{ game: "A" }, {}, { game: "B" }, {}, { game: "C" }]).ok).toBe(true);
+  });
+
+  it("keeps every row of a list that has nothing to type", () => {
+    const flags = field({ key: "flags", type: "list", fields: [{ key: "on", type: "boolean", label: { en: "On" }, required: false }] });
+    expect(checkValues([flags], { flags: [{}, { on: true }] })).toEqual({ ok: true, values: { flags: [{ on: false }, { on: true }] } });
+  });
+
+  it("names no role or channel: a list adds nothing to a plugin's scope", () => {
+    expect(scopeIds([games], { games: [{ game: A }] })).toEqual({ roles: [], channels: [] });
+  });
+});
+
 describe("the scope of a set of settings", () => {
   const fields = [field({ key: "roles", type: "roles" }), field({ key: "one", type: "role" }), field({ key: "room", type: "channel" }), field({ key: "note", type: "text" })];
   const values = { roles: [A], one: B, room: A, note: B };

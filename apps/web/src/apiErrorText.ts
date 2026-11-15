@@ -71,6 +71,7 @@ const pluginKeys: Record<string, Key> = {
   unknown_channel: "voice.joinErr.gone", rate_limited: "err.rateLimited", bad_request: "plugin.err.bad_request",
   plugin_signature_required: "plugin.err.plugin_signature_required", plugin_signature_invalid: "plugin.err.plugin_signature_invalid",
   plugin_signature_revoked: "plugin.err.plugin_signature_revoked", plugin_net_off: "plugin.err.plugin_net_off",
+  plugin_catalog_off: "plugin.err.plugin_catalog_off", catalog_unavailable: "plugin.err.catalog_unavailable", catalog_mismatch: "plugin.err.catalog_mismatch", catalog_unknown: "plugin.err.catalog_unknown",
 };
 export type PluginProblem = { text: string; detail: string | null };
 export function pluginProblem(err: unknown): PluginProblem {

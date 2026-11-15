@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { isOperator } from "../routes/plugins";
 import { HOST_FUNCTIONS, PLUGIN_EVENTS, preludeSource } from "./prelude";
 import { retryDelay } from "./scheduler";
-import { GATE_TEXT, actionResult, gateCode, isPluginUserKey, netAllowed, roleInScope } from "./service";
+import type { ManifestField } from "@squorli/protocol";
+import { GATE_TEXT, actionResult, gateCode, isPluginUserKey, netAllowed, roleInScope, settingsCheckAnswer } from "./service";
 
 describe("roleInScope", () => {
   const scope = { roles: { r1: Permission.SEND_MESSAGES }, channels: [] };
@@ -51,6 +52,39 @@ describe("the operator's token", () => {
     expect(isOperator({ headers: {} }, token)).toBe(false);
     expect(isOperator({ headers: { "x-squorli-operator": token, authorization: "Bearer abc" } }, token)).toBe(false);
     expect(isOperator({ headers: { "x-squorli-operator": [token, token] as unknown as string } }, token)).toBe(false);
+  });
+});
+
+describe("what a plugin answers before its settings are saved", () => {
+  const f = (key: string, type: string, more: Record<string, unknown> = {}) => ({ key, type, label: { en: key }, required: false, ...more }) as unknown as ManifestField;
+  const fields = [f("games", "list", { fields: [{ key: "game", type: "text", label: { en: "Game" }, required: true }] }), f("note", "text", { maxLength: 10 }), f("room", "channel"), f("role", "role")];
+  const values = { games: [{ game: "730" }], note: "hi", room: "5f0e4d7c-93a1-4b53-9d6a-2f1c8c7f1a01" };
+
+  it("lets the save pass when it says nothing, or nothing this server reads", () => {
+    for (const answer of [undefined, null, "fine", 5, [], {}, { values: 5 }, { fieldErrors: [] }, { fieldErrors: {} }]) expect(settingsCheckAnswer(fields, values, answer)).toEqual({ ok: true, values: {} });
+  });
+
+  it("refuses the save with the plugin's sentence at a field of its own, cleaned and cut", () => {
+    expect(settingsCheckAnswer(fields, values, { fieldErrors: { games: { en: "Several games fit.", de: "Mehrere Spiele passen." }, nope: "x" } }))
+      .toEqual({ ok: false, fieldErrors: { games: { en: "Several games fit.", de: "Mehrere Spiele passen." } } });
+    const long = settingsCheckAnswer(fields, values, { fieldErrors: { note: `a${String.fromCharCode(27)}[2J${"x".repeat(900)}` }, values: { note: "ignored" } });
+    expect(long.ok).toBe(false);
+    expect(!long.ok && long.fieldErrors.note!.en.length).toBe(500);
+    expect(!long.ok && long.fieldErrors.note!.en.startsWith("a[2Jx")).toBe(true);
+    // An error for a field the manifest does not have refuses nothing.
+    expect(settingsCheckAnswer(fields, values, { fieldErrors: { nope: "x" } })).toEqual({ ok: true, values: {} });
+  });
+
+  it("takes values the plugin hands back for its plain fields, checked like an admin's", () => {
+    expect(settingsCheckAnswer(fields, values, { values: { games: [{ game: "Counter-Strike 2 (730)", stray: 1 }], note: "  ok " } }))
+      .toEqual({ ok: true, values: { games: [{ game: "Counter-Strike 2 (730)" }], note: "ok" } });
+    // Only the fields it names are touched.
+    expect(settingsCheckAnswer(fields, values, { values: { note: "x" } })).toEqual({ ok: true, values: { note: "x" } });
+  });
+
+  it("never lets a plugin change a field of its scope, and keeps the admin's values when the plugin's do not fit", () => {
+    expect(settingsCheckAnswer(fields, values, { values: { room: "5f0e4d7c-93a1-4b53-9d6a-2f1c8c7f1a99", role: "5f0e4d7c-93a1-4b53-9d6a-2f1c8c7f1a98", unknown: 1 } })).toEqual({ ok: true, values: {} });
+    expect(settingsCheckAnswer(fields, values, { values: { note: "far too long for this field", games: [{ game: "A (1)" }] } })).toEqual({ ok: true, values: {} });
   });
 });
 

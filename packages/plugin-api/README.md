@@ -18,9 +18,14 @@ Examples to read and copy:
 - [`apps/server/plugins/birthdays.ts`](../../apps/server/plugins/birthdays.ts): the second one that ships. A slash command
   with a form, a command whose answer only the caller sees, a job that comes back every day, and how a plugin works out
   the local day without time zones in the sandbox.
-- [`apps/server/plugins/game-news.ts`](../../apps/server/plugins/game-news.ts): the third one, and the one that fetches
+- [`game-news.ts`](https://github.com/danielklessa/squorli-plugins/blob/main/plugins/game-news/game-news.ts) in the repository
+  squorli-plugins (with [its tests](https://github.com/danielklessa/squorli-plugins/blob/main/plugins/game-news/game-news.test.ts)): Squorli's own plugin that fetches
   from the internet (interface version 2, `squorli.net.get`). The hosts in its manifest, one request per event, a round
   that goes on when a source fails, and how text from outside is made harmless before it is posted.
+  Its games are a `list` field of the settings, and its `settings.check` handler looks every new entry up at Steam
+  before the settings are saved: it hands the entry back as "Name (number)" or refuses the field with a sentence.
+  Every post is a card (`messages.send` with `{ card }`). It does not ship with the server: owners install its signed
+  file from the catalogue in Verwaltung > Plugins.
 
 ## The network needs Squorli's signature
 

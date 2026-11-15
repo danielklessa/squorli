@@ -22,7 +22,7 @@ export type HostFunction = (typeof HOST_FUNCTIONS)[number];
 
 /** The events a plugin can listen to with `squorli.on`. */
 export const PLUGIN_EVENTS = [
-  "enable", "disable", "settings.change",
+  "enable", "disable", "settings.check", "settings.change",
   "member.join", "member.leave", "member.roles", "role.delete",
   "message.create", "message.update", "message.delete",
   "command", "memberAction", "view", "job",
@@ -77,7 +77,7 @@ export function preludeSource(apiVersion: number): string {
     channels: Object.freeze({ list: function () { return call("channels.list"); } }),
     messages: Object.freeze({
       history: function (channelId, options) { return call("messages.history", { channelId: channelId, before: options && options.before, limit: options && options.limit }); },
-      send: function (channelId, content) { return call("messages.send", { channelId: channelId, content: content }); },
+      send: function (channelId, content, options) { return call("messages.send", { channelId: channelId, content: content, card: options ? options.card : undefined }); },
       edit: function (messageId, content) { return call("messages.edit", { messageId: messageId, content: content }); },
       delete: function (messageId) { return call("messages.delete", { messageId: messageId }); }
     }),

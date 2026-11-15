@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Message, PLUGIN_NETWORK_HOSTS_MAX, PLUGIN_SOURCE_MAX_BYTES, parsePluginDate, PluginInstallRequest, PluginManifest, PluginSurface, PluginsResponse, ServerEvent, ServerState, cleanPluginText, pluginText } from "./index";
+import { Message, PLUGIN_LIST_ITEMS_MAX, PLUGIN_NETWORK_HOSTS_MAX, PLUGIN_SOURCE_MAX_BYTES, parsePluginDate, PluginInstallRequest, PluginManifest, PluginSurface, PluginsResponse, ServerEvent, ServerState, cleanPluginText, pluginText } from "./index";
 
 const base = { id: "timed-roles", name: "Timed roles", description: "Gives a role for a time.", version: "1.0.0", apiVersion: 1 };
 
@@ -124,6 +124,32 @@ describe("what clients get (lenient)", () => {
     // A kind of a later server is a plain string; a shape this app cannot read costs the mark, never the plugin.
     const later = PluginsResponse.parse({ plugins: [{ ...info, signature: { key: "2030-01", kind: "partner" } }, { ...info, id: "p-two", signature: "yes", blocked: 5 }], available: [], mode: "owner", max: 20 });
     expect(later.plugins.map((p) => [p.id, p.signature?.kind ?? null, p.blocked])).toEqual([["p-one", "partner", null], ["p-two", null, null]]);
+  });
+});
+
+describe("a list field in a manifest (interface version 2)", () => {
+  const list = (over: Record<string, unknown> = {}) => ({ key: "games", type: "list", label: "Games", fields: [{ key: "game", type: "text", label: "Game", required: true }, { key: "show", type: "select", label: "Show", default: "all", options: [{ value: "all", label: "All" }] }], ...over });
+  const withSettings = (field: unknown, apiVersion = 2) => PluginManifest.safeParse({ ...base, apiVersion, settings: [field] });
+
+  it("takes entries of one to four simple fields, in the settings of a version 2 plugin", () => {
+    const m = withSettings(list({ maxItems: 50 }));
+    expect(m.success).toBe(true);
+    expect(m.success && m.data.settings[0]!.fields!.map((f) => [f.key, f.type, f.required])).toEqual([["game", "text", true], ["show", "select", false]]);
+    expect(withSettings(list(), 1).success).toBe(false); // a server from before must say "update the server", not "unknown type"
+  });
+
+  it("refuses a list without fields, with too many, with a field that has a scope, and outside the settings", () => {
+    const item = (key: string, type = "text") => ({ key, type, label: key });
+    for (const bad of [
+      list({ fields: undefined }), list({ fields: [] }), list({ fields: ["a", "b", "c", "d", "e"].map((k) => item(k)) }), list({ fields: [item("a"), item("a")] }),
+      list({ fields: [item("r", "role")] }), list({ fields: [item("c", "channel")] }), list({ fields: [item("d", "date")] }), list({ fields: [item("l", "list")] }),
+      list({ fields: [item("s", "select")] }), list({ fields: [{ ...item("t"), options: [{ value: "x", label: "X" }] }] }), list({ fields: [{ ...item("t"), maxLength: 201 }] }),
+      list({ maxItems: 0 }), list({ maxItems: PLUGIN_LIST_ITEMS_MAX + 1 }), list({ fields: [{ ...item("t"), stray: 1 }] }),
+    ]) expect(withSettings(bad).success, JSON.stringify(bad).slice(0, 120)).toBe(false);
+    expect(withSettings({ key: "t", type: "text", label: "T", fields: [item("a")] }).success).toBe(false);
+    expect(withSettings({ key: "t", type: "text", label: "T", maxItems: 3 }).success).toBe(false);
+    expect(PluginManifest.safeParse({ ...base, apiVersion: 2, commands: [{ name: "x", description: "X", input: "form", fields: [list()] }] }).success).toBe(false);
+    expect(PluginManifest.safeParse({ ...base, apiVersion: 2, memberActions: [{ id: "x", label: "X", permission: "KICK_MEMBERS", fields: [list()] }] }).success).toBe(false);
   });
 });
 
