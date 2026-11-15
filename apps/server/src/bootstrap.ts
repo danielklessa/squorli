@@ -40,7 +40,8 @@ export async function bootstrap(db: Db, config: Config, log: FastifyBaseLogger) 
   const [mc] = await db.select({ n: count() }).from(members);
   if ((mc?.n ?? 0) === 0) {
     const banned = (await db.select({ userId: bans.userId }).from(bans)).map((b) => b.userId);
-    const existing = await db.select({ id: users.id }).from(users).where(banned.length ? notInArray(users.id, banned) : undefined);
+    // Never a plugin's own user (the author of its messages, docs/features/plugins.md): it is no member, here neither.
+    const existing = (await db.select({ id: users.id, publicKey: users.publicKey }).from(users).where(banned.length ? notInArray(users.id, banned) : undefined)).filter((u) => !u.publicKey.startsWith("plugin:"));
     if (existing.length) {
       await db.insert(members).values(existing.map((u) => ({ userId: u.id }))).onConflictDoNothing();
       log.info({ n: existing.length }, "bestehende Nutzer als Mitglieder uebernommen");

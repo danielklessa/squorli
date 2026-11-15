@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db";
-import { attachments, bans, serverSettings, users } from "../db/schema";
+import { attachments, bans, members, serverSettings, users } from "../db/schema";
+import { serverEvents } from "../events";
 import type { Hub } from "../hub";
 import type { LivekitAdmin } from "../livekit/admin";
 import { SETTINGS_ID, broadcastStructure } from "../state";
@@ -35,6 +36,7 @@ export async function deleteUserAccount(
   if (ok === "not_pending") return "not_pending";
   if (!u) return "not_found";
   const files = await db.select({ id: attachments.id }).from(attachments).where(eq(attachments.uploaderId, u.id));
+  const [wasMember] = await db.select({ userId: members.userId }).from(members).where(eq(members.userId, u.id)).limit(1);
   // A ban outlives the account (security audit, 2 October 2026, S5): it hung on the users row and went with its cascade, so a
   // banned directory account asked for its deletion and came back with the next invite. The row goes with everything of the
   // person's; a bare row with only the key (no name, no membership) carries the ban on, which is all the sign-in asks.
@@ -47,6 +49,7 @@ export async function deleteUserAccount(
     }
   });
   await app.removeAttachmentFiles(files.map((f) => f.id));
+  if (wasMember) serverEvents.emit("member.leave", { userId: u.id, reason: "deleted" }, { kind: "user", userId: u.id });
   // Voice is a connection of its own (LiveKit): the client hangs up when its socket goes, the server makes sure (security
   // audit, 2 October 2026, S4), as the suspension does.
   const channelId = presence.channelOfUser(u.id);

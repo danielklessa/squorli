@@ -55,6 +55,31 @@ export function reactionRuleErrorText(err: unknown): string {
   return explain(err, { forbidden: "rr.err.forbidden", cannot_grant: "rr.err.cannot_grant", role_above_you: "rr.err.role_above_you", default_role: "rr.err.default_role", unknown_role: "rr.err.unknown_role", too_many_reactions: "chat.reactionsFull", not_found: "chat.reactionGone" }, "rr.err.generic");
 }
 
+/**
+ * A refusal of the plugin routes (apps/server/src/routes/plugins.ts; docs/features/plugins.md): Verwaltung > Plugins, a
+ * member action, a slash command. `detail` is the server's own `message` where it sends one (English and technical: the
+ * parser's line for code that does not compile, the manifest's fault); it is shown below the sentence, never instead of it.
+ */
+const pluginKeys: Record<string, Key> = {
+  plugins_operator_only: "plugin.err.plugins_operator_only", plugin_no_manifest: "plugin.err.plugin_no_manifest", plugin_bad_manifest: "plugin.err.plugin_bad_manifest",
+  plugin_bad_code: "plugin.err.plugin_bad_code", plugin_bad_file_name: "plugin.err.plugin_bad_file_name", plugin_too_large: "plugin.err.plugin_too_large",
+  plugin_api_too_new: "plugin.err.plugin_api_too_new", plugin_api_too_old: "plugin.err.plugin_api_too_old", too_many_plugins: "plugin.err.too_many_plugins",
+  capabilities_changed: "plugin.err.capabilities_changed", plugin_incompatible: "plugin.err.plugin_incompatible", plugin_unavailable: "plugin.err.plugin_unavailable",
+  plugin_failed: "plugin.err.plugin_failed", plugin_timeout: "plugin.err.plugin_timeout", unknown_plugin: "plugin.err.unknown_plugin", unknown_action: "plugin.err.unknown_action",
+  unknown_command: "plugin.err.unknown_command", unknown_view: "plugin.err.unknown_view", invalid_values: "plugin.err.invalid_values", owner_only: "plugin.err.owner_only",
+  forbidden: "plugin.err.forbidden", target_above_you: "plugin.err.target_above_you", self: "plugin.err.self", not_found: "plugin.err.not_found",
+  unknown_channel: "voice.joinErr.gone", rate_limited: "err.rateLimited", bad_request: "plugin.err.bad_request",
+};
+export type PluginProblem = { text: string; detail: string | null };
+export function pluginProblem(err: unknown): PluginProblem {
+  if (!(err instanceof ApiError)) return { text: explain(err, pluginKeys, "plugin.err.generic"), detail: null };
+  const detail = typeof err.body.message === "string" && err.body.message.trim() ? err.body.message.trim().slice(0, 600) : null;
+  // The name of the command that is taken comes with the refusal.
+  if (err.code === "command_taken") return { text: t("plugin.err.command_taken", { command: typeof err.body.command === "string" ? err.body.command : "?" }), detail };
+  return { text: explain(err, pluginKeys, "plugin.err.generic"), detail };
+}
+export const pluginErrorText = (err: unknown): string => pluginProblem(err).text;
+
 function explain(err: unknown, keys: Record<string, Key>, generic: Key): string {
   if (!(err instanceof ApiError)) return err instanceof Error ? err.message : String(err);
   const key = err.code ? keys[err.code] : undefined;

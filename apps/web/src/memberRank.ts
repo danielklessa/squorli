@@ -39,6 +39,16 @@ export function canSetRolesOf(me: Pick<Member, "userId" | "roleIds" | "isOwner">
   return me.isOwner || topPositionOf(me, roles) > topPositionOf(target, roles);
 }
 
+/**
+ * May `me` act on `target` (the server's `outranks`, the rule behind kick and ban)? Nobody acts on themselves or on an owner;
+ * otherwise an owner, or someone whose highest role stands above the target's. A plugin's member action with the target rule
+ * "manageable" is offered by it (pluginFields.ts).
+ */
+export function outranks(me: Pick<Member, "userId" | "roleIds" | "isOwner">, target: Pick<Member, "userId" | "roleIds" | "isOwner">, roles: readonly Role[]): boolean {
+  if (me.userId === target.userId || target.isOwner) return false;
+  return me.isOwner || topPositionOf(me, roles) > topPositionOf(target, roles);
+}
+
 /** The server-wide permissions of a member from their roles, the default role included (the server's `actorOf`). */
 export function permissionsOf(m: Pick<Member, "roleIds" | "isOwner">, roles: readonly Role[]): number {
   if (m.isOwner) return Permission.ADMINISTRATOR;

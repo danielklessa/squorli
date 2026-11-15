@@ -1,6 +1,6 @@
 import { bigint, bigserial, boolean, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import type { BackupParams, LinkPreview, ReportSnapshot } from "@squorli/protocol";
+import type { BackupParams, LinkPreview, MessagePlugin, PluginManifest, ReportSnapshot } from "@squorli/protocol";
 
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
@@ -320,6 +320,11 @@ export const messages = pgTable(
     previews: jsonb("previews").$type<(LinkPreview & { removed?: boolean })[]>(),
     /** A notice (docs/features/notices.md): shown without its author. Set with MANAGE_NOTICES in the channel. */
     notice: boolean("notice").notNull().default(false),
+    /**
+     * Written by a plugin (docs/features/plugins.md): which one, under which name at that time, and who caused it. The
+     * author is then the plugin's own `users` row (`plugins.user_id`), which is never a member. null = a member's message.
+     */
+    plugin: jsonb("plugin").$type<MessagePlugin>(),
     createdAt: ts("created_at").notNull().defaultNow(),
     editedAt: ts("edited_at"),
   },
@@ -455,4 +460,93 @@ export const reactionRoles = pgTable(
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => ({ uq: uniqueIndex("reaction_roles_message_emoji_uq").on(t.messageId, t.emojiKey), byRole: index("reaction_roles_role_idx").on(t.roleId) }),
+);
+
+/**
+ * What a plugin may touch (docs/features/plugins.md): the roles and channels an admin picked in its settings. A role is kept
+ * with its permission mask at the moment of saving; a role that gained permissions since is refused until the settings are
+ * saved again (so nobody widens a plugin's reach by editing a role it names).
+ */
+export type PluginScope = { roles: Record<string, number>; channels: string[] };
+
+/**
+ * Plugins the server runs itself (docs/features/plugins.md, 15 November 2026). The file and everything a plugin keeps live
+ * in the database, so the backup holds them and a read-only container needs no place to write. `source` = the file as it
+ * was uploaded (JavaScript or TypeScript), `code` = the JavaScript that runs (the same text for a `.js` file, the source
+ * without its types for a `.ts` file). `state`: ok, suspended (too many failures; only enabling again lifts it) or
+ * needs_approval (an update asks for more capabilities than were granted). `user_id` = the `users` row that authors the
+ * plugin's messages; it is never a member and stays when the plugin goes, because the messages hang on it.
+ */
+export const plugins = pgTable("plugins", {
+  id: text("id").primaryKey(),
+  manifest: jsonb("manifest").$type<PluginManifest>().notNull(),
+  source: text("source").notNull(),
+  code: text("code").notNull(),
+  language: text("language").notNull(),
+  sourceHash: text("source_hash").notNull(),
+  enabled: boolean("enabled").notNull().default(false),
+  state: text("state").notNull().default("ok"),
+  granted: jsonb("granted").$type<string[]>().notNull().default([]),
+  settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
+  scope: jsonb("scope").$type<PluginScope>().notNull().default({ roles: {}, channels: [] }),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+  lastError: text("last_error"),
+  lastErrorAt: ts("last_error_at"),
+  installedBy: uuid("installed_by").references(() => users.id, { onDelete: "set null" }),
+  installedByName: text("installed_by_name"),
+  /** upload (Verwaltung), cli (`squorli plugin add`) or bundled (one that ships with the server). */
+  installedVia: text("installed_via").notNull(),
+  installedAt: ts("installed_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** A plugin's own storage: small JSON values under keys, against `PLUGIN_STORAGE_MB` (`bytes` = the value's size as stored). */
+export const pluginStorage = pgTable(
+  "plugin_storage",
+  {
+    pluginId: text("plugin_id").notNull().references(() => plugins.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: jsonb("value").$type<unknown>().notNull(),
+    bytes: integer("bytes").notNull(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({ pk: primaryKey({ columns: [t.pluginId, t.key] }) }),
+);
+
+/**
+ * A plugin's schedules: "call me at this time with this payload". They survive a restart; a job that is due while the
+ * server is down runs once after the start. `key` lets a plugin replace or cancel a job it named (unique per plugin when
+ * set). `claimed_at` = handed to the plugin and not finished yet; cleared at every start (single node).
+ */
+export const pluginJobs = pgTable(
+  "plugin_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    pluginId: text("plugin_id").notNull().references(() => plugins.id, { onDelete: "cascade" }),
+    key: text("key"),
+    name: text("name").notNull(),
+    payload: jsonb("payload").$type<unknown>(),
+    dueAt: ts("due_at").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    claimedAt: ts("claimed_at"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => ({ byDue: index("plugin_jobs_due_idx").on(t.dueAt), uq: uniqueIndex("plugin_jobs_plugin_key_uq").on(t.pluginId, t.key) }),
+);
+
+/**
+ * A plugin's log: what it wrote itself (`source` plugin) and what the server noted about it (`source` host: started,
+ * failed, a role given or taken, a refused call). The newest 2,000 lines and 30 days per plugin are kept.
+ */
+export const pluginLog = pgTable(
+  "plugin_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    pluginId: text("plugin_id").notNull().references(() => plugins.id, { onDelete: "cascade" }),
+    at: ts("at").notNull().defaultNow(),
+    level: text("level").notNull(),
+    source: text("source").notNull(),
+    message: text("message").notNull(),
+  },
+  (t) => ({ byPlugin: index("plugin_log_plugin_id_idx").on(t.pluginId, t.id) }),
 );

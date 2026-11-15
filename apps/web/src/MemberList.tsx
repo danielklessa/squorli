@@ -1,5 +1,5 @@
 import { Avatar } from "./Avatar";
-import { Permission, handleLabel, hasPermission, type Channel, type Member, type Role, type VoiceMember } from "@squorli/protocol";
+import { Permission, handleLabel, hasPermission, pluginText, type Channel, type Member, type PluginMemberAction, type PluginSurface, type Role, type VoiceMember } from "@squorli/protocol";
 import { useState, type MouseEvent, type ReactNode } from "react";
 import { ContextMenu, ContextSubmenu, type MenuAnchor } from "./ContextMenu";
 import type { ServerApi } from "./api";
@@ -8,13 +8,15 @@ import { askConfirm, askInput } from "./dialogs";
 import { Icon } from "./Icon";
 import { GameAudienceMenuItem } from "./GameAudienceMenuItem";
 import { GameLine } from "./GameLine";
-import { t } from "./i18n";
+import { locale, t } from "./i18n";
 import { assignableRoles, canSetRolesOf, rolesByRank, topRoleOf } from "./memberRank";
 import { VoiceMemberActions } from "./VoiceMemberActions";
 import { MemberProfile, type ProfileFriends } from "./MemberProfile";
 import { ReportDialog, type ReportTarget } from "./ReportDialog";
 import { askDeleteRecentHours } from "./ReportsTab";
 import { platform } from "./platform";
+import { PluginFormDialog } from "./PluginFormDialog";
+import { usableMemberActions } from "./pluginFields";
 
 type Props = {
   api: ServerApi;
@@ -39,11 +41,15 @@ type Props = {
   onVoteKick: (userId: string, channelId: string) => void;
   /** The running vote's box, at the top of this list (user's wish, 23 September 2026); null = none right now. */
   voteKickBox: ReactNode;
+  /** What the enabled plugins add (docs/features/plugins.md): their member actions in the menu's "Server" section; undefined = a server without plugins. */
+  plugins?: PluginSurface | undefined;
 };
 
 /** Right column: owners at the very top, then members grouped by highest role, online first. Context actions depending on permissions. */
-export function MemberList({ api, members, roles, myUserId, myPermissions, ownerId, channelPermissions, voice, channels, friends, blocked = null, onClose = null, voteKickAllowed, onVoteKick, voteKickBox, canReport = false, serverName = "", onReportAccount = null }: Props) {
+export function MemberList({ api, members, roles, myUserId, myPermissions, ownerId, channelPermissions, voice, channels, friends, blocked = null, onClose = null, voteKickAllowed, onVoteKick, voteKickBox, canReport = false, serverName = "", onReportAccount = null, plugins }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
+  /** A plugin's member action whose dialog is open, and the member it is about. */
+  const [pluginAction, setPluginAction] = useState<{ action: PluginMemberAction; userId: string; name: string } | null>(null);
   const [open, setOpen] = useState<({ userId: string } & MenuAnchor) | null>(null);
   const openMenu = (event: MouseEvent<HTMLButtonElement>, userId: string) => {
     event.preventDefault();
@@ -172,7 +178,10 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
               const canOwnerOf = iAmOwner && !isMe && (!m.isOwner || m.userId !== ownerId);
               const canRemove = !isMe && !m.isOwner && (canKick || canBan);
               const canReportThis = canReport && !isMe;
-              return (canRolesOf || ownRoles || canOwnerOf || canRemove || canReportThis) && (
+              // What plugins add for this member (pluginFields.ts): only with the permission each names and where its target
+              // rule fits; a permission or rule this app does not know hides the entry. The server checks again.
+              const pluginActions = usableMemberActions(plugins, myPermissions, meMember, m, roles);
+              return (canRolesOf || ownRoles || canOwnerOf || canRemove || canReportThis || pluginActions.length > 0) && (
                 <div className="stack server-actions">
                   <span className="muted small menu-section-title" title={t("members.serverActionsHint")}><Icon name="server" /> {t("members.serverActions")}</span>
                   {canRolesOf && (
@@ -197,6 +206,9 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
                       <span className="muted small menu-note">{t("members.ownRolesHint")}</span>
                     </ContextSubmenu>
                   )}
+                  {pluginActions.map((a) => (
+                    <button key={`${a.plugin}:${a.id}`} role="menuitem" className="secondary small" title={t("plugin.chrome", { name: pluginText(a.pluginName, locale) })} onClick={() => { closeMenu(); setErr(null); setPluginAction({ action: a, userId: m.userId, name: m.displayName }); }}><Icon name="puzzle" /> {pluginText(a.label, locale)}</button>
+                  ))}
                   {canOwnerOf && <button role="menuitem" className="secondary small" onClick={() => run(async () => {
                     const ok = await askConfirm(m.isOwner
                       ? { title: t("members.revokeOwnerTitle", { name: m.displayName }), text: t("members.revokeOwnerText"), confirmLabel: t("members.revoke"), danger: true }
@@ -214,6 +226,10 @@ export function MemberList({ api, members, roles, myUserId, myPermissions, owner
           </ContextMenu>
         );
       })()}
+      {pluginAction && <PluginFormDialog pluginName={pluginAction.action.pluginName} title={pluginText(pluginAction.action.label, locale).replace(/\s*(…|\.\.\.)$/, "")}
+        intro={<p className="muted small">{t("plugin.actionFor", { name: pluginAction.name })}</p>} fields={pluginAction.action.fields} submitLabel={pluginAction.action.submitLabel}
+        context={{ roles, channels, members, me: meMember }} onClose={() => setPluginAction(null)}
+        onSubmit={(values) => api.pluginMemberAction(pluginAction.action.plugin, pluginAction.action.id, pluginAction.userId, values)} />}
       {reportTarget && <ReportDialog target={reportTarget} onClose={() => setReportTarget(null)}
         server={{ api, name: serverName, block: (() => { const x = blocked && reportTarget.kind === "member" ? members.find((y) => y.userId === reportTarget.userId) : null; return x && blocked && !blocked.has(x.publicKey) ? { name: x.displayName, onBlock: () => blocked.onBlock(x.publicKey, x.displayName, !!x.handle) } : null; })() }} />}
     </aside>

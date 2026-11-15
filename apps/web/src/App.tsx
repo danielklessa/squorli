@@ -896,6 +896,7 @@ export function App() {
             typing={view.active.typing[current.id] ?? {}} conn={view.conn}
             canReport={view.server.openReports !== undefined} serverName={view.server.settings.name} blocked={blockControlsFor(view.active.host)}
             canReactionRoles={view.server.reactions === true && hasPermission(view.server.myPermissions, Permission.MANAGE_ROLES)} roles={view.server.roles}
+            plugins={view.server.plugins} channels={view.server.channels}
             passOn={mayReport("server", view.active.host) && directoryHost ? { store, host: directoryHost, serverHost: view.active.host === state.homeHost ? homeDirHost : view.active.serverDomain ?? view.active.host } : null}
           />
         ) : (
@@ -928,7 +929,7 @@ export function App() {
       {voteKick && votePerson && voteKick.canVote && voteAsked !== voteKick.vote.id && <VoteKickModal state={voteKick} person={votePerson} onVote={castVote} onClose={() => setVoteAsked(voteKick.vote.id)} />}
       {!homeOpen && view && <MemberList api={view.conn.api} members={view.server.members} roles={view.server.roles} myUserId={view.active.userId!} myPermissions={view.server.myPermissions} channelPermissions={view.server.myChannelPermissions} ownerId={view.server.settings.ownerId} canReport={view.server.openReports !== undefined} serverName={view.server.settings.name}
         voice={view.active.voice} channels={view.server.channels} friends={state.serverAccounts[view.active.host] ? null : friendsMenu} blocked={blockControlsFor(view.active.host)} onClose={mobile ? () => setMobileMembers(false) : null}
-        onReportAccount={reportAccount(view.active.host)}
+        onReportAccount={reportAccount(view.active.host)} plugins={view.server.plugins}
         voteKickAllowed={view.active.voteKickAllowed} onVoteKick={(userId, channelId) => startVoteKick(view.active.host, channelId, userId)}
         voteKickBox={voiceHost === activeHost ? <VoteKickPanel state={voteKick} result={voteKickResult} person={votePerson} onVote={castVote} /> : null} />}
 

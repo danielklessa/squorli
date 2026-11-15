@@ -7,6 +7,7 @@ import type { Config } from "../config";
 import { membersFull, type StorageMeter } from "../limits";
 import type { Db } from "../db";
 import { bans, invites, localAccounts, memberRoles, members, roles, serverSettings, sessions, users } from "../db/schema";
+import { serverEvents } from "../events";
 import type { Hub } from "../hub";
 import { SETTINGS_ID, broadcastStructure, loadSettings, refusesSuspended } from "../state";
 import { refusedUntil, suspendedBody } from "../users/suspension";
@@ -102,8 +103,10 @@ export async function admit(
       const used = await consumeInvite(db, invite);
       if (!used) { await reply.code(403).send({ error: "invite_invalid" }); return null; }
     }
-    await db.insert(members).values({ userId: user.id }).onConflictDoNothing();
+    const joined = await db.insert(members).values({ userId: user.id }).onConflictDoNothing().returning({ userId: members.userId });
     req.log.info({ userId: user.id, via: invite ? "invite" : firstEver ? "owner" : "open" }, "neues Mitglied");
+    // Told to whoever listens inside the process (events.ts), only for a row that is new: two sign-ins at once make one member.
+    if (joined.length) serverEvents.emit("member.join", { userId: user.id }, { kind: "user", userId: user.id });
     // Now a member: the directory may list this server for the account.
     void directory.refresh(user, true, proof);
   }

@@ -6,6 +6,7 @@ import { requireMember } from "../auth/session";
 import { canIn, channelActor, resolveChannel } from "../channelGuard";
 import type { Db } from "../db";
 import { attachments, channels, messages } from "../db/schema";
+import { serverEvents } from "../events";
 import type { Hub } from "../hub";
 import { visiblePreviews, type LinkPreviews } from "../previews/service";
 import { recordModLog, userNameOf } from "../modLog";
@@ -39,7 +40,9 @@ export async function loadMessages(db: Db, rows: (typeof messages.$inferSelect)[
   return rows.map((r) => ({
     id: r.id, seq: r.seq, channelId: r.channelId, authorId: r.authorId, content: r.content,
     attachments: byMsg.get(r.id) ?? [], ...(withPreviews ? { previews: visiblePreviews(r.previews) } : {}),
-    reactions: reactions.get(r.id) ?? [], notice: r.notice,
+    // A plugin's message goes out as a notice too: a client from before plugins then shows a line without an author
+    // instead of a former member (the author is the plugin's own user, who is no member; docs/features/plugins.md).
+    reactions: reactions.get(r.id) ?? [], notice: r.notice || r.plugin !== null, ...(r.plugin ? { plugin: r.plugin } : {}),
     createdAt: r.createdAt.toISOString(), editedAt: r.editedAt?.toISOString() ?? null,
   }));
 }
@@ -92,6 +95,7 @@ export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: H
     if (attIds.length) await db.update(attachments).set({ messageId: row!.id }).where(inArray(attachments.id, attIds));
     const [msg] = await load([row!]);
     hub.broadcastToChannel(ch.id, { type: "message.create", message: msg! });
+    serverEvents.emit("message.create", { message: msg! }, { kind: "user", userId: m.userId });
     // The links are looked up afterwards; the previews follow as a `message.update`.
     previews.schedule(row!.id);
     return msg;
@@ -108,6 +112,7 @@ export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: H
     const [updated] = await db.update(messages).set({ content: body.data.content, editedAt: new Date() }).where(eq(messages.id, row.id)).returning();
     const [msg] = await load([updated!]);
     hub.broadcastToChannel(row.channelId, { type: "message.update", message: msg! });
+    serverEvents.emit("message.update", { message: msg! }, { kind: "user", userId: m.userId });
     previews.schedule(row.id);
     return msg;
   });
@@ -125,7 +130,8 @@ export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: H
     const r = row ? await resolveChannel(db, m.userId, row.channelId) : null;
     if (!row || !r) return reply.code(404).send({ error: "not_found" });
     if (!canIn(r.perms, Permission.MANAGE_NOTICES)) return reply.code(403).send({ error: "forbidden" });
-    if (row.notice === body.data.notice) return (await load([row]))[0];
+    // A plugin's message is always sent as a notice (loadMessages); a client from before plugins offers the switch, which changes nothing.
+    if (row.notice === body.data.notice || row.plugin !== null) return (await load([row]))[0];
     const [updated] = await db.update(messages).set({ notice: body.data.notice }).where(eq(messages.id, row.id)).returning();
     const [msg] = await load([updated!]);
     hub.broadcastToChannel(row.channelId, { type: "message.update", message: msg! });
@@ -156,6 +162,7 @@ export async function registerMessageRoutes(app: FastifyInstance, db: Db, hub: H
     await db.delete(messages).where(eq(messages.id, row.id)); // Attachments cascade in the DB
     await app.removeAttachmentFiles(files.map((f) => f.id));
     hub.broadcastToChannel(row.channelId, { type: "message.delete", channelId: row.channelId, id: row.id });
+    serverEvents.emit("message.delete", { channelId: row.channelId, messageIds: [row.id] }, { kind: "user", userId: m.userId });
     // Somebody else's message: a moderation action, into the log (docs/features/reports.md); one's own is nobody's business.
     if (row.authorId !== m.userId) await recordModLog(db, { actorId: m.userId, actorName: displayNameOf(m), targetUserId: row.authorId, targetName: await userNameOf(db, row.authorId), action: "message_delete", channelId: row.channelId, channelName: r.channel.name, detail: { attachments: files.length } }, req.log);
     return { ok: true };

@@ -316,6 +316,13 @@
       "when": 1791309461744,
       "tag": "0044_add_notices_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794745317343,
+      "tag": "0045_oval_secret_warriors",
+      "breakpoints": true
     }
   ]
 }

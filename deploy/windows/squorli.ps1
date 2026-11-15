@@ -20,6 +20,13 @@
     squorli nodeip [check|on|off]      the public address for voice and video when it changes (a home connection): check
                                        finds and applies it, on [minutes] = a task that does so every 1 to 60 minutes
     squorli doctor                     the setup check (docs/features/doctor.md)
+    squorli plugin list                the plugins the server runs itself (docs/features/plugins.md): the installed
+                                       ones and those that ship with the server
+    squorli plugin add <file> [-Yes]   installs or updates one from a .js or .ts file, shows what it may do and asks
+                                       whether to switch it on; add -Bundled <id> takes one that ships with the server
+    squorli plugin enable|disable <id> switches one on (after showing what it may do; -Yes answers) or off
+    squorli plugin remove <id> [-DeleteMessages] [-Yes]   removes one; the roles it gave stay
+    squorli plugin log <id>            the last 100 entries of its log
 
   Services: server, postgres, livekit, caddy ("app" means server).
   Details: deploy/windows/AGENTS.md, docs/features/windows.md.
@@ -41,6 +48,10 @@ param(
   [switch]$Auto,
   # autoupdate on: the hours between two runs, 1 to 24.
   [int]$Hours = 0,
+  # plugin add: the word after it is the id of a plugin that ships with the server, not a file.
+  [switch]$Bundled,
+  # plugin remove: the messages the plugin wrote go too.
+  [switch]$DeleteMessages,
   # Only for an installation whose data folder cannot be read from its service file.
   [string]$DataDir = '',
   [Alias('h')][switch]$Help,
@@ -1378,8 +1389,288 @@ function Invoke-Doctor {
   if ($failed) { exit 1 }
 }
 
+# ---- Plugins the server runs itself (docs/features/plugins.md): squorli plugin list | add | enable | disable | remove |
+# log, the same command with the same texts as in the helper deploy/install.sh writes. The operator's routes
+# (/api/operator/plugins) take no session but the machine's token in the header x-squorli-operator: DOCTOR_TOKEN of .env,
+# which the setup makes; without one the value the server writes into its data folder at every start (operator-token).
+
+# One request with a JSON body, for every method (Get-Web is GET only). The answer's text comes back for a status that is
+# no success too: Windows PowerShell 5.1 leaves it in the response's stream, which the cmdlet has read to its end
+# already; PowerShell 7 has it in the error's details. The body goes out as bytes: 5.1 would send a text as Latin-1.
+function Invoke-Api([string]$method, [string]$url, [hashtable]$headers = @{}, [string]$json = '', [int]$timeout = 60) {
+  $call = @{ Uri = $url; Method = $method; Headers = $headers; UseBasicParsing = $true; TimeoutSec = $timeout }
+  if ($json) { $call.Body = $Utf8.GetBytes($json); $call.ContentType = 'application/json; charset=utf-8' }
+  try {
+    $r = Invoke-WebRequest @call
+    return @{ Status = [int]$r.StatusCode; Text = $Utf8.GetString($r.RawContentStream.ToArray()); Error = '' }
+  } catch {
+    $response = $null
+    if ($_.Exception.PSObject.Properties['Response']) { $response = $_.Exception.Response }
+    if ($null -eq $response) { return @{ Status = 0; Text = ''; Error = $_.Exception.Message } }
+    $text = ''
+    if ($response -is [Net.HttpWebResponse]) {
+      try {
+        $stream = $response.GetResponseStream()
+        if ($stream.CanSeek) { $stream.Position = 0 }
+        $reader = New-Object IO.StreamReader ($stream, $Utf8)
+        $text = $reader.ReadToEnd()
+      } catch { $text = '' }
+    } elseif ($_.ErrorDetails -and $_.ErrorDetails.Message) { $text = "$($_.ErrorDetails.Message)" }
+    return @{ Status = [int]$response.StatusCode; Text = $text; Error = "HTTP $([int]$response.StatusCode)" }
+  }
+}
+# A text as a JSON string. Written here because the source of a plugin goes through it: ConvertTo-Json of Windows
+# PowerShell 5.1 and of PowerShell 7 escape differently, and neither is made for a quarter of a megabyte.
+function ConvertTo-JsonText([string]$text) {
+  $escaped = [regex]::Replace($text, '[\x00-\x1f"\\]', [Text.RegularExpressions.MatchEvaluator] { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+  return '"' + $escaped + '"'
+}
+# A property of an answer, nothing when it has none (under Set-StrictMode a missing one stops the script).
+function Get-Prop($object, [string]$name) {
+  if ($null -eq $object) { return $null }
+  $property = $object.PSObject.Properties[$name]
+  if ($null -eq $property) { return $null }
+  return $property.Value
+}
+function Get-List($object, [string]$name) { return @(@(Get-Prop $object $name) | Where-Object { $null -ne $_ }) }
+# What a plugin wrote itself (names, log lines) is printed without control characters.
+function Remove-Control([string]$text) { return ([regex]::Replace("$text", '[\x00-\x1f\x7f-\x9f]+', ' ')).Trim() }
+# A text of a plugin or of the server in the command's language: { en, de? }, English when there is no German.
+function Get-PluginText($text) {
+  $value = ''
+  if ($S.Lang -eq 'de') { $value = "$(Get-Prop $text 'de')" }
+  if (-not $value) { $value = "$(Get-Prop $text 'en')" }
+  return (Remove-Control $value)
+}
+function Stop-Plugin([string]$text) { Write-Host "x $text" -ForegroundColor Red; exit 1 }
+# An answer that is no success: the server's code, its message when it has one, and what to do about the usual ones.
+function Stop-PluginError([int]$status, $data) {
+  $code = "$(Get-Prop $data 'error')"
+  if ($code) { $code = Remove-Control $code } else { $code = "HTTP $status" }
+  if ($status -eq 404 -and $code -eq 'not_found') {
+    Stop-Plugin (T 'Plugins sind auf diesem Server abgeschaltet (PLUGINS=off in der .env), oder der Server ist älter als die Plugin-Schnittstelle.' 'Plugins are switched off on this server (PLUGINS=off in .env), or the server is older than the plugin interface.')
+  }
+  $hints = @{
+    unknown_plugin = (T 'ein Plugin mit dieser Kennung gibt es hier nicht: squorli plugin list' 'there is no plugin with this id here: squorli plugin list')
+    forbidden = (T 'der App-Server nimmt das Token dieses Rechners nicht an: squorli restart server' 'the app server does not accept the token of this machine: squorli restart server')
+    rate_limited = (T 'zu viele Aufrufe: in einer Minute noch einmal' 'too many calls: try again in a minute')
+    bad_request = (T 'eine Plugin-Datei darf nicht leer und höchstens 256 KB groß sein' 'a plugin file must not be empty and may have 256 KB at most')
+  }
+  $line = $code
+  $message = Get-Prop $data 'message'
+  if ($message -is [string]) { $line += ": $(Remove-Control $message)" }
+  if ($hints.ContainsKey($code)) { $line += "  ($($hints[$code]))" }
+  Stop-Plugin $line
+}
+function Invoke-PluginApi([string]$method, [string]$path, [string]$json = '') {
+  $headers = @{}
+  $token = Env-Get 'DOCTOR_TOKEN'
+  if (-not $token) { try { $token = [IO.File]::ReadAllText((Join-Path $S.Data 'operator-token'), $Utf8).Trim() } catch { $token = '' } }
+  if ($token) { $headers['x-squorli-operator'] = $token }
+  $r = Invoke-Api $method "http://$($S.Host):$($S.AppPort)/api/operator/plugins$path" $headers $json
+  if ($r.Status -eq 0) { Stop-Plugin "$(T 'Der App-Server antwortet nicht' 'The app server does not answer') ($(Remove-Control $r.Error)): squorli logs server" }
+  $data = $null
+  if ($r.Text) { try { $data = $r.Text | ConvertFrom-Json } catch { $data = $null } }
+  if ($r.Status -lt 200 -or $r.Status -ge 300) { Stop-PluginError $r.Status $data }
+  return $data
+}
+function Get-PluginState([string]$state) {
+  switch ($state) {
+    'disabled' { return (T 'aus' 'off') }
+    'running' { return (T 'läuft' 'running') }
+    'suspended' { return (T 'angehalten nach Fehlern' 'suspended after failures') }
+    'incompatible' { return (T 'nicht kompatibel' 'not compatible') }
+    'needs_approval' { return (T 'wartet auf Bestätigung' 'waiting for confirmation') }
+  }
+  return (Remove-Control $state)
+}
+function Get-PluginHead($plugin) { return "$(Get-PluginText (Get-Prop $plugin 'name')) ($(Remove-Control (Get-Prop $plugin 'id'))) $(Remove-Control (Get-Prop $plugin 'version'))" }
+function Get-PluginLine($plugin) { return "$(Get-PluginHead $plugin), $(Get-PluginState (Get-Prop $plugin 'state'))" }
+# The description, the file's hash and what the plugin asks for, in the server's words; a far-reaching capability (risk
+# "high") is marked. The words are the ones Verwaltung > Plugins uses (apps/web/src/i18n, admin.plugins.*).
+function Show-PluginDetails($plugin) {
+  $description = Get-PluginText (Get-Prop $plugin 'description')
+  if ($description) { Write-Host "  $description" }
+  $hash = Remove-Control (Get-Prop $plugin 'sourceHash')
+  if ($hash) { Write-Host "  sha256 $hash" }
+  $list = @(Get-List $plugin 'capabilities')
+  if ($list.Count -eq 0) { Write-Host (T 'Es verlangt keine besonderen Rechte: Es speichert eigene Daten, plant Aufgaben und schreibt in sein Log.' 'It asks for no special rights: it stores data of its own, schedules tasks and writes to its log.'); return }
+  Write-Host (T 'Was das Plugin darf:' 'What the plugin may do:')
+  foreach ($capability in $list) {
+    $high = ("$(Get-Prop $capability 'risk')" -eq 'high')
+    $text = Get-PluginText (Get-Prop $capability 'text')
+    if (-not $text) { $text = Remove-Control (Get-Prop $capability 'id') }
+    if ($high) { $line = "  !  $text$(T '  [weitreichend]' '  [far-reaching]')" } else { $line = "  -  $text" }
+    if ("$(Get-Prop $plugin 'state')" -eq 'needs_approval' -and -not (Get-Prop $capability 'granted')) { $line += (T '  [noch nicht bestätigt]' '  [not confirmed yet]') }
+    if ($high) { Write-Host $line -ForegroundColor Yellow } else { Write-Host $line }
+  }
+}
+function Show-Plugins {
+  $answer = Invoke-PluginApi 'GET' ''
+  $rows = @(Get-List $answer 'plugins')
+  $more = @(Get-List $answer 'available')
+  $width = 12
+  foreach ($plugin in ($rows + $more)) { $width = [Math]::Max($width, (Remove-Control (Get-Prop $plugin 'id')).Length) }
+  if ($rows.Count -eq 0) { Write-Host (T 'Kein Plugin installiert.' 'No plugin installed.') }
+  else {
+    Write-Host ((T 'Installiert ({0} von höchstens {1}):' 'Installed ({0} of at most {1}):') -f $rows.Count, (Remove-Control (Get-Prop $answer 'max')))
+    foreach ($plugin in $rows) {
+      Write-Host ("  {0}  {1}  {2}  {3}" -f (Remove-Control (Get-Prop $plugin 'id')).PadRight($width), (Remove-Control (Get-Prop $plugin 'version')).PadRight(9), (Get-PluginState (Get-Prop $plugin 'state')).PadRight(24), (Get-PluginText (Get-Prop $plugin 'name')))
+    }
+  }
+  if ($more.Count -gt 0) {
+    Write-Host ''
+    Write-Host (T 'Verfügbar (liegt dem Server bei; installieren: squorli plugin add -Bundled <id>):' 'Available (ships with the server; install: squorli plugin add -Bundled <id>):')
+    foreach ($plugin in $more) {
+      $line = "  {0}  {1}  {2}" -f (Remove-Control (Get-Prop $plugin 'id')).PadRight($width), (Remove-Control (Get-Prop $plugin 'version')).PadRight(9), (Get-PluginText (Get-Prop $plugin 'name'))
+      $installed = Remove-Control (Get-Prop $plugin 'installedVersion')
+      if ($installed) { $line += (T '  (installiert: {0})' '  (installed: {0})') -f $installed }
+      Write-Host $line
+    }
+  }
+}
+function Find-Plugin([string]$id) {
+  foreach ($plugin in @(Get-List (Invoke-PluginApi 'GET' '') 'plugins')) { if ("$(Get-Prop $plugin 'id')" -ceq $id) { return $plugin } }
+  Stop-PluginError 404 ([pscustomobject]@{ error = 'unknown_plugin' })
+}
+# Installs what the body names (a file's text, or a plugin that ships with the server) and shows it; the answer comes back.
+function Install-Plugin([string]$json) {
+  $had = @(@(Get-List (Invoke-PluginApi 'GET' '') 'plugins') | ForEach-Object { "$(Get-Prop $_ 'id')" })
+  $plugin = Invoke-PluginApi 'POST' '' $json
+  if ($had -contains "$(Get-Prop $plugin 'id')") { $word = T 'Aktualisiert: ' 'Updated: ' } else { $word = T 'Installiert: ' 'Installed: ' }
+  Write-Host "$word$(Get-PluginHead $plugin)"
+  Show-PluginDetails $plugin
+  return $plugin
+}
+function Enable-Plugin([string]$id) {
+  $plugin = Invoke-PluginApi 'PUT' "/$id/enabled" '{"enabled":true}'
+  Write-Host "$(T 'Eingeschaltet: ' 'Switched on: ')$(Get-PluginLine $plugin)"
+  if (Get-Prop $plugin 'hasSettings') { Write-Host (T 'Seine Einstellungen (auch die Rollen und Kanäle, die es anfassen darf): Verwaltung > Plugins.' 'Its settings (also the roles and channels it may touch): Verwaltung > Plugins.') }
+}
+# A plugin's id as the server takes it; anything else never reaches the server.
+function Assert-PluginId([string]$id) {
+  if ($id -cnotmatch '^[a-z][a-z0-9-]{2,31}$') {
+    Stop-Plugin (T "'$id' ist keine Plugin-Kennung: 3 bis 32 Zeichen aus Kleinbuchstaben, Ziffern und Bindestrichen, zuerst ein Buchstabe." "'$id' is no plugin id: 3 to 32 characters of lowercase letters, digits and hyphens, a letter first.")
+  }
+}
+# Is there a person to ask? Not when the input comes from a file or a pipe (a script, a task).
+function Test-Interactive { try { return ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) } catch { return $false } }
+# yes or ja; anything else is a no.
+function Read-Consent([string]$de, [string]$en) {
+  $answer = "$(Read-Host (T $de $en))".Trim().ToLowerInvariant()
+  return (@('yes', 'ja') -contains $answer)
+}
+function Show-PluginUsage {
+  Write-Host (T 'squorli plugin list                                   die installierten Plugins und die, die dem Server beiliegen' 'squorli plugin list                                   the installed plugins and those that ship with the server')
+  Write-Host (T 'squorli plugin add <Datei.js|Datei.ts> [-Yes]         ein Plugin aus einer Datei dieses Rechners installieren oder aktualisieren; zeigt, was es darf, und fragt, ob es eingeschaltet wird (-Yes: ohne Rückfrage einschalten)' 'squorli plugin add <file.js|file.ts> [-Yes]           install or update a plugin from a file on this machine; shows what it may do and asks whether to switch it on (-Yes: switch it on without asking)')
+  Write-Host (T 'squorli plugin add -Bundled <id> [-Yes]               ein Plugin installieren, das dem Server beiliegt ("Verfügbar" in der Liste)' 'squorli plugin add -Bundled <id> [-Yes]               install a plugin that ships with the server ("Available" in the list)')
+  Write-Host (T 'squorli plugin enable <id> [-Yes]                     einschalten; zeigt vorher, was es darf, und fragt' 'squorli plugin enable <id> [-Yes]                     switch it on; shows what it may do first and asks')
+  Write-Host (T 'squorli plugin disable <id>                           ausschalten' 'squorli plugin disable <id>                           switch it off')
+  Write-Host (T 'squorli plugin remove <id> [-DeleteMessages] [-Yes]   entfernen, mit seinem Speicher, seinen geplanten Aufgaben und seinem Log; Rollen, die es vergeben hat, bleiben, seine Nachrichten auch (außer mit -DeleteMessages)' 'squorli plugin remove <id> [-DeleteMessages] [-Yes]   remove it with its storage, its schedules and its log; roles it gave stay, and so do its messages (unless -DeleteMessages)')
+  Write-Host (T 'squorli plugin log <id>                               die letzten 100 Einträge seines Logs' 'squorli plugin log <id>                               the last 100 entries of its log')
+}
+# Switching a plugin on grants what its manifest asks for, so add and enable print that first and ask; -Yes answers, and
+# where nobody can be asked nothing is switched on or removed unasked.
+function Invoke-Plugin([string[]]$words) {
+  $sub = 'help'
+  if ($words.Count -gt 0) { $sub = $words[0].ToLowerInvariant() }
+  $what = ''
+  if ($words.Count -gt 1) { $what = $words[1] }
+  if (@('help', 'h', '?') -contains $sub) { Show-PluginUsage; return }
+  if ($sub -eq 'list') { $wanted = 1 } else { $wanted = 2 }
+  if (@('list', 'add', 'enable', 'disable', 'remove', 'log') -notcontains $sub -or $words.Count -ne $wanted) { Show-PluginUsage; exit 1 }
+  $askOn = @('Einschalten und ihm das erlauben? Dann ja eingeben', 'Switch it on and allow this? Then type yes')
+  switch ($sub) {
+    'list' { Show-Plugins }
+    'add' {
+      if ($Bundled) {
+        Assert-PluginId $what
+        $plugin = Install-Plugin ('{"bundled":"' + $what + '"}')
+      } else {
+        $source = $null
+        try {
+          $path = Resolve-Place $what
+          # The bytes as they are, a byte order mark included: the hash the server keeps is the file's
+          if (Test-Path -LiteralPath $path -PathType Leaf) { $source = $Utf8.GetString([IO.File]::ReadAllBytes($path)) }
+        } catch { $source = $null }
+        if ($null -eq $source) { Stop-Plugin (T "Die Datei $what gibt es nicht, oder sie ist nicht lesbar." "The file $what does not exist or cannot be read.") }
+        if (-not $source) { Stop-Plugin (T 'Die Datei ist leer.' 'The file is empty.') }
+        $plugin = Install-Plugin ('{"source":' + (ConvertTo-JsonText $source) + ',"fileName":' + (ConvertTo-JsonText ([IO.Path]::GetFileName($path))) + '}')
+      }
+      $id = "$(Get-Prop $plugin 'id')"
+      $state = "$(Get-Prop $plugin 'state')"
+      Assert-PluginId $id
+      # An update of a plugin that runs keeps running, unless the new version asks for more than it was granted
+      if ($state -eq 'running') { Write-Host (T 'Es läuft weiter.' 'It keeps running.'); return }
+      if ($state -eq 'needs_approval') {
+        Write-Host (T 'Die neue Version verlangt mehr als bisher. Das Plugin läuft erst wieder, wenn das bestätigt ist.' 'The new version asks for more than before. The plugin runs again only once that is confirmed.')
+      }
+      if (-not $Yes) {
+        if (-not (Test-Interactive) -or -not (Read-Consent $askOn[0] $askOn[1])) {
+          Write-Host (T "Nicht eingeschaltet. Einschalten: squorli plugin enable $id" "Not switched on. To switch it on: squorli plugin enable $id")
+          return
+        }
+      }
+      Enable-Plugin $id
+    }
+    'enable' {
+      Assert-PluginId $what
+      $plugin = Find-Plugin $what
+      Write-Host (Get-PluginLine $plugin)
+      Show-PluginDetails $plugin
+      if ("$(Get-Prop $plugin 'state')" -eq 'running') { Write-Host (T 'Es läuft bereits.' 'It is running already.'); return }
+      if (-not $Yes) {
+        if (-not (Test-Interactive)) {
+          Stop-Plugin (T "Nicht eingeschaltet: ohne Terminal fragt der Befehl nicht. Mit Zustimmung: squorli plugin enable $what -Yes" "Not switched on: without a terminal the command does not ask. With your consent: squorli plugin enable $what -Yes")
+        }
+        if (-not (Read-Consent $askOn[0] $askOn[1])) { Write-Host (T 'Abgebrochen.' 'Cancelled.'); exit 1 }
+      }
+      Enable-Plugin $what
+    }
+    'disable' {
+      Assert-PluginId $what
+      $plugin = Invoke-PluginApi 'PUT' "/$what/enabled" '{"enabled":false}'
+      Write-Host "$(T 'Ausgeschaltet: ' 'Switched off: ')$(Get-PluginHead $plugin)"
+    }
+    'remove' {
+      Assert-PluginId $what
+      if ($DeleteMessages) { $messages = 'delete'; $option = ' -DeleteMessages' } else { $messages = 'keep'; $option = '' }
+      if (-not $Yes) {
+        Write-Host (Get-PluginLine (Find-Plugin $what))
+        if ($DeleteMessages) {
+          Write-Host (T 'Das entfernt das Plugin mit seinem Speicher, seinen geplanten Aufgaben und seinem Log und löscht seine Nachrichten. Rollen, die es vergeben hat, bleiben vergeben.' 'This removes the plugin with its storage, its schedules and its log and deletes its messages. Roles it gave stay given.')
+        } else {
+          Write-Host (T 'Das entfernt das Plugin mit seinem Speicher, seinen geplanten Aufgaben und seinem Log. Rollen, die es vergeben hat, bleiben vergeben; seine Nachrichten bleiben stehen (-DeleteMessages löscht sie).' 'This removes the plugin with its storage, its schedules and its log. Roles it gave stay given; its messages stay (-DeleteMessages deletes them).')
+        }
+        if (-not (Test-Interactive)) {
+          Stop-Plugin (T "Nicht entfernt: ohne Terminal fragt der Befehl nicht. Mit Zustimmung: squorli plugin remove $what$option -Yes" "Not removed: without a terminal the command does not ask. With your consent: squorli plugin remove $what$option -Yes")
+        }
+        if (-not (Read-Consent 'Zum Fortfahren ja eingeben' 'Type yes to continue')) { Write-Host (T 'Abgebrochen.' 'Cancelled.'); exit 1 }
+      }
+      $null = Invoke-PluginApi 'DELETE' "/${what}?messages=$messages"
+      if ($DeleteMessages) { $kept = T 'Seine Nachrichten sind gelöscht. ' 'Its messages are deleted. ' } else { $kept = T 'Seine Nachrichten bleiben stehen. ' 'Its messages stay. ' }
+      Write-Host "$(T 'Entfernt: ' 'Removed: ')$what. $kept$(T 'Rollen, die es vergeben hat, bleiben vergeben.' 'Roles it gave stay given.')"
+    }
+    'log' {
+      Assert-PluginId $what
+      $answer = Invoke-PluginApi 'GET' "/$what/log"
+      $rows = @(Get-List $answer 'entries')
+      [array]::Reverse($rows)
+      if ($rows.Count -eq 0) { Write-Host (T 'Das Log ist leer.' 'The log is empty.') }
+      if (Get-Prop $answer 'hasMore') { Write-Host (T '(ältere Einträge: Verwaltung > Plugins)' '(older entries: Verwaltung > Plugins)') }
+      foreach ($entry in $rows) {
+        # PowerShell 7 reads such a time as a date, Windows PowerShell 5.1 leaves the text
+        $at = Get-Prop $entry 'at'
+        if ($at -is [datetime]) { $at = $at.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') }
+        else { $at = (Remove-Control "$at").Replace('T', ' '); if ($at.Length -gt 19) { $at = $at.Substring(0, 19) } }
+        Write-Host ("{0}Z  {1}  {2}  {3}" -f $at, (Remove-Control (Get-Prop $entry 'level')).PadRight(5), (Remove-Control (Get-Prop $entry 'source')).PadRight(6), (Remove-Control (Get-Prop $entry 'text')))
+      }
+    }
+  }
+}
+
 function Show-Help {
-  Write-Host 'squorli status | logs [service] [-Follow] | restart [service] | stop [service] | start [service] | backup [dir] | restore <dir> [-Yes] | update [-Version x.y.z] [-Check] | autoupdate [on [hours] | off] | nodeip [check | on [minutes] | off] | doctor'
+  Write-Host 'squorli status | logs [service] [-Follow] | restart [service] | stop [service] | start [service] | backup [dir] | restore <dir> [-Yes] | update [-Version x.y.z] [-Check] | autoupdate [on [hours] | off] | nodeip [check | on [minutes] | off] | doctor | plugin [list | add <file> | add -Bundled <id> | enable <id> | disable <id> | remove <id> | log <id>]'
   Write-Host 'services: server, postgres, livekit, caddy'
 }
 
@@ -1392,19 +1683,23 @@ function Main {
   if ($Target) { $words += $Target }
   if ($Rest) { $words += @($Rest | Where-Object { $_ }) }
   # The options as the Linux helper spells them (--yes, -f): PowerShell binds them itself on most ways in, not on all
+  # --delete-messages has a hyphen inside, which no parameter of PowerShell has
+  if ($words -contains '--delete-messages') { $script:DeleteMessages = $true; $words = @($words | Where-Object { $_ -ne '--delete-messages' }) }
   foreach ($word in @($words | Where-Object { $_ -match '^--?[A-Za-z]+$' })) {
     switch ($word.TrimStart('-').ToLowerInvariant()) {
       { @('yes', 'y') -contains $_ } { $script:Yes = $true }
       { @('follow', 'f') -contains $_ } { $script:Follow = $true }
       'check' { $script:Check = $true }
       'auto' { $script:Auto = $true }
+      'bundled' { $script:Bundled = $true }
+      'deletemessages' { $script:DeleteMessages = $true }
       default { Write-Host (T "Die Option '$word' gibt es nicht." "There is no option '$word'.") -ForegroundColor Red; Show-Help; exit 1 }
     }
   }
   $words = @($words | Where-Object { $_ -notmatch '^--?[A-Za-z]+$' })
   $first = ''
   if ($words.Count -gt 0) { $first = $words[0] }
-  $known = @('status', 'ps', 'logs', 'restart', 'stop', 'down', 'start', 'up', 'backup', 'restore', 'update', 'autoupdate', 'nodeip', 'doctor')
+  $known = @('status', 'ps', 'logs', 'restart', 'stop', 'down', 'start', 'up', 'backup', 'restore', 'update', 'autoupdate', 'nodeip', 'doctor', 'plugin')
   if ($known -notcontains $name) {
     Write-Host (T "Den Befehl '$Command' gibt es nicht." "There is no command '$Command'.") -ForegroundColor Red
     Show-Help
@@ -1439,6 +1734,7 @@ function Main {
       'autoupdate' { Invoke-AutoUpdate $words }
       'nodeip' { Invoke-NodeIp $words }
       'doctor' { Invoke-Doctor }
+      'plugin' { Invoke-Plugin $words }
     }
   } catch {
     Write-Host ''

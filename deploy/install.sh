@@ -8,7 +8,7 @@
 # downloads the deploy files, writes .env with fresh secrets, starts the stack and checks it. Running it again on an
 # existing installation updates it or changes its settings; secrets and data are kept.
 # It also writes <dir>/squorli, a small wrapper around docker compose with the right profile and overlays
-# (squorli update | autoupdate | status | logs | backup | restore | doctor | restart | down | <any compose command>). Its services are
+# (squorli update | autoupdate | status | logs | backup | restore | doctor | plugin | restart | down | <any compose command>). Its services are
 # server, postgres, livekit and caddy; the server's old name "app" is still understood.
 #
 # Environment: SQUORLI_DIR (installation directory, default /opt/squorli), SQUORLI_LANG (de/en),
@@ -745,6 +745,8 @@ write_helper() {
 set -euo pipefail
 here="$(dirname "$(readlink -f "$0")")"
 lang="$(sed -n 's/^# lang: \([a-z]*\)$/\1/p' "$0" | head -n1 || true)"; lang="${lang:-en}"
+# Where the person stands: a file they name (squorli plugin add) is meant from there, not from the deploy folder
+from="$PWD"
 cd "$here/deploy"
 dc() { docker compose "${ARGS[@]}" "$@"; }
 t() { if [ "$lang" = de ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
@@ -1066,8 +1068,153 @@ nodeip_check() {
       "  ok Public address ${have:-?} -> $ip ($src) written; LiveKit is not running and takes it at its start."
   fi
 }
-# The app server's service was named "app" until 28 September 2026; whoever still types it means "server".
-if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ]; then
+# ---- Plugins the server runs itself (squorli plugin, docs/features/plugins.md). The operator's routes
+# (/api/operator/plugins) take no session but the machine's token: DOCTOR_TOKEN when .env has one, else the value the
+# server writes into its data volume at every start (operator-token under DATA_DIR). So the request is made inside the
+# server's container, as doctor does it, by the script below. It prints for a person; where a question of this helper
+# follows, its last line is "::plugin <id> <state>" (plugin_mark reads it, plugin_print leaves it out). A file to
+# install comes in on stdin: the server reads nothing from the host. The script sits in single quotes: no single quote
+# in it. What a plugin wrote itself (names, log lines) is printed without control characters. The words for states and
+# capabilities are the ones Verwaltung > Plugins uses (apps/web/src/i18n, admin.plugins.*).
+PLUGIN_JS='
+  const fs = require("fs"); const path = require("path");
+  const [lang, action, one, two] = process.argv.slice(1);
+  const t = (de, en) => (lang === "de" ? de : en);
+  const clean = (s) => String(s === undefined || s === null ? "" : s).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim();
+  const tx = (o) => clean(o ? (lang === "de" && o.de) || o.en : "");
+  const base = "http://127.0.0.1:" + (process.env.PORT || 3000) + "/api/operator/plugins";
+  let token = process.env.DOCTOR_TOKEN || "";
+  if (!token) { try { token = fs.readFileSync(path.resolve(process.env.DATA_DIR || "data", "operator-token"), "utf8").trim(); } catch (e) { token = ""; } }
+  class Shown extends Error {}
+  const hints = {
+    unknown_plugin: t("ein Plugin mit dieser Kennung gibt es hier nicht: squorli plugin list", "there is no plugin with this id here: squorli plugin list"),
+    forbidden: t("der App-Server nimmt das Token dieses Rechners nicht an: squorli restart server", "the app server does not accept the token of this machine: squorli restart server"),
+    rate_limited: t("zu viele Aufrufe: in einer Minute noch einmal", "too many calls: try again in a minute"),
+    bad_request: t("eine Plugin-Datei darf nicht leer und höchstens 256 KB groß sein", "a plugin file must not be empty and may have 256 KB at most"),
+  };
+  const fail = (status, body) => {
+    const code = body && typeof body.error === "string" ? clean(body.error) : "HTTP " + status;
+    if (status === 404 && code === "not_found") console.error("x " + t("Plugins sind auf diesem Server abgeschaltet (PLUGINS=off in der .env), oder der Server ist älter als die Plugin-Schnittstelle.", "Plugins are switched off on this server (PLUGINS=off in .env), or the server is older than the plugin interface."));
+    else console.error("x " + code + (body && typeof body.message === "string" ? ": " + clean(body.message) : "") + (Object.hasOwn(hints, code) ? "  (" + hints[code] + ")" : ""));
+    throw new Shown();
+  };
+  const call = async (method, url, body) => {
+    const headers = {};
+    if (token) headers["x-squorli-operator"] = token;
+    if (body !== undefined) headers["content-type"] = "application/json";
+    let r;
+    try { r = await fetch(base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(60000) }); }
+    catch (e) { console.error("x " + t("Der App-Server antwortet nicht", "The app server does not answer") + " (" + clean((e.cause && (e.cause.code || e.cause.message)) || e.message) + "): squorli logs server"); throw new Shown(); }
+    let data = null;
+    try { data = await r.json(); } catch (e) { data = null; }
+    if (!r.ok) fail(r.status, data);
+    return data || {};
+  };
+  const words = { disabled: t("aus", "off"), running: t("läuft", "running"), suspended: t("angehalten nach Fehlern", "suspended after failures"), incompatible: t("nicht kompatibel", "not compatible"), needs_approval: t("wartet auf Bestätigung", "waiting for confirmation") };
+  const state = (s) => (Object.hasOwn(words, s) ? words[s] : clean(s));
+  const head = (p) => tx(p.name) + " (" + clean(p.id) + ") " + clean(p.version);
+  const mark = (p) => console.log("::plugin " + clean(p.id).replace(/ /g, "_") + " " + clean(p.state).replace(/ /g, "_"));
+  const details = (p) => {
+    if (tx(p.description)) console.log("  " + tx(p.description));
+    if (p.sourceHash) console.log("  sha256 " + clean(p.sourceHash));
+    const list = p.capabilities || [];
+    if (!list.length) { console.log(t("Es verlangt keine besonderen Rechte: Es speichert eigene Daten, plant Aufgaben und schreibt in sein Log.", "It asks for no special rights: it stores data of its own, schedules tasks and writes to its log.")); return; }
+    console.log(t("Was das Plugin darf:", "What the plugin may do:"));
+    for (const c of list) console.log((c.risk === "high" ? "  !  " : "  -  ") + (tx(c.text) || clean(c.id)) + (c.risk === "high" ? t("  [weitreichend]", "  [far-reaching]") : "") + (p.state === "needs_approval" && !c.granted ? t("  [noch nicht bestätigt]", "  [not confirmed yet]") : ""));
+  };
+  const find = async (id) => {
+    const p = ((await call("GET", "")).plugins || []).find((x) => x.id === id);
+    if (!p) fail(404, { error: "unknown_plugin" });
+    return p;
+  };
+  const install = async (body) => {
+    const had = ((await call("GET", "")).plugins || []).map((p) => p.id);
+    const p = await call("POST", "", body);
+    console.log((had.includes(p.id) ? t("Aktualisiert: ", "Updated: ") : t("Installiert: ", "Installed: ")) + head(p));
+    details(p);
+    mark(p);
+  };
+  const actions = {
+    async list() {
+      const d = await call("GET", "");
+      const rows = d.plugins || []; const more = d.available || [];
+      const w = Math.max(12, ...rows.concat(more).map((p) => clean(p.id).length));
+      if (!rows.length) console.log(t("Kein Plugin installiert.", "No plugin installed."));
+      else {
+        console.log(t("Installiert (", "Installed (") + rows.length + t(" von höchstens ", " of at most ") + clean(d.max) + "):");
+        for (const p of rows) console.log("  " + clean(p.id).padEnd(w) + "  " + clean(p.version).padEnd(9) + "  " + state(p.state).padEnd(24) + "  " + tx(p.name));
+      }
+      if (more.length) {
+        console.log("");
+        console.log(t("Verfügbar (liegt dem Server bei; installieren: squorli plugin add --bundled <id>):", "Available (ships with the server; install: squorli plugin add --bundled <id>):"));
+        for (const p of more) console.log("  " + clean(p.id).padEnd(w) + "  " + clean(p.version).padEnd(9) + "  " + tx(p.name) + (p.installedVersion ? t("  (installiert: ", "  (installed: ") + clean(p.installedVersion) + ")" : ""));
+      }
+    },
+    async install(fileName) {
+      const source = fs.readFileSync(0, "utf8");
+      if (!source) { console.error("x " + t("Die Datei ist leer.", "The file is empty.")); throw new Shown(); }
+      await install({ source, fileName });
+    },
+    async bundled(id) { await install({ bundled: id }); },
+    async show(id) { const p = await find(id); console.log(head(p) + ", " + state(p.state)); details(p); mark(p); },
+    async head(id) { const p = await find(id); console.log(head(p) + ", " + state(p.state)); mark(p); },
+    async enable(id) {
+      const p = await call("PUT", "/" + id + "/enabled", { enabled: true });
+      console.log(t("Eingeschaltet: ", "Switched on: ") + head(p) + ", " + state(p.state));
+      if (p.hasSettings) console.log(t("Seine Einstellungen (auch die Rollen und Kanäle, die es anfassen darf): Verwaltung > Plugins.", "Its settings (also the roles and channels it may touch): Verwaltung > Plugins."));
+    },
+    async disable(id) { const p = await call("PUT", "/" + id + "/enabled", { enabled: false }); console.log(t("Ausgeschaltet: ", "Switched off: ") + head(p)); },
+    async remove(id, messages) {
+      await call("DELETE", "/" + id + "?messages=" + messages);
+      console.log(t("Entfernt: ", "Removed: ") + id + ". " + (messages === "delete" ? t("Seine Nachrichten sind gelöscht. ", "Its messages are deleted. ") : t("Seine Nachrichten bleiben stehen. ", "Its messages stay. ")) + t("Rollen, die es vergeben hat, bleiben vergeben.", "Roles it gave stay given."));
+    },
+    async log(id) {
+      const d = await call("GET", "/" + id + "/log");
+      const rows = (d.entries || []).slice().reverse();
+      if (!rows.length) console.log(t("Das Log ist leer.", "The log is empty."));
+      if (d.hasMore) console.log(t("(ältere Einträge: Verwaltung > Plugins)", "(older entries: Verwaltung > Plugins)"));
+      for (const e of rows) console.log(clean(e.at).replace("T", " ").slice(0, 19) + "Z  " + clean(e.level).padEnd(5) + "  " + clean(e.source).padEnd(6) + "  " + clean(e.text));
+    },
+  };
+  if (!Object.hasOwn(actions, action)) { console.error("x " + clean(action)); process.exitCode = 1; }
+  else actions[action](one, two).catch((e) => { if (!(e instanceof Shown)) console.error("x " + clean(e && e.message)); process.exitCode = 1; });
+'
+plugin_call() { dc exec -T server node -e "$PLUGIN_JS" "$lang" "$@"; }
+plugin_print() { [ -z "$1" ] || printf '%s\n' "$1" | sed '/^::plugin /d'; }
+plugin_mark() { printf '%s\n' "$1" | sed -n 's/^::plugin //p' | tail -n1; }
+# A plugin's id as the server takes it; anything else never reaches the server.
+plugin_id() {
+  if ! printf '%s\n' "$1" | grep -Eqx '[a-z][a-z0-9-]{2,31}'; then
+    t "x '$1' ist keine Plugin-Kennung: 3 bis 32 Zeichen aus Kleinbuchstaben, Ziffern und Bindestrichen, zuerst ein Buchstabe." \
+      "x '$1' is no plugin id: 3 to 32 characters of lowercase letters, digits and hyphens, a letter first." >&2
+    exit 1
+  fi
+}
+# yes or ja on the terminal; anything else is a no.
+plugin_ask() {
+  local answer=""
+  read -r -p "$(t "$1" "$2")" answer || true
+  case "$answer" in yes|Yes|YES|ja|Ja|JA) return 0 ;; *) return 1 ;; esac
+}
+plugin_usage() {
+  t "squorli plugin list                                     die installierten Plugins und die, die dem Server beiliegen
+squorli plugin add <Datei.js|Datei.ts> [--yes]          ein Plugin aus einer Datei dieses Rechners installieren oder aktualisieren; zeigt, was es darf, und fragt, ob es eingeschaltet wird (--yes: ohne Rückfrage einschalten)
+squorli plugin add --bundled <id> [--yes]               ein Plugin installieren, das dem Server beiliegt (\"Verfügbar\" in der Liste)
+squorli plugin enable <id> [--yes]                      einschalten; zeigt vorher, was es darf, und fragt
+squorli plugin disable <id>                             ausschalten
+squorli plugin remove <id> [--delete-messages] [--yes]  entfernen, mit seinem Speicher, seinen geplanten Aufgaben und seinem Log; Rollen, die es vergeben hat, bleiben, seine Nachrichten auch (außer mit --delete-messages)
+squorli plugin log <id>                                 die letzten 100 Einträge seines Logs" \
+    "squorli plugin list                                     the installed plugins and those that ship with the server
+squorli plugin add <file.js|file.ts> [--yes]            install or update a plugin from a file on this machine; shows what it may do and asks whether to switch it on (--yes: switch it on without asking)
+squorli plugin add --bundled <id> [--yes]               install a plugin that ships with the server (\"Available\" in the list)
+squorli plugin enable <id> [--yes]                      switch it on; shows what it may do first and asks
+squorli plugin disable <id>                             switch it off
+squorli plugin remove <id> [--delete-messages] [--yes]  remove it with its storage, its schedules and its log; roles it gave stay, and so do its messages (unless --delete-messages)
+squorli plugin log <id>                                 the last 100 entries of its log"
+}
+# The app server's service was named "app" until 28 September 2026; whoever still types it means "server" (a plugin may
+# be named app, so that command keeps its words).
+if [ $# -gt 1 ] && [ "$1" != backup ] && [ "$1" != restore ] && [ "$1" != plugin ]; then
   cmd="$1"; shift; names=()
   for a in "$@"; do [ "$a" = app ] && a=server; names+=("$a"); done
   set -- "$cmd" "${names[@]}"
@@ -1440,8 +1587,100 @@ case "${1:-help}" in
     if [ "$lang" = de ]; then echo "Ob Sprache und Video (UDP) ankommen, prüft nur ein Browser: Verwaltung > Server > Verbindung prüfen."
     else echo "Whether voice and video (UDP) arrive can only be checked from a browser: Verwaltung > Server > Check the connection."; fi
     exit $rc ;;
+  plugin)
+    # Plugins the server runs itself (docs/features/plugins.md): list, add (a file of this machine, or one that ships with
+    # the server), enable, disable, remove, log. Switching one on grants what its manifest asks for, so add and enable
+    # print that first and ask; --yes answers, and without a terminal nothing is switched on or removed unasked.
+    shift; sub="${1:-help}"; [ $# -eq 0 ] || shift
+    yes=0; bundled=0; messages=keep; words=()
+    for a in "$@"; do
+      case "$a" in
+        --yes|-y) yes=1 ;;
+        --bundled) bundled=1 ;;
+        --delete-messages) messages=delete ;;
+        -*) plugin_usage >&2; exit 1 ;;
+        *) words+=("$a") ;;
+      esac
+    done
+    what="${words[0]:-}"
+    case "$sub" in
+      help|-h|--help) plugin_usage; exit 0 ;;
+      list) [ "${#words[@]}" -eq 0 ] || { plugin_usage >&2; exit 1; } ;;
+      add|enable|disable|remove|log) [ "${#words[@]}" -eq 1 ] || { plugin_usage >&2; exit 1; } ;;
+      *) plugin_usage >&2; exit 1 ;;
+    esac
+    case "$sub" in
+      list) plugin_call list </dev/null ;;
+      add)
+        if [ "$bundled" = 1 ]; then
+          plugin_id "$what"
+          out="$(plugin_call bundled "$what" </dev/null)" || { rc=$?; plugin_print "$out"; exit "$rc"; }
+        else
+          case "$what" in /*) file="$what" ;; *) file="$from/$what" ;; esac
+          if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+            t "x Die Datei $what gibt es nicht, oder sie ist nicht lesbar." "x The file $what does not exist or cannot be read." >&2
+            exit 1
+          fi
+          name="$(basename -- "$file")"
+          out="$(plugin_call install "$name" < "$file")" || { rc=$?; plugin_print "$out"; exit "$rc"; }
+        fi
+        plugin_print "$out"
+        mark="$(plugin_mark "$out")"; id="${mark%% *}"; state="${mark#* }"
+        [ -n "$id" ] || exit 1
+        # An update of a plugin that runs keeps running, unless the new version asks for more than it was granted
+        if [ "$state" = running ]; then t "Es läuft weiter." "It keeps running."; exit 0; fi
+        if [ "$state" = needs_approval ]; then
+          t "Die neue Version verlangt mehr als bisher. Das Plugin läuft erst wieder, wenn das bestätigt ist." \
+            "The new version asks for more than before. The plugin runs again only once that is confirmed."
+        fi
+        if [ "$yes" != 1 ]; then
+          if [ ! -t 0 ] || ! plugin_ask "Einschalten und ihm das erlauben? Dann ja eingeben: " "Switch it on and allow this? Then type yes: "; then
+            t "Nicht eingeschaltet. Einschalten: squorli plugin enable $id" "Not switched on. To switch it on: squorli plugin enable $id"
+            exit 0
+          fi
+        fi
+        plugin_call enable "$id" </dev/null ;;
+      enable)
+        plugin_id "$what"
+        out="$(plugin_call show "$what" </dev/null)" || { rc=$?; plugin_print "$out"; exit "$rc"; }
+        plugin_print "$out"
+        mark="$(plugin_mark "$out")"; state="${mark#* }"
+        if [ "$state" = running ]; then t "Es läuft bereits." "It is running already."; exit 0; fi
+        if [ "$yes" != 1 ]; then
+          if [ ! -t 0 ]; then
+            t "x Nicht eingeschaltet: ohne Terminal fragt der Befehl nicht. Mit Zustimmung: squorli plugin enable $what --yes" \
+              "x Not switched on: without a terminal the command does not ask. With your consent: squorli plugin enable $what --yes" >&2
+            exit 1
+          fi
+          plugin_ask "Einschalten und ihm das erlauben? Dann ja eingeben: " "Switch it on and allow this? Then type yes: " || { t "Abgebrochen." "Cancelled."; exit 1; }
+        fi
+        plugin_call enable "$what" </dev/null ;;
+      disable) plugin_id "$what"; plugin_call disable "$what" </dev/null ;;
+      remove)
+        plugin_id "$what"
+        if [ "$yes" != 1 ]; then
+          out="$(plugin_call head "$what" </dev/null)" || { rc=$?; plugin_print "$out"; exit "$rc"; }
+          plugin_print "$out"
+          if [ "$messages" = delete ]; then
+            t "Das entfernt das Plugin mit seinem Speicher, seinen geplanten Aufgaben und seinem Log und löscht seine Nachrichten. Rollen, die es vergeben hat, bleiben vergeben." \
+              "This removes the plugin with its storage, its schedules and its log and deletes its messages. Roles it gave stay given."
+          else
+            t "Das entfernt das Plugin mit seinem Speicher, seinen geplanten Aufgaben und seinem Log. Rollen, die es vergeben hat, bleiben vergeben; seine Nachrichten bleiben stehen (--delete-messages löscht sie)." \
+              "This removes the plugin with its storage, its schedules and its log. Roles it gave stay given; its messages stay (--delete-messages deletes them)."
+          fi
+          if [ ! -t 0 ]; then
+            opt=""; [ "$messages" != delete ] || opt=" --delete-messages"
+            t "x Nicht entfernt: ohne Terminal fragt der Befehl nicht. Mit Zustimmung: squorli plugin remove $what$opt --yes" \
+              "x Not removed: without a terminal the command does not ask. With your consent: squorli plugin remove $what$opt --yes" >&2
+            exit 1
+          fi
+          plugin_ask "Zum Fortfahren ja eingeben: " "Type yes to continue: " || { t "Abgebrochen." "Cancelled."; exit 1; }
+        fi
+        plugin_call remove "$what" "$messages" </dev/null ;;
+      log) plugin_id "$what"; plugin_call log "$what" </dev/null ;;
+    esac ;;
   help|-h|--help)
-    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] [--stable] | off] | nodeip [check | on [minutes] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | <docker compose command>"
+    echo "squorli update [--check] [--no-backup] [--yes] | autoupdate [on [hours] [--stable] | off] | nodeip [check | on [minutes] | off] | status | logs [service] | restart [service] | down | backup [dir] | restore <dir> | doctor | plugin [list | add <file> | add --bundled <id> | enable <id> | disable <id> | remove <id> | log <id>] | <docker compose command>"
     echo "services: server, postgres, livekit, caddy" ;;
   *) dc "$@" ;;
 esac
@@ -1549,6 +1788,7 @@ finish() {
     "  $HELPER backup      $(t "Datenbank, Dateien und .env nach $DIR/backups sichern" "back up database, files and .env to $DIR/backups")" \
     "  $HELPER restore <$(t "Ordner" "dir")>  $(t "eine Sicherung zurückspielen (ersetzt Datenbank und Dateien)" "restore a backup (replaces database and files)")" \
     "  $HELPER doctor      $(t "prüfen, was bei der Einrichtung am häufigsten schiefgeht (Domain, Proxy, LiveKit, Ports, Verzeichnis)" "check what goes wrong most often in a setup (domain, proxy, LiveKit, ports, directory)")" \
+    "  $HELPER plugin      $(t "Plugins, die der Server selbst ausführt: list, add, enable, disable, remove, log" "plugins the server runs itself: list, add, enable, disable, remove, log")" \
     "$(t "Einstellungen ändern: dieses Skript erneut ausführen, oder $DIR/.env bearbeiten und $HELPER up -d" \
       "Change settings: run this script again, or edit $DIR/.env and run $HELPER up -d")"
 }

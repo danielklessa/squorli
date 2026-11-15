@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": [],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "erasableSyntaxOnly": true,
+    "moduleDetection": "force",
+    "noEmit": true
+  },
+  "files": ["index.d.ts", "check.ts", "../../apps/server/plugins/timed-roles.ts", "../../apps/server/plugins/birthdays.ts"]
+}

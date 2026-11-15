@@ -23,8 +23,10 @@ export * from "./channelBlocks";
 export * from "./localAccounts";
 export * from "./reports";
 export * from "./reactions";
+export * from "./plugins";
 export { EMOJI_SOURCE, Iso, PublicKey, REACTION_EMOJI_MAX_CHARS, REPORT_REASONS, REPORT_TEXT_MAX, ReactionEmoji, ReportReason, Signature, Uuid, emojiKey, isSingleEmoji } from "./primitives";
 import { ReactionChip } from "./reactions";
+import { MessagePlugin, PluginSurface } from "./plugins";
 import { Iso, PublicKey, Signature, Uuid } from "./primitives";
 import { DeviceProofFields, DisplayName, GameAudience } from "./directory";
 import { GamePresence } from "./friends";
@@ -288,6 +290,11 @@ export const LimitsReport = z.object({
   maxUploadMb: z.number(),
   /** DB_POOL_MAX, the database connections this server holds. */
   dbPoolMax: z.number().int(),
+  /**
+   * Plugins (docs/features/plugins.md): `PLUGINS` (operator or owner), how many are installed against PLUGIN_MAX, how many
+   * run right now, and PLUGIN_MEMORY_MB, the memory of one plugin's sandbox. Missing = a server from before, or PLUGINS=off.
+   */
+  plugins: z.object({ mode: z.string(), max: z.number().int(), installed: z.number().int().min(0), running: z.number().int().min(0), memoryMb: z.number() }).optional(),
 });
 // ---- Setup self-diagnosis (docs/features/doctor.md, 25 September 2026): GET /api/doctor (MANAGE_SERVER, or from the
 // machine itself for `squorli doctor`) runs the checks an operator gets wrong most often and names the likely fault.
@@ -644,6 +651,12 @@ export const Message = z.object({
    * text from the far left. Set and taken back with MANAGE_NOTICES in the channel. Default for servers from before.
    */
   notice: z.boolean().default(false),
+  /**
+   * Written by a plugin (plugins.ts, docs/features/plugins.md): `authorId` then names the plugin's own user, who is no
+   * member, and the client shows the plugin's name instead. The server sends such a message with `notice: true`, so a
+   * client from before shows a line without an author rather than a former member. Unreadable = left out, never an error.
+   */
+  plugin: MessagePlugin.optional().catch(undefined),
   createdAt: Iso,
   editedAt: Iso.nullable(),
 });
@@ -725,6 +738,12 @@ export const ServerState = z.object({
    * on a message, the rules dialog and Verwaltung > Reaktionsrollen only then; missing = a server from before.
    */
   reactions: z.boolean().optional(),
+  /**
+   * Plugins (plugins.ts): present = this server runs plugins; what the enabled ones add to every member's client (slash
+   * commands, member actions). Missing = a server from before or one with `PLUGINS=off`. Parsed leniently on purpose: a
+   * plugin is installed at any time, and nothing a plugin declares may ever cost a client its welcome.
+   */
+  plugins: PluginSurface.optional().catch(undefined),
 });
 
 // ---------- REST: status API (docs/features/status-api.md) ----------
@@ -833,6 +852,8 @@ export const ServerStructure = z.object({
   roles: z.array(Role).optional(),
   members: z.array(Member).optional(),
   radioStations: z.array(RadioStation).optional(),
+  /** The plugins' commands and member actions changed (a plugin was enabled, disabled, updated or its settings saved). */
+  plugins: PluginSurface.optional().catch(undefined),
 });
 /** Your own permissions changed (role assigned/revoked, role edited, an overwrite, a hold in a sticky channel). */
 export const ServerMe = z.object({

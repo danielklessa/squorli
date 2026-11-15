@@ -31,10 +31,11 @@ The closest competitor is Stoat (formerly Revolt): Discord-like, self-hostable, 
 1. Media quality (latency, stability, echo and noise suppression, screen share with audio) comes before feature breadth (emoji, threads, bots).
 2. The setup is a product feature: one command, one domain, done. Everything an operator has to do on top costs users.
 3. Check every new feature against this before building it (the risk "scope creep" below).
+4. What only some servers want does not go into the core: it becomes a plugin the server runs inside its own limits (the user, 15 November 2026; `docs/features/plugins.md`). That keeps feature wishes from costing the core its focus.
 
 ### 1.3 Not planned for now
 
-Recording, end-to-end encryption of media, a bot API, threads, federation between servers. (Mobile clients left this list on 25 September 2026: `docs/PLAN-mobile.md`.)
+Recording, end-to-end encryption of media, a bot API, threads, federation between servers. (Mobile clients left this list on 25 September 2026: `docs/PLAN-mobile.md`.) The plugin interface of 15 November 2026 is not a bot API and does not bring one: a plugin has no token, no network endpoint and no process of its own, it is one file the server runs in a sandbox.
 
 ### 1.4 Risks
 
@@ -89,6 +90,13 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 ### 3.5 Mobile app for iOS and Android (user: medium)
 
 `docs/PLAN-mobile.md` (revised 17 October 2026: the user has an iPhone, Android only in the emulator). Decisions of 25 September 2026 that stand: Capacitor, no screen share in version 1, push only as a wake-up through the directory, no push for server accounts. Open: the order of the platforms (5, proposal: both shells at once, measure on iOS first), the Mac (N1), iOS voice if the web view fails in the background (N2), the publisher (N3), an Android test phone (N4). Stage 1 begun on 20 October 2026 (`docs/features/mobile.md`): the shell `apps/mobile` and the app's `Platform` are built, the first run on a device is not. The stores' prerequisite, the reports and blocking of 3.1, is built (`docs/PLAN-mobile.md` section 0).
+
+### 3.6 Plugins the server runs itself (user, 15 November 2026)
+
+Built on 15 November 2026 and documented in `docs/features/plugins.md` (the sandbox, the interface, Verwaltung > Plugins, `squorli plugin`, the two plugins that ship, the guide for authors on the website); the decisions Claude made while building were confirmed by the user the same day. Open:
+- **The releases:** a server release and a desktop app release (the app ships its own client; until then it shows a plugin's message as a notice and has neither the tab nor the member menu's entries), then the website's pages (committed there with fresh screenshots, pushed with the update feed once the releases are published).
+- **What only real use shows** (the note's "NOT checked"): an installation updated over the internet, the package for Windows, days of running plugins, a plugin written by somebody else.
+- **Later, each possible without breaking version 1:** an author's key with trust on first use, outbound requests through the guarded fetch as a capability, voice events, a list field type.
 
 ---
 

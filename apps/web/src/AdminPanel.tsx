@@ -13,12 +13,13 @@ import { RadioTab } from "./RadioTab";
 import { ImportTab } from "./ImportTab";
 import { ReportsTab } from "./ReportsTab";
 import { ReactionRolesTab } from "./ReactionRolesTab";
+import { PluginsTab } from "./PluginsTab";
 import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { fmtDateTime, locale, t } from "./i18n";
 import { runMediaCheck, type MediaCheckResult } from "./doctorMedia";
 
-type Tab = "server" | "channels" | "radio" | "roles" | "reactionRoles" | "invites" | "bans" | "reports" | "import";
+type Tab = "server" | "channels" | "radio" | "roles" | "reactionRoles" | "invites" | "bans" | "reports" | "plugins" | "import";
 
 /** Admin area: server, categories/channels, radio stations, roles, invites, bans. Changes come back via the structure event. */
 export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEditChannel }: { api: ServerApi; server: ServerState; myUserId: string; directoryUrl: string | null; onClose: () => void; onEditChannel: (target: ChannelDialogTarget) => void }) {
@@ -37,6 +38,8 @@ export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEdi
     { id: "bans", label: t("admin.tab.bans"), icon: "ban", ok: hasPermission(p, Permission.BAN_MEMBERS) },
     // Reports (docs/features/reports.md): only against a server that takes them (the count field is the flag).
     { id: "reports", label: t("admin.tab.reports"), icon: "flag", ok: hasPermission(p, Permission.MANAGE_REPORTS) && server.openReports !== undefined },
+    // Plugins (docs/features/plugins.md): only against a server that runs plugins (the surface in the state is the flag).
+    { id: "plugins", label: t("admin.tab.plugins"), icon: "puzzle", ok: hasPermission(p, Permission.MANAGE_SERVER) && server.plugins !== undefined },
     // Import of a Discord template: creates channels and roles, so both rights; only against a server that offers the source.
     { id: "import", label: t("admin.tab.import"), icon: "import", ok: hasPermission(p, Permission.MANAGE_CHANNELS) && hasPermission(p, Permission.MANAGE_ROLES) && (server.importSources?.includes("discord-template") ?? false) },
   ];
@@ -70,6 +73,7 @@ export function AdminPanel({ api, server, myUserId, directoryUrl, onClose, onEdi
             {tab === "invites" && <InvitesTab api={api} run={run} canManage={hasPermission(p, Permission.MANAGE_SERVER)} />}
             {tab === "bans" && <BansTab api={api} run={run} />}
             {tab === "reports" && <ReportsTab api={api} myPermissions={p} run={run} openCount={server.openReports ?? 0} />}
+            {tab === "plugins" && <PluginsTab api={api} server={server} myUserId={myUserId} />}
             {tab === "import" && <ImportTab api={api} server={server} run={run} />}
           </div>
         </div>
@@ -230,6 +234,12 @@ function LimitsSection({ api, run }: { api: ServerApi; run: RunFn }) {
         <tr><td>{t("admin.limitsVoiceSeats")}</td><td>{cell(String(report.voiceSeats.used), report.voiceSeats.max, "")}</td></tr>
         <tr><td>{t("admin.limitsMembers")}</td><td>{cell(String(report.members.count), report.members.max, "")}</td></tr>
         <tr><td>{t("admin.limitsUpload")}</td><td><span className="muted">{report.maxUploadMb} MB</span></td></tr>
+        {/* Plugins (docs/features/plugins.md): a server from before them, or one with PLUGINS=off, does not send the field. */}
+        {report.plugins && <>
+          <tr><td>{t("admin.limitsPlugins")}</td><td>{cell(String(report.plugins.installed), report.plugins.max, "")} <span className="muted">· {t("admin.limitsPluginsRunning", { n: report.plugins.running })}</span></td></tr>
+          <tr><td>{t("admin.limitsPluginsMode")}</td><td><span className="muted">{report.plugins.mode === "owner" ? t("admin.limitsPluginsModeOwner") : report.plugins.mode === "operator" ? t("admin.limitsPluginsModeOperator") : report.plugins.mode}</span></td></tr>
+          <tr><td>{t("admin.limitsPluginsMemory")}</td><td><span className="muted">{report.plugins.memoryMb} MB</span></td></tr>
+        </>}
       </tbody>
     </table>}
     <span className="muted small">{t("admin.limitsHint")}</span>

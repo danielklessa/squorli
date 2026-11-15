@@ -17,6 +17,7 @@ This README explains how to run your own Squorli server. Working on the code: [d
 - Web radio in voice channels: admins keep a list of stations (direct streams or `.m3u`/`.pls` playlists), members with the permission turn one on for everyone, and every listener sets their own volume or turns it off. Twitch channels and YouTube videos or live streams work as sources too, shown with the official players; YouTube videos play in step for everyone, steered by the members who may control the radio. A radio nobody listens to stops by itself after two minutes.
 - Away status: after ten minutes without input and without speaking a member shows as away (in Chrome and Edge input anywhere in the system can count, if the member allows it). Admins can name an AFK channel: whoever turns away in a voice channel is moved there; microphone, audio, camera and screen share are always off in it, enforced by the media server. With a Squorli Directory, friends see the away status too.
 - Categories, roles with permissions and hierarchy, invite links, kick and ban, admin panel in the browser.
+- [Plugins](#plugins): one JavaScript or TypeScript file the server runs itself in a sandbox, for what only some servers want (slash commands, entries in the member menu, roles for a time, birthday congratulations). Two ship with the server.
 - Optional connection to a Squorli Directory for global handles, friends and end-to-end encrypted direct messages.
 
 Not yet: audit log. The macOS desktop app is not notarized by Apple yet (no Apple Developer account): the download page says how to open it. Current status of the implementation: [AGENTS.md](AGENTS.md).
@@ -80,6 +81,7 @@ Afterwards, in a newly opened window as administrator:
 | `squorli update -Check` | only looks for a newer release: exit code 10 when there is one, 0 when not |
 | `squorli autoupdate [on [hours] \| off]` | a task that looks for a new version every 1 to 24 hours and installs it ([Automatic updates](#automatic-updates)); without a word: the state and the last runs |
 | `squorli doctor` | the setup check, as on Linux |
+| `squorli plugin list \| add <file> \| enable <id> \| disable <id> \| remove <id> \| log <id>` | [plugins](#plugins): install one from a file on this machine, switch it on after reading what it asks for, read its log |
 
 Change settings: run `C:\Program Files\Squorli\install.ps1` again. Remove: `C:\Program Files\Squorli\uninstall.ps1`; the data folder stays unless you type "delete".
 
@@ -141,6 +143,7 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 | `MAX_UPLOAD_MB` | Upper limit for attachments, default 25 |
 | `SESSION_TTL_DAYS` / `SESSION_IDLE_DAYS` | How long a sign-in lasts at most (default 30) and without use (default 14, 0 = off; [docs/features/devices.md](docs/features/devices.md)). A session is bound to the device that signed in: a copied token opens nothing without it |
 | `STORAGE_QUOTA_MB` / `VOICE_SEATS_MAX` / `MEMBER_MAX` / `DB_POOL_MAX` | Operator limits ([docs/features/limits.md](docs/features/limits.md)) for a server run for other people, each off when unset (the installers set `STORAGE_QUOTA_MB` to 80 % of the free space on a fresh installation): MB for every file the server keeps, people in voice channels at once, members, PostgreSQL connections held open (default 10). `GET /api/ready` answers 200 only while the database answers |
+| `PLUGINS` / `PLUGIN_MAX` / `PLUGIN_CPU_MS` / `PLUGIN_MEMORY_MB` / `PLUGIN_STORAGE_MB` | [Plugins](#plugins) the server runs itself. `PLUGINS`: `owner` (default) = an owner uploads plugins in the admin area and the operator installs them with `squorli plugin`; `operator` = only the command installs; `off` = no plugins at all. The others bound them: how many may be installed (20), the CPU time of one event in milliseconds (200), the memory of one plugin's sandbox in MB (32, at least 16) and what one plugin may keep in the database in MB (5). Every enabled plugin that is running costs about `PLUGIN_MEMORY_MB` + 14 MB at most; an idle one is stopped after five minutes |
 | `LINK_PREVIEWS` | `true` (default): links in messages get a preview (title, description, picture; YouTube videos play in the chat). The server fetches the linked pages itself, from public hosts only, and serves the pictures from its data volume, so readers never contact the linked host. `false` turns previews and these outgoing requests off |
 | `LOG_LEVEL` | Log level of the app server: `fatal`, `error`, `warn`, `info` (default), `debug` |
 | `LOG_REQUESTS` | `false` (default): no line per request, so the log holds no visitor addresses; only requests that end in a server error are logged, without the address. `true` logs every request with the caller's IP, for troubleshooting only. What each container logs and how long: [docs/features/logging.md](docs/features/logging.md) |
@@ -154,7 +157,7 @@ All variables are documented in [.env.example](.env.example). The most relevant 
 | `LIVEKIT_TCP_PORT` / `LIVEKIT_UDP_PORT` | Media ports on the host (default 7881 / 7882), when another service already uses them; LiveKit announces them to the clients, so forward the same numbers |
 | `APP_PORT` / `LIVEKIT_HTTP_PORT` | External mode with a port overlay: host ports the proxy forwards to (default 3000 / 7880) |
 | `LISTEN_HOST` | Without Docker only (the Windows package sets it): the address the app server listens on, `127.0.0.1` for a proxy on the same machine. Leave it unset with Docker Compose |
-| `DOCTOR_TOKEN` | Without Docker only (the Windows package makes one): what `squorli doctor` sends to read the setup check without a session. Leave it unset with Docker Compose |
+| `DOCTOR_TOKEN` | Without Docker only (the Windows package makes one): what `squorli doctor` sends to read the setup check without a session, and what `squorli plugin` proves itself with (with Docker that command reads a token the server writes into its data volume at every start). Leave it unset with Docker Compose |
 
 Voice quality (Opus bitrate, stereo) is configured per voice channel in the admin panel.
 
@@ -165,6 +168,19 @@ Channels and categories can carry permissions per role or member (private channe
 ### Status API
 
 `GET https://PUBLIC_DOMAIN/api/status` returns the server name, its icon address, all categories and channels in the order the client shows them, and the members who sit in a voice channel right now with that channel, whether they are away and whether their microphone is muted, their sound is off or their camera or screen share is on, as JSON, for a widget on your website, a bot or a stream overlay. Members outside every voice channel are not listed. It is off by default (404). In the admin panel under Server you choose whether it needs the server's key (`Authorization: Bearer <key>` or `?key=<key>`; the panel shows the key and can replace it) or is public. There you also choose whose view it answers with: the default role, i.e. what an ordinary visitor sees and what private channels leave out, or another role, which then shows what a member with that role sees (a role with Administrator shows everything). Avatars are the directory account pictures (public there anyway); public keys, roles, permissions and messages are never included.
+
+### Plugins
+
+A plugin is one JavaScript or TypeScript file that the server runs itself, in a sandbox: an engine of its own (QuickJS in WebAssembly, in a worker thread) that offers the language and a fixed set of functions, and nothing else. A plugin has no access to files, the network, the database or the configuration, and it never puts code into anybody's app: whatever it shows is drawn by the app from data. It is not a bot and needs no token or endpoint.
+
+What a plugin can do, each only when the owner granted it while switching the plugin on: see the member list and learn of joins and role changes, give and take the roles an admin picked in its settings (never a role with administrator rights), read and write messages in the channels picked there, offer slash commands and entries in the member menu with a small dialog, keep data and schedule work for later. Two ship with the server and wait under "Verfügbar" in Verwaltung > Plugins: **timed roles**, which gives a member a role for a time and takes it away again, and **birthdays**, where members enter their birthday with `/birthday` and are congratulated in a channel on the day (with their age if they gave the year; `/birthdays` shows who comes next).
+
+- **Install:** an owner uploads the file in Verwaltung > Plugins, or the operator runs `squorli plugin add <file>` on the machine. A plugin is installed switched off; switching it on shows what it asks for first.
+- **Limits:** one event of a plugin gets 200 ms of CPU time, 10 seconds in all and 32 MB of memory; a plugin that overruns is stopped without touching the others, and five failures within ten minutes suspend it until an owner switches it on again. Its log is in Verwaltung > Plugins and in `squorli plugin log <id>`.
+- **Switch it off for the whole server:** `PLUGINS=off`; `PLUGINS=operator` leaves installing to the command.
+- **Write one:** the guide is at <https://squorli.com/en/docs/plugins/>, the interface in [packages/plugin-api/index.d.ts](packages/plugin-api/index.d.ts), examples in [examples/plugins/](examples/plugins/) and the two that ship, [apps/server/plugins/](apps/server/plugins/). How it is built and what was checked: [docs/features/plugins.md](docs/features/plugins.md).
+
+Apps from before plugins keep working against a server that has them: a plugin's message appears as a notice line, the member menu's entries and the tab are missing there (the server's own web client has them).
 
 ## Reverse proxy
 

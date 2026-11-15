@@ -1498,3 +1498,117 @@ h3 > .category-btn:hover { color: var(--text); }
 /* Einstellungen > Spiele, "Wer mein Spiel sehen darf" (GamesTab.tsx): the people a search found, one button each. */
 .audience-suggest { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
 .audience-suggest button { width: 100%; display: flex; align-items: center; gap: 0.5rem; text-align: left; }
+
+/* ---- Plugins (docs/features/plugins.md, 15 November 2026). A plugin supplies data only: every look here is the client's. ---- */
+/* The one icon all plugins share, where a member's avatar stands (a plugin has no picture of its own). */
+.user-avatar.plugin-avatar { background: var(--bg4); color: var(--brand); font-size: 1.15rem; }
+.badge.plugin-badge { margin: 0; align-self: center; background: var(--bg4); color: var(--muted); }
+/* The fixed line on top of every dialog a plugin causes: the client's own, so no plugin can pass for the app. */
+.plugin-dialog.modal { width: min(32rem, 100%); padding: 0; gap: 0; max-height: min(44rem, 100%); overflow: hidden; }
+.plugin-chrome { gap: 0.5rem; background: var(--bg4); color: var(--muted); font-size: 0.875rem; font-weight: 600; border-radius: var(--r-panel, 20px) var(--r-panel, 20px) 0 0; }
+.plugin-chrome > .ic { color: var(--brand); font-size: 1.1rem; flex: none; }
+.plugin-chrome-name { min-width: 0; overflow-wrap: anywhere; }
+.plugin-dialog .dialog-body { margin-top: 0; padding: 1rem 1.25rem 1.25rem; overflow-y: auto; min-height: 0; }
+.plugin-dialog .dialog-body > h2 { margin: 0; overflow-wrap: anywhere; }
+.plugin-dialog .dialog-body > p { margin: 0; }
+.plugin-dialog .dialog-body > h2 + p.muted { margin-bottom: 0.35rem; }
+.plugin-result { display: flex; gap: 0.5rem; align-items: baseline; margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.plugin-result > .ic { color: var(--ok); flex: none; }
+.plugin-problem > .error { margin: 0; }
+/* ".modal .error" pads an error line as if it stood at the modal's edge; these stand inside their own boxes. */
+.modal :is(.plugin-problem, .plugin-field, .plugin-last-error, .plugin-dialog .dialog-body) > .error { padding: 0; }
+.plugin-problem-detail { margin: 0.35rem 0 0; padding: 0.5rem 0.65rem; max-height: 9rem; overflow: auto; border-radius: 8px; background: var(--bg); color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A plugin's fields (PluginForm.tsx). */
+.plugin-form { margin-top: 0; gap: 0.9rem; }
+.plugin-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.plugin-field > label, .plugin-field > legend, .plugin-field > .plugin-label { font-weight: 600; padding: 0; }
+.plugin-field > label.check { font-weight: 400; }
+.plugin-field :is(input[type="text"], select, textarea) { width: 100%; }
+.plugin-required { color: var(--warn); }
+.plugin-help { line-height: 1.4; }
+.plugin-newer { display: flex; gap: 0.4rem; align-items: baseline; }
+.plugin-ticks { gap: 0.25rem; }
+.plugin-ticks > legend { margin-bottom: 0.3rem; }
+.plugin-ticks .ic { font-size: 0.9em; color: var(--muted); }
+.duration-input { display: flex; flex-direction: column; gap: 0.4rem; }
+.duration-row { display: flex; gap: 0.5rem; }
+.duration-row > .duration-amount { flex: 1 1 5rem; min-width: 0; width: auto; }
+.duration-row > .duration-unit { flex: 1 1 8rem; min-width: 0; width: auto; }
+.date-input { display: flex; flex-direction: column; gap: 0.5rem; }
+/* The picker and the two lists that stand in its place are equally high, so the dialog does not move with the switch. */
+.date-input > .date-picker { width: 100%; }
+.date-input > .date-picker, .date-row > select { height: 2.75rem; }
+.date-row { display: flex; gap: 0.5rem; }
+.date-row > .date-day { flex: 1 1 5rem; min-width: 0; width: auto; }
+.date-row > .date-month { flex: 2 1 9rem; min-width: 0; width: auto; }
+.plugin-field .date-no-year { font-weight: 400; }
+.duration-presets { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.duration-presets button { padding: 0.25rem 0.7rem; }
+.duration-presets button.active { background: var(--sel); box-shadow: inset 0 0 0 1px var(--brand); }
+/* Verwaltung > Plugins. */
+.plugin-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.plugin-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.75rem; border: 1px solid var(--line); border-radius: var(--r); min-width: 0; }
+.plugin-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; text-align: left; }
+button.plugin-row-main { background: transparent; color: var(--text); font-weight: 400; padding: 0; border-radius: 6px; }
+button.plugin-row-main:hover { background: transparent; }
+button.plugin-row-main:hover strong { text-decoration: underline; }
+.plugin-row-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.5rem; overflow-wrap: anywhere; }
+.plugin-row-desc { overflow-wrap: anywhere; }
+.plugin-last-error { overflow-wrap: anywhere; }
+.plugin-last-error code { font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; }
+.plugin-row > button:not(.plugin-row-main), .plugin-row > input { flex: none; }
+.plugin-available-caps > summary { cursor: pointer; color: var(--muted); }
+.badge.plugin-state { margin: 0; text-transform: none; letter-spacing: 0; font-size: 0.75rem; white-space: nowrap; }
+.badge.plugin-state-disabled, .badge.plugin-state-other { background: var(--bg4); color: var(--muted); }
+.badge.plugin-state-suspended { background: var(--danger); color: var(--on-light); }
+.badge.plugin-state-needs_approval, .badge.plugin-state-incompatible { background: var(--warn); color: var(--on-light); }
+.plugin-caps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.plugin-cap { display: flex; gap: 0.55rem; align-items: baseline; line-height: 1.4; overflow-wrap: anywhere; }
+.plugin-cap > .ic { flex: none; color: var(--muted); }
+.plugin-cap.high > .ic { color: var(--warn); }
+.badge.plugin-risk { background: var(--warn); color: var(--on-light); text-transform: none; letter-spacing: 0; white-space: nowrap; }
+.plugin-detail-head { margin-top: 0; }
+.plugin-title { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.plugin-title-text { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.plugin-title-text > strong { font-size: 1.15rem; }
+.plugin-title > .check { margin: 0; }
+.plugin-description { margin: 0; }
+.plugin-meta td:first-child { color: var(--muted); white-space: nowrap; }
+.plugin-meta code, .plugin-command-name { font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; }
+.plugin-command-name { margin-right: 0.6rem; }
+h3.plugin-section-head { display: flex; align-items: center; gap: 0.5rem; }
+h3.plugin-section-head > span { flex: 1; min-width: 0; }
+.plugin-table-wrap { max-width: 100%; overflow-x: auto; }
+.plugin-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.plugin-table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.8rem; }
+.plugin-table th, .plugin-table td { padding: 0.35rem 1rem 0.35rem 0; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.plugin-table tr:last-child td { border-bottom: 0; }
+.plugin-log { display: flex; flex-direction: column; gap: 0.3rem; max-height: 22rem; overflow-y: auto; padding: 0.6rem 0.75rem; border-radius: var(--r); background: var(--bg); font-size: 0.85rem; }
+.plugin-log-line { display: grid; grid-template-columns: 9.5rem 7.5rem minmax(0, 1fr); gap: 0.75rem; align-items: baseline; }
+.plugin-log-who { color: var(--muted); }
+.plugin-log-line.level-warn .plugin-log-who { color: var(--warn); }
+.plugin-log-line.level-error .plugin-log-who { color: var(--danger); }
+.plugin-log-text { font-family: ui-monospace, Consolas, monospace; font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The composer: the command list (the mention list's box) and a command's answer, which only the caller sees. */
+.command-suggest { width: min(34rem, calc(100% - 1.5rem)); }
+.command-suggest li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 0.75rem; }
+.command-suggest-name { font-weight: 600; white-space: nowrap; }
+.command-suggest-hint { font-weight: 400; font-style: italic; }
+.command-suggest-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.command-suggest .command-suggest-plugin { margin-left: 0; white-space: nowrap; }
+.plugin-note { display: flex; gap: 0.6rem; align-items: flex-start; margin: 0 0 0.35rem; padding: 0.55rem 0.5rem 0.55rem 0.75rem; border: 1px solid var(--line); border-left: 3px solid var(--brand); border-radius: var(--r); background: var(--bg2); }
+.plugin-note.failed { border-left-color: var(--danger); }
+.plugin-note-icon { flex: none; color: var(--brand); line-height: 1.5; }
+.plugin-note-body { flex: 1; min-width: 0; }
+.plugin-note-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.5rem; }
+.plugin-note-text { margin: 0.15rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9rem; overflow-y: auto; }
+.plugin-note .plugin-problem { margin-top: 0.15rem; }
+.plugin-note > button.icon { flex: none; }
+@media (max-width: 700px) {
+  .plugin-row { flex-wrap: wrap; }
+  .plugin-row-main { flex-basis: calc(100% - 3.5rem); }
+  .plugin-log-line { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .command-suggest li { grid-template-columns: minmax(0, 1fr); gap: 0.1rem; }
+  .command-suggest-desc { white-space: normal; }
+  .plugin-dialog.modal { max-height: 100%; }
+}

@@ -15,7 +15,7 @@ import type { VoicePresence } from "../voice/presence";
  * for Verwaltung > Server. Fetched only there, never part of the settings every member gets: the storage total walks the
  * data folder (StorageMeter caches it for a moment).
  */
-export async function registerLimitsRoutes(app: FastifyInstance, db: Db, config: Config, meter: StorageMeter, presence: VoicePresence<unknown>, lk: LivekitAdmin) {
+export async function registerLimitsRoutes(app: FastifyInstance, db: Db, config: Config, meter: StorageMeter, presence: VoicePresence<unknown>, lk: LivekitAdmin, pluginUsage: (() => NonNullable<LimitsReport["plugins"]>) | null = null) {
   app.get("/api/settings/limits", async (req, reply) => {
     const m = await requireMember(db, req, reply);
     if (!m) return;
@@ -27,6 +27,7 @@ export async function registerLimitsRoutes(app: FastifyInstance, db: Db, config:
       members: { count: mc?.n ?? 0, max: config.MEMBER_MAX ?? null },
       maxUploadMb: config.MAX_UPLOAD_MB,
       dbPoolMax: config.DB_POOL_MAX,
+      ...(pluginUsage ? { plugins: pluginUsage() } : {}),
     };
     return report;
   });

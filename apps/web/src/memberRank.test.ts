@@ -1,6 +1,6 @@
 import { Permission, type Role } from "@squorli/protocol";
 import { describe, expect, it } from "vitest";
-import { assignableRoles, canSetRolesOf, permissionsOf, rolesByRank, topPositionOf } from "./memberRank";
+import { assignableRoles, canSetRolesOf, outranks, permissionsOf, rolesByRank, topPositionOf } from "./memberRank";
 
 const role = (id: string, position: number, isDefault = false): Role => ({ id, name: id, color: null, permissions: 0, position, isDefault });
 const roles = [role("guest", 0, true), role("member", 1), role("mod", 5), role("admin", 9)];
@@ -9,6 +9,17 @@ const founder = m("founder", [], true); const owner2 = m("owner2", ["member"], t
 const admin = m("admin", ["admin"]); const mod = m("mod", ["mod", "member"]); const guest = m("guest", []);
 
 describe("member rank", () => {
+  it("lets nobody act on themselves or on an owner, otherwise an owner or a higher role (the server's outranks)", () => {
+    expect(outranks(admin, mod, roles)).toBe(true);
+    expect(outranks(mod, admin, roles)).toBe(false);
+    expect(outranks(mod, m("mod2", ["mod"]), roles)).toBe(false);
+    expect(outranks(mod, mod, roles)).toBe(false);
+    expect(outranks(founder, founder, roles)).toBe(false);
+    expect(outranks(founder, owner2, roles)).toBe(false);
+    expect(outranks(owner2, admin, roles)).toBe(true);
+    expect(outranks(admin, owner2, roles)).toBe(false);
+    expect(outranks(mod, guest, roles)).toBe(true);
+  });
   it("takes the highest role, the default role included, and puts owners above everything", () => {
     expect(topPositionOf(guest, roles)).toBe(0);
     expect(topPositionOf(mod, roles)).toBe(5);

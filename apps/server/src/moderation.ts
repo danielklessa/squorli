@@ -2,6 +2,7 @@ import { and, eq, gt, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "./db";
 import { attachments, messages } from "./db/schema";
+import { serverEvents } from "./events";
 import type { Hub } from "./hub";
 
 /**
@@ -19,6 +20,9 @@ export async function deleteRecentMessagesOf(app: FastifyInstance, db: Db, hub: 
   await app.removeAttachmentFiles(files.map((f) => f.id));
   const byChannel = new Map<string, string[]>();
   for (const r of rows) byChannel.set(r.channelId, [...(byChannel.get(r.channelId) ?? []), r.id]);
-  for (const [channelId, list] of byChannel) hub.broadcastToChannel(channelId, { type: "message.bulkDelete", channelId, ids: list });
+  for (const [channelId, list] of byChannel) {
+    hub.broadcastToChannel(channelId, { type: "message.bulkDelete", channelId, ids: list });
+    serverEvents.emit("message.delete", { channelId, messageIds: list }, { kind: "system" });
+  }
   return { count: ids.length, channels: [...byChannel.keys()] };
 }

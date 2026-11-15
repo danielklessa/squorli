@@ -1,0 +1,162 @@
+{
+  "apiVersion": 1,
+  "apiMin": 1,
+  "capabilities": [
+    {
+      "id": "members.read",
+      "risk": "low",
+      "text": {
+        "en": "See the member list (names, roles, when somebody joined) and learn when members join, leave or change roles.",
+        "de": "Die Mitgliederliste sehen (Namen, Rollen, Beitrittsdatum) und erfahren, wenn Mitglieder beitreten, gehen oder Rollen wechseln."
+      }
+    },
+    {
+      "id": "roles.manage",
+      "risk": "high",
+      "text": {
+        "en": "Give and take the roles you pick in its settings. Never roles with administrator rights.",
+        "de": "Die Rollen vergeben und entziehen, die du in seinen Einstellungen auswählst. Nie Rollen mit Administratorrecht."
+      }
+    },
+    {
+      "id": "messages.read",
+      "risk": "high",
+      "text": {
+        "en": "Read every message in the channels you pick in its settings.",
+        "de": "Alle Nachrichten in den Kanälen lesen, die du in seinen Einstellungen auswählst."
+      }
+    },
+    {
+      "id": "messages.write",
+      "risk": "low",
+      "text": {
+        "en": "Write messages under its own name in the channels you pick in its settings, and where a member runs one of its commands.",
+        "de": "Unter eigenem Namen Nachrichten schreiben: in den Kanälen, die du in seinen Einstellungen auswählst, und dort, wo ein Mitglied einen seiner Befehle ausführt."
+      }
+    }
+  ],
+  "events": [
+    "enable",
+    "disable",
+    "settings.change",
+    "member.join",
+    "member.leave",
+    "member.roles",
+    "role.delete",
+    "message.create",
+    "message.update",
+    "message.delete",
+    "command",
+    "memberAction",
+    "view",
+    "job"
+  ],
+  "functions": [
+    "roles.list",
+    "roles.give",
+    "roles.take",
+    "members.list",
+    "members.get",
+    "channels.list",
+    "messages.history",
+    "messages.send",
+    "messages.edit",
+    "messages.delete",
+    "storage.get",
+    "storage.set",
+    "storage.delete",
+    "storage.list",
+    "schedule.at",
+    "schedule.cancel",
+    "schedule.list",
+    "settings.get",
+    "log.info",
+    "log.warn",
+    "log.error"
+  ],
+  "fieldTypes": [
+    "text",
+    "number",
+    "boolean",
+    "select",
+    "role",
+    "roles",
+    "channel",
+    "channels",
+    "member",
+    "duration",
+    "date"
+  ],
+  "viewColumnTypes": [
+    "text",
+    "member",
+    "role",
+    "channel",
+    "time",
+    "duration"
+  ],
+  "permissions": [
+    "ADMINISTRATOR",
+    "MANAGE_SERVER",
+    "MANAGE_CHANNELS",
+    "MANAGE_ROLES",
+    "KICK_MEMBERS",
+    "BAN_MEMBERS",
+    "CREATE_INVITES",
+    "VIEW_CHANNELS",
+    "SEND_MESSAGES",
+    "MANAGE_MESSAGES",
+    "CONNECT_VOICE",
+    "ATTACH_FILES",
+    "STREAM_VIDEO",
+    "MODERATE_VOICE",
+    "VIEW_VIDEO",
+    "CONTROL_RADIO",
+    "MOVE_MEMBERS",
+    "BYPASS_STICKY",
+    "MANAGE_REPORTS",
+    "ADD_REACTIONS",
+    "MANAGE_NOTICES"
+  ],
+  "limits": {
+    "eventWallSeconds": 10,
+    "hostCallsPerEvent": 50,
+    "eventQueue": 100,
+    "jsonKb": 64,
+    "cpuMs": 200,
+    "memoryMb": 32,
+    "storageMb": 5,
+    "pluginsMax": 20,
+    "perMinute": {
+      "calls": 300,
+      "roles": 60,
+      "messages": 20,
+      "storageWrites": 120,
+      "logLines": 60
+    },
+    "storageKeys": 10000,
+    "storageKeyChars": 128,
+    "jobs": 1000,
+    "jobPayloadKb": 4,
+    "jobRetrySeconds": [
+      120,
+      600,
+      3600
+    ],
+    "messageChars": 4000,
+    "historyMessages": 50,
+    "membersPage": 100,
+    "logLineChars": 1000,
+    "logLinesKept": 2000,
+    "logDays": 30,
+    "failuresToSuspend": 5,
+    "failureWindowMinutes": 10,
+    "sourceKb": 256,
+    "settingsFields": 30,
+    "formFields": 10,
+    "commands": 20,
+    "memberActions": 10,
+    "views": 5,
+    "viewRows": 500
+  }
+}

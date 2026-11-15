@@ -2,12 +2,9 @@ import { REACTIONS_PER_MESSAGE_MAX, type ReactionChip } from "@squorli/protocol"
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { Db } from "./db";
-import { memberRoles, messageReactions, reactionRoles, roles } from "./db/schema";
+import { messageReactions, reactionRoles } from "./db/schema";
 import type { Hub } from "./hub";
-import type { LivekitAdmin } from "./livekit/admin";
-import { syncVoiceAccessOf } from "./livekit/sync";
-import { broadcastStructure } from "./state";
-import type { VoicePresence } from "./voice/presence";
+import { changeMemberRole, type RoleDeps } from "./memberRoles";
 
 /**
  * Emoji reactions and reaction roles (docs/features/reactions.md, 6 October 2026): what the routes (routes/reactions.ts) and
@@ -99,25 +96,17 @@ export async function pruneForeignReactions(db: Db, messageId: string): Promise<
   return gone.length > 0;
 }
 
-export type RoleDeps = { db: Db; hub: Hub; presence: VoicePresence; lk: LivekitAdmin };
+export type { RoleDeps } from "./memberRoles";
 
 /**
  * A reaction role fires: give (`give` true) or take away (false, only with the rule's `removeOnUnreact`, the caller decides)
- * the role. The same steps as `PUT /api/members/:id/roles`: the row, the LiveKit grants of a seated member, the structure
- * broadcast (which also sends the member their new channel list). No moderation-log entry: it is the member's own action.
- * Returns whether anything changed. Never the default role (a rule cannot name it; guarded anyway).
+ * the role, on the one path that changes a member's roles (memberRoles.ts). No moderation-log entry: it is the member's own
+ * action. Returns whether anything changed. Never the default role (a rule cannot name it; guarded there anyway).
  */
-export async function applyReactionRole({ db, hub, presence, lk }: RoleDeps, rule: { roleId: string; messageId: string }, userId: string, give: boolean, log?: FastifyBaseLogger): Promise<boolean> {
-  const [role] = await db.select({ id: roles.id, isDefault: roles.isDefault }).from(roles).where(eq(roles.id, rule.roleId)).limit(1);
-  if (!role || role.isDefault) return false;
-  const changed = give
-    ? await db.insert(memberRoles).values({ userId, roleId: role.id }).onConflictDoNothing().returning({ roleId: memberRoles.roleId })
-    : await db.delete(memberRoles).where(and(eq(memberRoles.userId, userId), eq(memberRoles.roleId, role.id))).returning({ roleId: memberRoles.roleId });
-  if (changed.length === 0) return false;
-  log?.info({ userId, roleId: role.id, messageId: rule.messageId, give }, give ? "Reaktionsrolle vergeben" : "Reaktionsrolle entzogen");
-  await syncVoiceAccessOf(db, hub, presence, lk, { userIds: [userId] });
-  await broadcastStructure(db, hub, ["members"]);
-  return true;
+export async function applyReactionRole(deps: RoleDeps, rule: { roleId: string; messageId: string }, userId: string, give: boolean, log?: FastifyBaseLogger): Promise<boolean> {
+  const changed = await changeMemberRole(deps, userId, rule.roleId, give, { kind: "reaction", userId });
+  if (changed) log?.info({ userId, roleId: rule.roleId, messageId: rule.messageId, give }, give ? "Reaktionsrolle vergeben" : "Reaktionsrolle entzogen");
+  return changed;
 }
 
 /** Tell everybody who sees the channel what the message's reactions are now (the whole list, nobody's `me`). */

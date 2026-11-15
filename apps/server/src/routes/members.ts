@@ -17,6 +17,9 @@ import { channelBlockStore } from "../voice/channelBlocks";
 import type { VoicePresence } from "../voice/presence";
 import { setHold } from "../voice/sticky";
 import { recordModLog, userNameOf } from "../modLog";
+import { serverEvents } from "../events";
+import { setMemberRoles } from "../memberRoles";
+import { isPluginUserKey } from "../plugins/service";
 import { deleteRecentMessagesOf } from "../moderation";
 
 const Params = { type: "object", properties: { id: { type: "string", format: "uuid" } }, required: ["id"] } as const;
@@ -26,7 +29,7 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     return actorOf(db, userId);
   }
 
-  async function removeMember(userId: string, reason: "kicked" | "banned", message: string | null) {
+  async function removeMember(userId: string, reason: "kicked" | "banned", message: string | null, by: string) {
     // Voice is a connection of its own: without this a modified client stayed in the LiveKit room after a kick or ban, hearing
     // and speaking (security audit, 2 October 2026, S4). Taken before the presence forgets the seat.
     const seat = presence.channelOfUser(userId);
@@ -34,7 +37,9 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     // Their channel overwrites too: the users row stays (a kicked member may come back), so no cascade does it.
     await db.delete(channelOverwrites).where(eq(channelOverwrites.userId, userId));
     await db.delete(categoryOverwrites).where(eq(categoryOverwrites.userId, userId));
-    await db.delete(members).where(eq(members.userId, userId));
+    const gone = await db.delete(members).where(eq(members.userId, userId)).returning({ userId: members.userId });
+    // Told only for a membership that ended: a ban may name somebody who was kicked before (events.ts).
+    if (gone.length) serverEvents.emit("member.leave", { userId, reason }, { kind: "user", userId: by });
     presence.leaveUser(userId);
     moveGrants.clear(userId);
     voteKicks.clearUser(userId);
@@ -87,12 +92,8 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     // position alone a helper with MANAGE_ROLES gave themselves any role below their own, ADMINISTRATOR included.
     if (changed.some((r) => !canGrant(m.actor, r.permissions))) return reply.code(403).send({ error: "cannot_grant" });
 
-    await db.delete(memberRoles).where(eq(memberRoles.userId, target.userId));
-    const toInsert = wanted.filter((r) => !r.isDefault).map((r) => ({ userId: target.userId, roleId: r.id }));
-    if (toInsert.length) await db.insert(memberRoles).values(toInsert);
-    // A member sitting in a voice channel: their LiveKit grants follow the new roles (camera/screen), see livekit/sync.ts.
-    await syncVoiceAccessOf(db, hub, presence, lk, { userIds: [target.userId] });
-    await broadcastStructure(db, hub, ["members"]);
+    // The rows, the LiveKit grants of a member sitting in a voice channel, the broadcast and the event: memberRoles.ts.
+    await setMemberRoles({ db, hub, presence, lk }, target.userId, wanted.filter((r) => !r.isDefault).map((r) => r.id), { kind: "user", userId: m.userId });
     return { ok: true };
   });
 
@@ -178,7 +179,7 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     if (!target) return reply.code(404).send({ error: "not_found" });
     if (!outranks(m.actor, target)) return reply.code(403).send({ error: "target_above_you" });
     const kickedName = await userNameOf(db, target.userId);
-    await removeMember(target.userId, "kicked", null);
+    await removeMember(target.userId, "kicked", null, m.userId);
     req.log.info({ by: m.userId, target: target.userId }, "Mitglied gekickt");
     await recordModLog(db, { actorId: m.userId, actorName: displayNameOf(m), targetUserId: target.userId, targetName: kickedName, action: "kick" }, req.log);
     await broadcastStructure(db, hub, ["members"]);
@@ -203,15 +204,16 @@ export async function registerMemberRoutes(app: FastifyInstance, db: Db, hub: Hu
     if (!can(m.actor, Permission.BAN_MEMBERS)) return reply.code(403).send({ error: "forbidden" });
     const body = BanRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
-    const [user] = await db.select({ id: users.id }).from(users).where(eq(users.id, body.data.userId)).limit(1);
-    if (!user) return reply.code(404).send({ error: "not_found" });
+    const [user] = await db.select({ id: users.id, publicKey: users.publicKey }).from(users).where(eq(users.id, body.data.userId)).limit(1);
+    // A plugin's own user (the author of its messages) is nobody to ban: a moderator deletes the message or an owner the plugin.
+    if (!user || isPluginUserKey(user.publicKey)) return reply.code(404).send({ error: "not_found" });
     if (user.id === m.userId) return reply.code(400).send({ error: "cannot_ban_self" });
     const target = await targetOf(user.id);
     // Non-members (already kicked) may be banned afterwards; members only below your own position.
     if (target && !outranks(m.actor, target)) return reply.code(403).send({ error: "target_above_you" });
     const bannedName = await userNameOf(db, user.id);
     await db.insert(bans).values({ userId: user.id, bannedBy: m.userId, reason: body.data.reason ?? null }).onConflictDoNothing();
-    await removeMember(user.id, "banned", body.data.reason ?? null);
+    await removeMember(user.id, "banned", body.data.reason ?? null, m.userId);
     // "Delete messages of the last ..." (docs/features/reports.md): their messages of that window in every channel, one bulk event per channel.
     const wiped = body.data.deleteMessagesHours ? await deleteRecentMessagesOf(app, db, hub, user.id, body.data.deleteMessagesHours * 3_600_000) : null;
     // A ban ends every session here (security review, 25 September 2026); a kicked member keeps theirs to come back with an invite.

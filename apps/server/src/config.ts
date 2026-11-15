@@ -49,6 +49,19 @@ const Env = z.object({
   MEMBER_MAX: z.coerce.number().int().positive().optional(),
   DB_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
   /**
+   * Plugins the server runs itself (docs/features/plugins.md, 15 November 2026). PLUGINS: `owner` (default) = an owner may
+   * upload plugins in Verwaltung and the operator installs them with `squorli plugin`; `operator` = only the command;
+   * `off` = no plugins at all (nothing is loaded, the routes answer 404, clients show no trace). PLUGIN_MAX = how many may
+   * be installed. PLUGIN_CPU_MS = CPU time one event of a plugin may use; PLUGIN_MEMORY_MB = the memory of one plugin's
+   * sandbox (at least 16, the engine's own start size); PLUGIN_STORAGE_MB = what one plugin may keep in the database.
+   * Worst case in memory: every enabled plugin running at once, about PLUGIN_MEMORY_MB + 14 MB each.
+   */
+  PLUGINS: z.enum(["off", "operator", "owner"]).default("owner"),
+  PLUGIN_MAX: z.coerce.number().int().min(1).max(100).default(20),
+  PLUGIN_CPU_MS: z.coerce.number().int().min(20).max(5000).default(200),
+  PLUGIN_MEMORY_MB: z.coerce.number().int().min(16).max(512).default(32),
+  PLUGIN_STORAGE_MB: z.coerce.number().positive().max(1024).default(5),
+  /**
    * The address LiveKit announces for media (its `rtc.node_ip`; in `deploy/compose.yml` the same variable configures
    * LiveKit itself). The setup check probes the media ports there when it is set; otherwise it uses the host of
    * LIVEKIT_PUBLIC_URL when that differs from PUBLIC_DOMAIN, else PUBLIC_DOMAIN (a media node on another machine).
@@ -129,6 +142,11 @@ const Env = z.object({
    */
   LINK_PREVIEW_TEST_ORIGIN: z.string().url().optional(),
 });
+
+/** The defaults of the plugin variables, as the schema has them (for packages/plugin-api/reference.json, which the guide is held against). */
+export function pluginDefaults(): { PLUGIN_MAX: number; PLUGIN_CPU_MS: number; PLUGIN_MEMORY_MB: number; PLUGIN_STORAGE_MB: number } {
+  return Env.pick({ PLUGIN_MAX: true, PLUGIN_CPU_MS: true, PLUGIN_MEMORY_MB: true, PLUGIN_STORAGE_MB: true }).parse({});
+}
 
 /** `publicOrigin`: where the outside reaches this server (absolute links in the status API): https://PUBLIC_DOMAIN, in dev http://localhost:PORT. */
 export type Config = z.infer<typeof Env> & { trustedProxies: string[]; livekitPublicUrl: string; directoryProofUrl: string; publicOrigin: string };

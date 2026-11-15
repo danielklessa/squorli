@@ -74,6 +74,10 @@ export const LIMITS = {
   tokenReports: { limit: 10, windowMs: 3_600_000 },
   /** Uploads per session (attachments and the server account's avatar). */
   tokenUploads: { limit: 30, windowMs: 60_000 },
+  /** A plugin's member actions and slash commands per session (docs/features/plugins.md): each one runs a plugin's handler. */
+  tokenPluginCalls: { limit: 30, windowMs: 60_000 },
+  /** The operator's plugin routes per IP (`squorli plugin`, /api/operator/plugins): each try compares the machine's token. */
+  ipOperator: { limit: 30, windowMs: 60_000 },
   /** Events on one WebSocket (typing, activity, voice state, ping). */
   wsEvents: { limit: 60, windowMs: 10_000 },
 } as const;
@@ -102,6 +106,8 @@ export function buildRules(factor: number): Rule[] {
     r("tokenMessages", "token", (m, p) => m === "POST" && /^\/api\/channels\/[^/]+\/messages$/.test(p)),
     r("tokenReports", "token", (m, p) => m === "POST" && p === "/api/reports"),
     r("tokenUploads", "token", (m, p) => (m === "POST" && p === "/api/attachments") || (m === "PUT" && p === "/api/me/avatar")),
+    r("tokenPluginCalls", "token", (m, p) => m === "POST" && (p === "/api/channels/:id/commands" || p === "/api/plugins/:id/member-actions/:actionId")),
+    r("ipOperator", "ip", (_m, p) => p.startsWith("/api/operator/")),
   ];
 }
 

@@ -20,6 +20,7 @@
     "smoke": "pnpm --filter @squorli/server smoke",
     "smoke:suspended": "pnpm --filter @squorli/server smoke:suspended",
     "smoke:devices": "pnpm --filter @squorli/server smoke:devices",
+    "smoke:plugins": "pnpm --filter @squorli/server smoke:plugins",
     "bots": "node tools/bots.mjs",
     "docker:dev": "docker compose -f deploy/compose.dev.yml up -d",
     "docker:dev:down": "docker compose -f deploy/compose.dev.yml down"

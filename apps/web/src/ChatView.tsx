@@ -1,8 +1,8 @@
 import { AutoGrowTextarea } from "./AutoGrowTextarea";
 import { Avatar } from "./Avatar";
-import { Permission, hasPermission, type Channel, type Member, type Message, type Role } from "@squorli/protocol";
+import { Permission, hasPermission, pluginText, type Channel, type Member, type Message, type PluginCommand, type PluginSurface, type PluginText, type Role } from "@squorli/protocol";
 import { ApiError } from "./api";
-import { reactionErrorText } from "./apiErrorText";
+import { pluginProblem, reactionErrorText } from "./apiErrorText";
 import type { BlockControls } from "./blocked";
 import { slowmodeLabel, slowmodeRemaining } from "./channelPerms";
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
@@ -14,13 +14,16 @@ import { ReactionRolesDialog } from "./ReactionRolesDialog";
 import { LinkPreviews } from "./LinkPreviews";
 import { MentionContext, MessageText } from "./MessageText";
 import { useMentionSuggest } from "./MentionSuggest";
+import { useCommandSuggest } from "./CommandSuggest";
+import { PluginFormDialog, PluginProblemText } from "./PluginFormDialog";
+import { parseCommandDraft, usableCommands } from "./pluginFields";
 import { decodeMentions, encodeMentions, mentionsUser } from "./mentions";
 import { pastedFiles } from "./pasteFiles";
 import { safeHref } from "./safeHref";
 import { ReportDialog, reportEvidence, type DirectorySide, type ReportTarget } from "./ReportDialog";
 import type { ChannelMessages } from "./store";
 import type { ServerConnection } from "./serverConnection";
-import { fmtDay, fmtTime, t } from "./i18n";
+import { fmtDay, fmtTime, locale, t } from "./i18n";
 
 type Props = {
   channel: Channel;
@@ -44,6 +47,12 @@ type Props = {
   canReactionRoles?: boolean;
   /** The server's roles, for the chips' tooltips and the rules dialog. */
   roles?: readonly Role[];
+  /**
+   * What the enabled plugins add (docs/features/plugins.md): their slash commands in the composer. undefined = a server
+   * without plugins. `channels` = the channels this member sees, for a command's form.
+   */
+  plugins?: PluginSurface | undefined;
+  channels?: readonly Channel[];
 };
 
 const GROUP_MS = 5 * 60_000;
@@ -67,7 +76,7 @@ function PendingFile({ file, onRemove }: { file: File; onRemove: () => void }) {
   );
 }
 
-export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null, passOn = null, canReactionRoles = false, roles = [] }: Props) {
+export function ChatView({ channel, messages, members, myUserId, myPermissions, typing, conn, canReport = false, serverName = "", blocked = null, passOn = null, canReactionRoles = false, roles = [], plugins, channels = [] }: Props) {
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   // Reactions (docs/features/reactions.md): the picker opened from a message's toolbar, and the rules dialog of a message.
   const [pickerFor, setPickerFor] = useState<{ id: string; anchor: HTMLElement } | null>(null);
@@ -90,6 +99,25 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
   const mention = useMentionSuggest({ inputRef, value: draft, onChange: setDraft, members });
   // The edit field has its own list; its `picked` starts with the people the message already mentions (startEdit).
   const editMention = useMentionSuggest({ inputRef: editRef, value: editing?.text ?? "", onChange: (text) => setEditing((cur) => cur && { ...cur, text }), members, below: true });
+  // Slash commands of the plugins (docs/features/plugins.md): the ones whose permission the member holds in THIS channel
+  // (`myPermissions` is the channel's mask); none while files are attached, a command takes none.
+  const commands = useMemo(() => (files.length > 0 ? [] : usableCommands(plugins, myPermissions)), [plugins, myPermissions, files.length]);
+  /** A command with a form whose dialog is open. */
+  const [commandForm, setCommandForm] = useState<PluginCommand | null>(null);
+  /** What a command answered: for the caller only, shown above the composer until dismissed. */
+  const [commandNote, setCommandNote] = useState<{ plugin: PluginText; text: string; detail: string | null; failed: boolean } | null>(null);
+  const command = useCommandSuggest({ inputRef, commands, onAccept: (c) => {
+    if (c.input === "form") { setDraft(""); setCommandForm(c); return; }
+    if (c.input === "text") {
+      // The composer keeps "/name " and Enter sends what follows as the command's text.
+      const next = `/${c.name} `;
+      setDraft(next);
+      requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(next.length, next.length); });
+      return;
+    }
+    setDraft("");
+    void runCommand(c);
+  } });
   const canSend = hasPermission(myPermissions, Permission.SEND_MESSAGES);
   const canAttach = hasPermission(myPermissions, Permission.ATTACH_FILES);
   const canManage = hasPermission(myPermissions, Permission.MANAGE_MESSAGES);
@@ -116,7 +144,7 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
   }, [waitLeft]);
 
   // Stay at the bottom when switching channels and on new messages, unless the user has scrolled up.
-  useEffect(() => { stickToBottom.current = true; setDraft(""); setFiles([]); setEditing(null); setLastSentAt(null); setPickerFor(null); setRulesFor(null); mention.picked.clear(); mention.close(); editMention.close(); }, [channel.id]);
+  useEffect(() => { stickToBottom.current = true; setDraft(""); setFiles([]); setEditing(null); setLastSentAt(null); setPickerFor(null); setRulesFor(null); setCommandForm(null); setCommandNote(null); mention.picked.clear(); mention.close(); command.close(); editMention.close(); }, [channel.id]);
   useEffect(() => {
     const el = listRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
@@ -140,8 +168,37 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
     }
   }
 
+  /**
+   * Run a plugin's command in this channel instead of posting a message. The answer's `message` is for the caller only
+   * (the line above the composer); what the plugin posts publicly arrives like any message. true = it ran.
+   */
+  async function runCommand(c: PluginCommand, text?: string): Promise<boolean> {
+    if (sending) return false;
+    setSending(true); setErr(null); setCommandNote(null);
+    try {
+      const r = await conn.api.runCommand(channel.id, { plugin: c.plugin, name: c.name, ...(text !== undefined ? { text } : {}) });
+      const said = pluginText(r.message, locale);
+      if (said || !r.ok) setCommandNote({ plugin: c.pluginName, text: said || t("plugin.notDone"), detail: null, failed: !r.ok });
+      return r.ok;
+    } catch (e) {
+      const problem = pluginProblem(e);
+      setCommandNote({ plugin: c.pluginName, text: problem.text, detail: problem.detail, failed: true });
+      return false;
+    } finally { setSending(false); inputRef.current?.focus(); }
+  }
+
   async function submit() {
     const content = draft.trim();
+    // "/name" or "/name rest" with the name of a command the member may use here runs it; any other draft that starts
+    // with a slash ("//…", an unknown name) is a message as it always was.
+    const asCommand = parseCommandDraft(draft, commands);
+    if (asCommand) {
+      if (sending) return;
+      command.close();
+      if (asCommand.command.input === "form") { setDraft(""); setCommandForm(asCommand.command); return; }
+      if (await runCommand(asCommand.command, asCommand.command.input === "text" ? asCommand.text : undefined)) setDraft("");
+      return;
+    }
     if ((!content && files.length === 0) || sending || waitLeft > 0) return;
     setSending(true); setErr(null);
     try {
@@ -172,9 +229,11 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
   }
 
   function onKey(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (command.onKeyDown(e)) return;   // the command list first: it is only open while the draft is a "/name"
     if (mention.onKeyDown(e)) return;   // the suggestion list takes arrows, Enter, Tab and Escape while it is open
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
-    else if (Date.now() - lastTyping.current > 2500) { lastTyping.current = Date.now(); conn.typing(channel.id); }
+    // No "is typing" while a command is being written (from its slash on): nobody else gets to see it.
+    else if (!(commands.length > 0 && (draft === "" ? e.key === "/" : draft.startsWith("/") && !draft.startsWith("//"))) && Date.now() - lastTyping.current > 2500) { lastTyping.current = Date.now(); conn.typing(channel.id); }
   }
 
   function startEdit(m: { id: string; content: string }) {
@@ -210,8 +269,14 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
         {messages.loaded && !messages.hasMore && <p className="muted center">{t("chat.beginning", { name: channel.name })}</p>}
         {messages.list.map((m, i) => {
           const prev = messages.list[i - 1];
-          // A notice never groups: it carries no author, and the message after it needs its head again.
-          const grouped = prev && !prev.notice && !m.notice && prev.authorId === m.authorId && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
+          // Written by a plugin (docs/features/plugins.md): checked BEFORE the notice, because the server sends such a message
+          // with `notice: true` for apps from before plugins. Here it is a normal row whose head names the plugin.
+          const plugin = m.plugin ?? null;
+          const notice = m.notice && !plugin;
+          // A notice never groups: it carries no author, and the message after it needs its head again. A plugin counts as an
+          // author of its own, per member who caused the message (the head names that member).
+          const authorOf = (x: Message) => (x.plugin ? `plugin:${x.plugin.id}:${x.plugin.by ?? ""}` : x.authorId);
+          const grouped = prev && !(prev.notice && !prev.plugin) && !notice && authorOf(prev) === authorOf(m) && new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_MS;
           const newDay = !prev || fmtDay(prev.createdAt) !== fmtDay(m.createdAt);
           const mine = m.authorId === myUserId;
           const fromBlocked = blockedAuthors.has(m.authorId);
@@ -229,16 +294,25 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
           return (
             <div key={m.id}>
               {newDay && <div className="day-sep"><span>{fmtDay(m.createdAt)}</span></div>}
-              <article className={`msg ${m.notice ? "notice" : ""} ${grouped && !newDay ? "grouped" : ""} ${mentioned ? "mentions-me" : ""} ${pickerFor?.id === m.id ? "picker-open" : ""}`}>
+              <article className={`msg ${notice ? "notice" : ""} ${plugin ? "from-plugin" : ""} ${grouped && !newDay ? "grouped" : ""} ${mentioned ? "mentions-me" : ""} ${pickerFor?.id === m.id ? "picker-open" : ""}`}>
                 {/* A notice shows no author: only the time, where the avatar normally stands (user's wish, 6 October 2026). */}
-                {m.notice && <time className="muted notice-time" dateTime={m.createdAt} title={t("chat.notice")}>{fmtTime(m.createdAt)}</time>}
-                {!m.notice && !(grouped && !newDay) && (
+                {notice && <time className="muted notice-time" dateTime={m.createdAt} title={t("chat.notice")}>{fmtTime(m.createdAt)}</time>}
+                {!notice && !(grouped && !newDay) && (plugin ? (
+                  // The plugin's name as plain text, the one icon all plugins share where the avatar stands, and who caused it.
+                  <div className="msg-head">
+                    <span className="user-avatar plugin-avatar" aria-hidden="true"><Icon name="puzzle" /></span>
+                    <strong>{pluginText(plugin.name, locale) || plugin.id}</strong>
+                    <span className="badge plugin-badge">{t("plugin.badge")}</span>
+                    {plugin.by && <span className="muted small">{t("plugin.triggeredBy", { name: nameOf.get(plugin.by) ?? t("chat.formerMember") })}</span>}
+                    <time className="muted" dateTime={m.createdAt}>{fmtTime(m.createdAt)}</time>
+                  </div>
+                ) : (
                   <div className="msg-head">
                     <Avatar name={nameOf.get(m.authorId) ?? t("chat.formerMember")} src={avatarOf.get(m.authorId)} />
                     <strong>{nameOf.get(m.authorId) ?? t("chat.formerMember")}</strong>
                     <time className="muted" dateTime={m.createdAt}>{fmtTime(m.createdAt)}</time>
                   </div>
-                )}
+                ))}
                 <div className="msg-body">
                   {editing?.id === m.id ? (
                     <div className="edit-box">
@@ -265,9 +339,10 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
                     </>
                   )}
                 </div>
-                {(mine || canManage || canNotice || canReport || fromBlocked || (m.reactions && (canReact || canReactionRoles))) && editing?.id !== m.id && (
+                {(mine || canManage || (canNotice && !plugin) || canReport || fromBlocked || (m.reactions && (canReact || canReactionRoles))) && editing?.id !== m.id && (
                   <div className="msg-actions">
-                    {canNotice && (m.notice
+                    {/* Not on a plugin's message: its `notice` is only how apps from before plugins show it, and the server keeps it. */}
+                    {canNotice && !plugin && (m.notice
                       ? <button className="icon" title={t("chat.unmakeNotice")} onClick={() => conn.api.setNotice(m.id, false).catch((e: unknown) => setErr(String(e)))}><Icon name="megaphone-off" /></button>
                       : <button className="icon" title={t("chat.makeNotice")} onClick={() => conn.api.setNotice(m.id, true).catch((e: unknown) => setErr(String(e)))}><Icon name="megaphone" /></button>)}
                     {m.reactions && canReact && !m.reactions.some((c) => c.roleId) && <button className="icon" title={t("chat.react")} aria-haspopup="dialog" aria-expanded={pickerFor?.id === m.id} onClick={(e) => setPickerFor((cur) => (cur?.id === m.id ? null : { id: m.id, anchor: e.currentTarget }))}><Icon name="smile-plus" /></button>}
@@ -275,8 +350,10 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
                     {fromBlocked && <button className="icon" title={t("block.hide")} onClick={() => setRevealed((prev) => { const next = new Set(prev); next.delete(m.id); return next; })}><Icon name="eye-off" /></button>}
                     {!mine && canReport && <button className="icon" title={t("report.reportMessage")} onClick={() => {
                       const text = m.content ? decodeMentions(m.content, members).text : t("chat.attachments", { n: m.attachments.length });
-                      setReportedMessage({ text, authorName: nameOf.get(m.authorId) ?? "?", authorKey: members.find((x) => x.userId === m.authorId)?.publicKey ?? null, channelName: channel.name, sentAt: m.createdAt });
-                      setReportTarget({ kind: "message", messageId: m.id, authorId: m.authorId, authorName: nameOf.get(m.authorId) ?? "?", excerpt: text.slice(0, 200) });
+                      // A plugin's message is reported like any other; its author shows as the plugin's name.
+                      const authorName = plugin ? pluginText(plugin.name, locale) || plugin.id : nameOf.get(m.authorId) ?? "?";
+                      setReportedMessage({ text, authorName, authorKey: members.find((x) => x.userId === m.authorId)?.publicKey ?? null, channelName: channel.name, sentAt: m.createdAt });
+                      setReportTarget({ kind: "message", messageId: m.id, authorId: m.authorId, authorName, excerpt: text.slice(0, 200) });
                     }}><Icon name="flag" /></button>}
                     {mine && m.content && <button className="icon" title={t("chat.edit")} onClick={() => startEdit(m)}><Icon name="pencil" /></button>}
                     {(mine || canManage) && <button className="icon" title={t("common.delete")} onClick={() => { void askConfirm({ title: t("chat.deleteTitle"), text: m.content ? ((c) => c.slice(0, 160) + (c.length > 160 ? "…" : ""))(decodeMentions(m.content, members).text) : t("chat.attachments", { n: m.attachments.length }), confirmLabel: t("common.delete"), danger: true }).then((ok) => { if (ok) return conn.api.deleteMessage(m.id); }).catch((e) => setErr(String(e))); }}><Icon name="trash-2" /></button>}
@@ -294,9 +371,25 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
         directory={passOn && reportedMessage ? { store: passOn.store, host: passOn.host, passOn: { serverHost: passOn.serverHost, evidence: reportEvidence(reportedMessage) } } : null}
         server={{ api: conn.api, name: serverName, block: (() => { const a = blocked && reportTarget.kind === "message" ? members.find((x) => x.userId === reportTarget.authorId) : null; return a && blocked && !blocked.has(a.publicKey) ? { name: a.displayName, onBlock: () => blocked.onBlock(a.publicKey, a.displayName, !!a.handle) } : null; })() }} />}
 
+      {commandForm && <PluginFormDialog pluginName={commandForm.pluginName} title={`/${commandForm.name}`} intro={<p className="muted small">{pluginText(commandForm.description, locale)}</p>}
+        fields={commandForm.fields} context={{ roles, channels, members, me: me ?? null }} onClose={() => { setCommandForm(null); inputRef.current?.focus(); }}
+        onSubmit={(values) => conn.api.runCommand(channel.id, { plugin: commandForm.plugin, name: commandForm.name, values })} />}
+
       <footer className="composer">
         {mention.popup}
+        {command.popup}
         {err && <p className="error">{err}</p>}
+        {/* A command's answer (docs/features/plugins.md): only the caller sees it, so it stands here and not in the channel. */}
+        {commandNote && (
+          <div className={`plugin-note${commandNote.failed ? " failed" : ""}`} role="status">
+            <span className="plugin-note-icon"><Icon name="puzzle" /></span>
+            <div className="plugin-note-body">
+              <div className="plugin-note-head"><strong>{pluginText(commandNote.plugin, locale)}</strong><span className="badge plugin-badge">{t("plugin.badge")}</span><span className="muted small">{t("plugin.onlyYou")}</span></div>
+              {commandNote.failed ? <PluginProblemText problem={{ text: commandNote.text, detail: commandNote.detail }} /> : <p className="plugin-note-text">{commandNote.text}</p>}
+            </div>
+            <button className="icon" title={t("common.dismiss")} aria-label={t("common.dismiss")} onClick={() => setCommandNote(null)}><Icon name="x" /></button>
+          </div>
+        )}
         {files.length > 0 && (
           <div className="pending-files">
             {files.map((f, i) => <PendingFile key={i} file={f} onRemove={() => setFiles(files.filter((_, j) => j !== i))} />)}
@@ -312,11 +405,11 @@ export function ChatView({ channel, messages, members, myUserId, myPermissions, 
           )}
           <AutoGrowTextarea
             value={draft}
-            onChange={(e) => { setDraft(e.target.value); mention.sync(); }}
+            onChange={(e) => { setDraft(e.target.value); mention.sync(); command.sync(); }}
             onKeyDown={onKey}
-            onKeyUp={mention.sync}
-            onClick={mention.sync}
-            onBlur={mention.close}
+            onKeyUp={() => { mention.sync(); command.sync(); }}
+            onClick={() => { mention.sync(); command.sync(); }}
+            onBlur={() => { mention.close(); command.close(); }}
             rows={1}
             placeholder={!canSend ? t("chat.noPermission") : slowmode > 0 ? t("chat.slowmodePlaceholder", { label: slowmodeLabel(slowmode, { s: t("chan.unit.s"), min: t("chan.unit.min"), h: t("chan.unit.h") }) }) : t("chat.placeholder", { name: channel.name })}
             disabled={!canSend}

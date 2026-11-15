@@ -624,6 +624,9 @@ export class ServerConnection {
           ...(e.roles ? { roles: e.roles } : {}),
           ...(e.radioStations ? { radioStations: e.radioStations } : {}),
           ...(e.members ? { members: e.members } : {}),
+          // Plugins (docs/features/plugins.md): the commands and member actions of the enabled plugins, whole; the welcome's
+          // state carries the same field. Missing on both = a server without plugins, and no plugin interface anywhere.
+          ...(e.plugins ? { plugins: e.plugins } : {}),
         };
         const current = this.state.currentChannelId && next.channels.some((c) => c.id === this.state.currentChannelId)
           ? this.state.currentChannelId : next.channels.find((c) => c.kind === "text")?.id ?? null;

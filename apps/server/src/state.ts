@@ -1,4 +1,4 @@
-import { displayNameOf, hasPermission, twitchChannelOf, youtubeVideoOf, type Category, type Channel, type Member, type RadioStation, type Role, type ServerSettings, type ServerState, Permission } from "@squorli/protocol";
+import { displayNameOf, hasPermission, twitchChannelOf, youtubeVideoOf, type Category, type Channel, type Member, type PluginSurface, type RadioStation, type Role, type ServerSettings, type ServerState, Permission } from "@squorli/protocol";
 import { asc, eq, inArray } from "drizzle-orm";
 import { effectivePermissions, type Actor } from "./authz";
 import type { Db } from "./db";
@@ -165,6 +165,13 @@ export function visibleChannels(all: Channel[], masks: Map<string, number>, ctx:
 }
 
 /** Set by index.ts once the reports service exists (state.ts must not import it: reports.ts imports the visibility, which state.ts feeds). */
+/**
+ * What the enabled plugins add to every member's client (plugins/service.ts, docs/features/plugins.md); set by index.ts.
+ * undefined = this server runs no plugins (`PLUGINS=off`), and the state then carries no `plugins` field at all.
+ */
+export let pluginSurface: () => PluginSurface | undefined = () => undefined;
+export function setPluginSurface(fn: () => PluginSurface | undefined): void { pluginSurface = fn; }
+
 export let openReportCount: (db: Db) => Promise<number> = async () => 0;
 export function setOpenReportCount(fn: (db: Db) => Promise<number>): void { openReportCount = fn; }
 
@@ -191,6 +198,8 @@ export async function loadState(db: Db, hub: Hub, userId: string): Promise<Serve
     openReports: actor && hasPermission(actor.permissions, Permission.MANAGE_REPORTS) ? await openReportCount(db) : 0,
     // Reactions and reaction roles (docs/features/reactions.md): the flag tells the client the routes exist.
     reactions: true,
+    // Plugins (docs/features/plugins.md): the commands and member actions of the enabled ones; the field's presence is the flag.
+    ...(pluginSurface() ? { plugins: pluginSurface()! } : {}),
   };
 }
 

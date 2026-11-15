@@ -1,6 +1,6 @@
 import { ChallengeResponse, DirectoryAccount, ServerLeavesResponse, ServerProbeResponse, ServerRegisterResponse, ServerResolveResponse, directoryAvatarUrl, directoryServerRegisterMessage } from "@squorli/protocol";
 import * as ed from "@noble/ed25519";
-import { count, eq, inArray } from "drizzle-orm";
+import { count, eq, inArray, notLike } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 import type { Config } from "./config";
 import type { Db } from "./db";
@@ -264,7 +264,9 @@ export class DirectoryClient {
     const url = this.config.DIRECTORY_URL;
     if (!url) return 0;
     if (!(await this.ensureToken())) return 0;
-    const all = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil, devicesEnforced: users.devicesEnforced, deviceKeys: users.deviceKeys }).from(users);
+    const all = await this.db.select({ id: users.id, publicKey: users.publicKey, handle: users.handle, displayName: users.displayName, avatarUrl: users.avatarUrl, suspendedUntil: users.suspendedUntil, devicesEnforced: users.devicesEnforced, deviceKeys: users.deviceKeys }).from(users)
+      // A plugin's own user (the author of its messages, docs/features/plugins.md) is no account: its key is nothing to ask the directory about.
+      .where(notLike(users.publicKey, "plugin:%"));
     let changed = 0;
     try {
       for (let i = 0; i < all.length; i += SYNC_CHUNK) {

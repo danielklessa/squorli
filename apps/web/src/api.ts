@@ -11,6 +11,7 @@ import {
   localClaimMessage,
   NoticeReadResponse, RefusedServersResponse, directoryRefusedServersUrl, directoryReportPayload, reportKindsOf, suspendedUntilOf, type AccountNotice, type DirectoryReportContent,
   DeviceRevokeResponse, DevicesResponse, type DeviceRevokeTarget, type DirectoryAction,
+  PluginActionResult, PluginInfo, PluginLogResponse, PluginSettingsResponse, PluginViewResponse, PluginsResponse,
   DEVICE_PROOF_REQUIRED, SESSION_PROOF_HEADER, deviceProofMessage, sessionBodyHash, sessionProofHeader, sessionProofMessage, type BackupKdfName, type SessionProof,
 } from "@squorli/protocol";
 import { z } from "zod";
@@ -369,6 +370,21 @@ export class ServerApi {
   createInvite(data: { expiresInHours?: number | null; maxUses?: number | null }) { return this.request<Invite>("POST", "/api/invites", data).then((i) => Invite.parse(i)); }
   listInvites() { return this.request<Invite[]>("GET", "/api/invites").then((i) => z.array(Invite).parse(i)); }
   revokeInvite(code: string) { return this.request("DELETE", `/api/invites/${encodeURIComponent(code)}`); }
+  // ---------- Plugins (docs/features/plugins.md): Verwaltung > Plugins with MANAGE_SERVER; installing, enabling and removing only as an owner
+  plugins() { return this.request<PluginsResponse>("GET", "/api/plugins").then((r) => PluginsResponse.parse(r)); }
+  /** A plugin file's text with its name, or the id of one that ships with the server (the list "Verfügbar"). */
+  installPlugin(body: { source: string; fileName: string } | { bundled: string }) { return this.request<PluginInfo>("POST", "/api/plugins", body).then((r) => PluginInfo.parse(r)); }
+  /** `grant` = the capabilities the owner saw and confirmed; anything but exactly what the plugin asks for is a 409 `capabilities_changed` whose body lists them. */
+  setPluginEnabled(id: string, enabled: boolean, grant?: string[]) { return this.request<PluginInfo>("PUT", `/api/plugins/${encodeURIComponent(id)}/enabled`, { enabled, ...(grant ? { grant } : {}) }).then((r) => PluginInfo.parse(r)); }
+  removePlugin(id: string, messages: "keep" | "delete") { return this.request<{ ok: true }>("DELETE", `/api/plugins/${encodeURIComponent(id)}?messages=${messages}`); }
+  pluginSettings(id: string) { return this.request<PluginSettingsResponse>("GET", `/api/plugins/${encodeURIComponent(id)}/settings`).then((r) => PluginSettingsResponse.parse(r)); }
+  /** A value the server refuses is a 400 `invalid_values` whose body carries `fieldErrors`. */
+  savePluginSettings(id: string, values: Record<string, unknown>) { return this.request<PluginSettingsResponse>("PUT", `/api/plugins/${encodeURIComponent(id)}/settings`, { values }).then((r) => PluginSettingsResponse.parse(r)); }
+  pluginLog(id: string, before: number | null) { return this.request<PluginLogResponse>("GET", `/api/plugins/${encodeURIComponent(id)}/log${before !== null ? `?before=${before}` : ""}`).then((r) => PluginLogResponse.parse(r)); }
+  pluginView(id: string, viewId: string) { return this.request<PluginViewResponse>("GET", `/api/plugins/${encodeURIComponent(id)}/views/${encodeURIComponent(viewId)}`).then((r) => PluginViewResponse.parse(r)); }
+  /** What a member does through a plugin: an entry of the member menu, and a slash command of the composer. The answer's `message` is for the caller only. */
+  pluginMemberAction(id: string, actionId: string, userId: string, values: Record<string, unknown>) { return this.request<PluginActionResult>("POST", `/api/plugins/${encodeURIComponent(id)}/member-actions/${encodeURIComponent(actionId)}`, { userId, values }).then((r) => PluginActionResult.parse(r)); }
+  runCommand(channelId: string, body: { plugin: string; name: string; text?: string; values?: Record<string, unknown> }) { return this.request<PluginActionResult>("POST", `/api/channels/${channelId}/commands`, body).then((r) => PluginActionResult.parse(r)); }
 }
 
 /**

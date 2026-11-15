@@ -9,6 +9,7 @@ import type { Config } from "./config";
 import type { StorageMeter } from "./limits";
 import type { Db } from "./db";
 import { attachments, channels, messages, reports } from "./db/schema";
+import { serverEvents } from "./events";
 import type { Hub } from "./hub";
 import { deleteRecentMessagesOf } from "./moderation";
 import { visibility } from "./visibility";
@@ -63,7 +64,9 @@ export class ReportsService {
     const files = await this.db.select().from(attachments).where(eq(attachments.messageId, row.id));
     const [inserted] = await this.db.insert(reports).values({
       kind: "message", reason, text, reporterId: reporter.userId, reporterName: reporter.name,
-      reportedUserId: author.userId, reportedName: author.name, channelId: row.channelId, channelName, messageId: row.id,
+      // A plugin's message (docs/features/plugins.md): its author is the plugin's own user, who is nobody to kick, ban or
+      // count earlier reports for. Without a reported user the queue offers deleting the message and nothing against a person.
+      reportedUserId: row.plugin ? null : author.userId, reportedName: row.plugin ? row.plugin.name.en : author.name, channelId: row.channelId, channelName, messageId: row.id,
       snapshot: {
         content: row.content, messageCreatedAt: row.createdAt.toISOString(),
         attachments: files.map((f, n) => ({ n, name: f.name, size: f.size, mimeType: f.mimeType })),
@@ -140,6 +143,7 @@ export class ReportsService {
         await this.db.delete(messages).where(eq(messages.id, msg.id));
         await this.app.removeAttachmentFiles(files.map((f) => f.id));
         this.hub.broadcastToChannel(msg.channelId, { type: "message.delete", channelId: msg.channelId, id: msg.id });
+        serverEvents.emit("message.delete", { channelId: msg.channelId, messageIds: [msg.id] }, { kind: "system" });
         this.hub.sendToUser(msg.authorId, { type: "moderation.notice", kind: "message_removed", channelName: row.channelName, count: 1 });
         deleted = 1;
       }

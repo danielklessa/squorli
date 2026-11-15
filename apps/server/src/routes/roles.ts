@@ -5,6 +5,7 @@ import { requireMember } from "../auth/session";
 import { can, canChangeGrant, canGrant, canTouchRole } from "../authz";
 import type { Db } from "../db";
 import { roles } from "../db/schema";
+import { serverEvents } from "../events";
 import type { Hub } from "../hub";
 import type { LivekitAdmin } from "../livekit/admin";
 import { syncVoiceAccessOf } from "../livekit/sync";
@@ -63,6 +64,7 @@ export async function registerRoleRoutes(app: FastifyInstance, db: Db, hub: Hub,
     await db.delete(roles).where(eq(roles.id, role.id));
     await syncVoiceAccessOf(db, hub, presence, lk);
     await broadcastStructure(db, hub, ["roles", "members"]);
+    serverEvents.emit("role.delete", { roleId: role.id, name: role.name }, { kind: "user", userId: m.userId });
     for (const msg of ruled) { await pruneForeignReactions(db, msg.id); await broadcastReactions(db, hub, msg, m.userId, "", false); }
     return { ok: true };
   });

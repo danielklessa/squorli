@@ -52,7 +52,7 @@ import { Suspensions } from "./users/suspension";
 import { registerUserRoutes } from "./users/routes";
 import { DirectoryClient, SYNC_INTERVAL_MS, registerStartDelayMs } from "./directory";
 import { Devices } from "./users/devices";
-import { broadcastStructure, loadChannels, loadSettings, refusesSuspended, setLocalAccountsConfig, setOpenReportCount } from "./state";
+import { broadcastStructure, loadChannels, loadSettings, refusesSuspended, setLocalAccountsConfig, setOpenReportCount, setPluginSurface } from "./state";
 import { setPublicOrigin } from "./names";
 import { visibility } from "./visibility";
 import { AfkMover } from "./voice/afk";
@@ -66,6 +66,9 @@ import { registerBodyHash } from "./auth/bodyHash";
 import { logOptions } from "./logRedact";
 import { loadLinkSecret } from "./attachmentLinks";
 import { installShutdown } from "./shutdown";
+import { serverEvents } from "./events";
+import { Plugins } from "./plugins/service";
+import { operatorToken, registerPluginRoutes } from "./routes/plugins";
 
 const here = dirname(fileURLToPath(import.meta.url));
 /** Version from the server's package.json (dev: apps/server, container: /app); the client shows it on the login screen. */
@@ -210,6 +213,8 @@ async function main() {
   await directory.init();
   app.addHook("onClose", async () => directory?.close());
 
+  // What happens on the server is told once more inside the process (events.ts); a listener that throws only reaches the log.
+  serverEvents.onError = (err, name) => app.log.warn({ err, event: name }, "Ereignis: ein Zuhoerer ist gescheitert");
   const hub = new Hub();
   const presence = new VoicePresence<WebSocket>();
   // Channel permissions (docs/features/channel-permissions.md): the visibility snapshot decides who gets which channel
@@ -293,7 +298,16 @@ async function main() {
   await registerAuthRoutes(app, db, config, hub, directory, presence, devices, meter, lk);
   await registerUserRoutes(app, db, directory, hub, presence);
   await registerSettingsRoutes(app, db, hub, config, directory, { presence, lk, onRadioChange: syncRadioMeta }, suspensions, meter);
-  await registerLimitsRoutes(app, db, config, meter, presence, lk);
+  // Plugins the server runs itself (docs/features/plugins.md); null with PLUGINS=off. Made here, started further down.
+  const dev = import.meta.url.endsWith(".ts");
+  const plugins = config.PLUGINS === "off" ? null : new Plugins({
+    db, hub, deps: { db, hub, presence, lk }, config, log: app.log,
+    // The worker's bundle lies next to this one (dist/plugin-worker.js; src/plugin-worker.ts under tsx), like the link previews'.
+    workerFile: join(here, dev ? "plugin-worker.ts" : "plugin-worker.js"),
+    // The plugins that ship with the server: apps/server/plugins, copied next to the bundle by the build (tsup.config.ts).
+    bundledDir: dev ? join(here, "..", "plugins") : join(here, "plugins"),
+  });
+  await registerLimitsRoutes(app, db, config, meter, presence, lk, plugins ? () => plugins.usage() : null);
   await registerStatusRoutes(app, db, hub, presence, config);
   // Setup self-diagnosis (docs/features/doctor.md): GET /api/doctor with MANAGE_SERVER or from the machine itself (`squorli doctor`).
   await registerDoctorRoutes(app, db, config, new Doctor(config, directory, lk, VERSION, app.log));
@@ -332,6 +346,12 @@ async function main() {
   modLogTimer.unref();
   app.addHook("onClose", async () => clearInterval(modLogTimer));
   await registerLivekitRoutes(app, db, config, presence, lk);
+  if (plugins) {
+    await plugins.init();
+    setPluginSurface(() => plugins.surface());
+    app.addHook("onClose", async () => plugins.close());
+    await registerPluginRoutes(app, db, plugins, await operatorToken(config));
+  }
   await registerWs(app, db, hub, presence, radioMeta, lk, wsLimit, { voiceSeatsMax: config.VOICE_SEATS_MAX });
 
   // The built web client is served by the same process (one container less).
