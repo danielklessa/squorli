@@ -1,6 +1,6 @@
 # Squorli Server: guidelines and open work
 
-Rewritten on 25 September 2026 in a plan cleanup with the user: what is built and documented left this file (architecture in `AGENTS.md` and the area `AGENTS.md` files, features in `docs/features/`, history in `docs/MILESTONE-LOG.md` and `docs/VERIFIED-STATE.md`); what remains is the product's guidelines and the open work, **ranked by relevance** (the ranking is Claude's, the user asked for it; move items when priorities change). Detail plans: `docs/PLAN-reports.md`, `docs/PLAN-mobile.md`, `docs/PLAN-share-adaptation.md`, `docs/PLAN-share-capture.md`, `docs/PLAN-windows.md`, `docs/PLAN-limits.md`. The directory's open work lives in its own repository (`../squorli-directory/docs/PLAN.md`), the website's in `../squorli-website/docs/PLAN.md`.
+Rewritten on 25 September 2026 in a plan cleanup with the user: what is built and documented left this file (architecture in `AGENTS.md` and the area `AGENTS.md` files, features in `docs/features/`, history in `docs/MILESTONE-LOG.md` and `docs/VERIFIED-STATE.md`); what remains is the product's guidelines and the open work, **ranked by relevance** (the ranking is Claude's, the user asked for it; move items when priorities change). Detail plans: `docs/PLAN-reports.md`, `docs/PLAN-mobile.md`, `docs/PLAN-share-adaptation.md`, `docs/PLAN-share-capture.md`, `docs/PLAN-windows.md`, `docs/PLAN-limits.md`, `docs/PLAN-bot-api.md`. The directory's open work lives in its own repository (`../squorli-directory/docs/PLAN.md`), the website's in `../squorli-website/docs/PLAN.md`.
 
 **Keep it clean:** when an item is built, document it where section 0 of `AGENTS.md` says and delete it here (no "done" rows). A new large feature gets a `docs/PLAN-<name>.md` while it is being planned and loses it once it is built and documented.
 
@@ -35,7 +35,7 @@ The closest competitor is Stoat (formerly Revolt): Discord-like, self-hostable, 
 
 ### 1.3 Not planned for now
 
-Recording, end-to-end encryption of media, a bot API, threads, federation between servers. (Mobile clients left this list on 25 September 2026: `docs/PLAN-mobile.md`.) The plugin interface of 15 November 2026 is not a bot API and does not bring one: a plugin has no token, no network endpoint and no process of its own, it is one file the server runs in a sandbox.
+Recording, end-to-end encryption of media, threads, federation between servers. (Mobile clients left this list on 25 September 2026: `docs/PLAN-mobile.md`. A bot API left it on 15 November 2026: the user asked for one that is compatible with Discord's, the plan is `docs/PLAN-bot-api.md`, kept for later, nothing built; see section 4.) The plugin interface of 15 November 2026 is not a bot API and does not bring one: a plugin has no token, no network endpoint and no process of its own, it is one file the server runs in a sandbox.
 
 ### 1.4 Risks
 
@@ -48,7 +48,7 @@ Recording, end-to-end encryption of media, a bot API, threads, federation betwee
 | Screen share audio outside Chromium/Windows | Matrix, notices in the UI, the desktop app as the way out | matrix rows open (3.2) |
 | A game's share starves when the game saturates the graphics unit (measured 23 October 2026: 6 to 13 fps at 100 %) | A frame cap in the game; later the hint and the GPU priority test of `docs/PLAN-share-capture.md` | accepted for now (user, 25 October 2026), plan kept for later |
 | LiveKit dependency (Go, third party) | **Pinned version** (`livekit/livekit-server:v1.13.11` since 31 October 2026, pinned since 25 September 2026, `deploy/AGENTS.md`), raise it on purpose with a server release; keep the server's LiveKit layer thin | pinned; no upgrade test in CI |
-| Scope creep towards Discord's feature list | Section 1.2, section 1.3 | ongoing |
+| Scope creep towards Discord's feature list | Section 1.2, section 1.3; a bot API compatible with Discord's pulls towards that list by its nature, `docs/PLAN-bot-api.md` names what stays out (its sections 3.8 and 7.2) | ongoing |
 | Bus factor 1 | Docs next to the code, public repository | ongoing |
 
 ---
@@ -93,8 +93,7 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 ### 3.6 Plugins the server runs itself (user, 15 November 2026)
 
-Built on 15 November 2026 and documented in `docs/features/plugins.md` (the sandbox, the interface, Verwaltung > Plugins, `squorli plugin`, the two plugins that ship, the guide for authors on the website); the decisions Claude made while building were confirmed by the user the same day. Open:
-- **The releases:** a server release and a desktop app release (the app ships its own client; until then it shows a plugin's message as a notice and has neither the tab nor the member menu's entries), then the website's pages (committed there with fresh screenshots, pushed with the update feed once the releases are published).
+Built on 15 November 2026 and documented in `docs/features/plugins.md` (the sandbox, the interface, Verwaltung > Plugins, `squorli plugin`, the two plugins that ship, the guide for authors on the website); the decisions Claude made while building were confirmed by the user the same day. Released that day as Squorli Server 0.14.0 and desktop app 0.17.0; the website's pages went live with them. Open:
 - **What only real use shows** (the note's "NOT checked"): an installation updated over the internet, the package for Windows, days of running plugins, a plugin written by somebody else.
 - **Later, each possible without breaking version 1:** an author's key with trust on first use, outbound requests through the guarded fetch as a capability, voice events, a list field type.
 
@@ -102,6 +101,7 @@ Built on 15 November 2026 and documented in `docs/features/plugins.md` (the sand
 
 ## 4. Priority 3: later
 
+- **A bot API compatible with Discord's** (`docs/PLAN-bot-api.md`; the user, 15 November 2026: planned, kept for later): a bot written with a Discord library runs against a Squorli server after changing the address and the token, and the other way round. Decided by the user: the first release is text bots with slash commands, components and embeds; later stages for replies, pins, emoji, stickers, timeouts, nicknames, the audit log and webhooks; a voice bridge last; threads and forums stay out; a bot is created per server. Open: Claude's proposals P1 to P8 in that plan's section 7.2, and the facts about Discord's side, which have to be checked again before the build. About twelve weeks to the first release.
 - **Games** (`docs/features/games.md`): detection on Linux, more launchers (Ubisoft, EA, Battle.net, Riot), a rule list for games behind another executable (Minecraft Java = `javaw.exe`), larger icons. Who may see my game (built 14 November 2026): a rule per game, a test with two real clients.
 - **Linux desktop:** system-wide push-to-talk and hotkeys on Wayland (X11 only today), window audio (Windows only; also macOS).
 - **Push-to-talk:** mouse buttons as the key, a short tone when it opens, offering push-to-talk on the first join (`docs/features/hotkeys.md`).
