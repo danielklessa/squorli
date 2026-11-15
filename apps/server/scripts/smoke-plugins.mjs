@@ -6,6 +6,9 @@
 // Start the server with
 //   DIRECTORY_URL= PORT=3001 PUBLIC_DOMAIN=localhost RATE_LIMIT_FACTOR=5 DATA_DIR=<scratch folder> DATABASE_URL=<scratch>
 // then: SMOKE_URL=http://127.0.0.1:3001 SMOKE_DATA_DIR=<the same folder> pnpm smoke:plugins
+// For the network and the signature (the section "The network and Squorli's signature") the server also gets
+//   LINK_PREVIEW_TEST_ORIGIN=http://127.0.0.1:3198 PLUGIN_TEST_SIGNING_KEY=<the value the script prints when it is missing>
+// and the script the same LINK_PREVIEW_TEST_ORIGIN; without them those checks are left out with a line that says so.
 import * as ed from "@noble/ed25519";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -359,6 +362,129 @@ const CLASH = HELLO_TS.replace('"id": "hello-ts"', '"id": "hello-clash"');
 await api("POST", "/api/plugins", { source: CLASH, fileName: "clash.ts" }, owner.token);
 const [sClash, clash] = await api("PUT", "/api/plugins/hello-clash/enabled", { enabled: true, grant: [] }, owner.token);
 check("commands: a second plugin with a command name that is taken cannot be enabled", sClash === 409 && clash.error === "command_taken" && clash.command === "hello", `${sClash} ${JSON.stringify(clash)}`);
+
+// ---------- The network and Squorli's signature (interface version 2)
+// A plugin that asks for `net.fetch` is installed only with Squorli's signature. The script signs with a key of its own
+// (made from a fixed seed, so no private key stands in the repository); the server takes that key only when it was
+// started with PLUGIN_TEST_SIGNING_KEY=<the value printed below>, which a production start refuses. The fetches go to
+// a source the script plays on LINK_PREVIEW_TEST_ORIGIN (give the same value to the server and to this script).
+{
+  const { createPrivateKey, createPublicKey, generateKeyPairSync } = await import("node:crypto");
+  const { signSource } = await import("../../../tools/plugin-sign.mjs");
+  const seed = createHash("sha256").update("squorli smoke test plugin key").digest();
+  const testKey = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]), format: "der", type: "pkcs8" });
+  const TEST_KEY_ENV = `smoke:${createPublicKey(testKey).export({ format: "der", type: "spki" }).subarray(-32).toString("base64")}`;
+  const NET = `/* squorli-plugin
+{
+  "id": "smoke-net", "name": { "en": "Smoke net", "de": "Rauchtest Netz" }, "description": "Fetches what the smoke test asks for.", "version": "1.0.0", "apiVersion": 2,
+  "capabilities": ["messages.write", "net.fetch"],
+  "network": { "hosts": ["feeds.example.org"] },
+  "commands": [{ "name": "net", "input": "text", "description": "get <address> | post <text> | flood <address>" }]
+}
+*/
+squorli.on("command", async (e) => {
+  const at = e.text.indexOf(" ");
+  const what = at < 0 ? e.text : e.text.slice(0, at), rest = at < 0 ? "" : e.text.slice(at + 1);
+  if (what === "get") {
+    try { const r = await squorli.net.get(rest); return JSON.stringify({ type: r.contentType, length: r.text.length, start: r.text.slice(0, 60) }); }
+    catch (err) { return "refused: " + String(err.message).slice(0, 300); }
+  }
+  if (what === "post") return (await squorli.messages.send(e.channelId, rest)).id;
+  if (what === "flood") {
+    let n = 0;
+    try { for (let i = 0; i < 40; i++) { await squorli.net.get(rest); n++; } } catch (err) { return n + " then " + String(err.message).slice(0, 120); }
+    return String(n);
+  }
+});
+`;
+  const upload = (source, fileName = "smoke-net.js") => api("POST", "/api/plugins", { source, fileName }, owner.token);
+  const net = async (text) => (await api("POST", `/api/channels/${general.id}/commands`, { plugin: "smoke-net", name: "net", text }, owner.token))[1].message?.en ?? "";
+
+  const [sUnsigned, unsigned] = await upload(NET);
+  check("net: a plugin that asks for the network is refused without Squorli's signature", sUnsigned === 400 && unsigned.error === "plugin_signature_required", `${sUnsigned} ${JSON.stringify(unsigned).slice(0, 160)}`);
+  const stranger = generateKeyPairSync("ed25519").privateKey;
+  const [sStranger, strangerBody] = await upload(signSource(NET, stranger, "stranger", "official"));
+  check("net: a signature with a key the server does not know is refused", sStranger === 400 && strangerBody.error === "plugin_signature_invalid", `${sStranger} ${strangerBody.error}`);
+  const signed = signSource(NET, testKey, "smoke", "reviewed");
+  const [sTampered, tampered] = await upload(signed.replace('["feeds.example.org"]', '["feeds.example.org", "evil.example.org"]'));
+  check("net: a file changed after it was signed is refused, whoever signed it", sTampered === 400 && tampered.error === "plugin_signature_invalid", `${sTampered} ${tampered.error}`);
+  check("net: an unsigned plugin without the network installs as before and carries no mark", probe.signature === null && probe.blocked === null, JSON.stringify([probe.signature, probe.blocked]));
+  const [, listNow] = await api("GET", "/api/plugins", undefined, owner.token);
+  const shippedNews = listNow.available.find((a) => a.id === "game-news");
+  check("net: the game news plugin is offered only signed as Squorli's own", !shippedNews || shippedNews.signature?.kind === "official", JSON.stringify(shippedNews?.signature ?? null));
+
+  const [sNet, netInfo] = await upload(signed);
+  if (sNet === 400 && netInfo.error === "plugin_signature_invalid") {
+    console.log(`info net: Server mit PLUGIN_TEST_SIGNING_KEY=${TEST_KEY_ENV} starten, um signierte Plugins und net.get zu pruefen`);
+  } else {
+    check("net: a signed plugin installs and is shown with whose signature it carries", sNet === 200 && netInfo.signature?.key === "smoke" && netInfo.signature?.kind === "reviewed" && netInfo.apiVersion === 2, `${sNet} ${JSON.stringify(netInfo).slice(0, 200)}`);
+    const netCap = netInfo.capabilities?.find((c) => c.id === "net.fetch");
+    check("net: the confirmation names the hosts it may fetch from, in both languages", /feeds\.example\.org/.test(netCap?.text?.en ?? "") && /feeds\.example\.org/.test(netCap?.text?.de ?? ""), JSON.stringify(netCap));
+    const [sOn, on] = await api("PUT", "/api/plugins/smoke-net/enabled", { enabled: true, grant: netInfo.capabilities.map((c) => c.id) }, owner.token);
+    check("net: an owner switches it on", sOn === 200 && on.state === "running", `${sOn} ${on.state}`);
+    check("net: a host the manifest does not name is refused", /^refused: .*not among the hosts/.test(await net("get https://example.com/")), await net("get https://example.com/"));
+    check("net: http, another port and an address with a user name are refused for a host it names", [await net("get http://feeds.example.org/x"), await net("get https://feeds.example.org:8443/x"), await net("get https://user@feeds.example.org/x")].every((a) => /^refused: .*not among the hosts/.test(a)));
+    check("net: what is no address is refused", /^refused: /.test(await net("get not an address")));
+
+    // A signed plugin without the network: the mark, and no network.
+    const PLAIN = NET.replace('"id": "smoke-net"', '"id": "smoke-signed"').replace('"apiVersion": 2', '"apiVersion": 1').replace('"capabilities": ["messages.write", "net.fetch"]', '"capabilities": ["messages.write"]').replace('  "network": { "hosts": ["feeds.example.org"] },\n', "").replace('"name": "net"', '"name": "plain"');
+    const [sPlain, plain] = await upload(signSource(PLAIN, testKey, "smoke", "official"), "smoke-signed.js");
+    check("net: a signed plugin without the network installs with its mark", sPlain === 200 && plain.signature?.kind === "official" && !plain.capabilities.some((c) => c.id === "net.fetch"), `${sPlain} ${JSON.stringify(plain.signature)}`);
+    await api("PUT", "/api/plugins/smoke-signed/enabled", { enabled: true, grant: plain.capabilities.map((c) => c.id) }, owner.token);
+    const plainGet = (await api("POST", `/api/channels/${general.id}/commands`, { plugin: "smoke-signed", name: "plain", text: "get https://feeds.example.org/x" }, owner.token))[1].message?.en ?? "";
+    check("net: and its net.get is refused for want of the capability", /^refused: .*net\.fetch/.test(plainGet), plainGet);
+
+    const SITE = process.env.LINK_PREVIEW_TEST_ORIGIN;
+    if (!SITE) console.log("info net: Server und Skript mit LINK_PREVIEW_TEST_ORIGIN=http://127.0.0.1:3198 starten, um den Abruf zu pruefen");
+    else {
+      const { createServer } = await import("node:http");
+      const hits = [];
+      let insideHits = 0;
+      const site = createServer((req, res) => {
+        hits.push(req.url);
+        if (req.url === "/feed.json") return res.writeHead(200, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify({ items: [{ id: 1, title: "Neu" }] }));
+        if (req.url === "/gross.json") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ pad: "x".repeat(300 * 1024) }));
+        if (req.url === "/zu-gross.json") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ pad: "x".repeat(600 * 1024) }));
+        if (req.url === "/bild.png") return res.writeHead(200, { "content-type": "image/png" }).end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64"));
+        if (req.url === "/weg") return res.writeHead(404, { "content-type": "application/json" }).end("{}");
+        if (req.url === "/nach-innen") return res.writeHead(302, { location: "http://127.0.0.1:3197/geheim" }).end();
+        if (req.url === "/weiter") return res.writeHead(302, { location: "/feed.json" }).end();
+        if (req.url === "/seite") return res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end('<!doctype html><html><head><meta property="og:title" content="Patch 1.2"><meta property="og:description" content="Was neu ist"></head><body></body></html>');
+        res.writeHead(404).end();
+      });
+      const inside = createServer((_req, res) => { insideHits++; res.writeHead(200, { "content-type": "application/json" }).end("{}"); });
+      await new Promise((r) => site.listen(Number(new URL(SITE).port), "127.0.0.1", r));
+      await new Promise((r) => inside.listen(3197, "127.0.0.1", r));
+      const got = await net(`get ${SITE}/feed.json`);
+      check("net: net.get answers with the type and the text of what the source sent", got === JSON.stringify({ type: "application/json; charset=utf-8", length: 34, start: '{"items":[{"id":1,"title":"Neu"}]}' }), got);
+      const big = await net(`get ${SITE}/gross.json`);
+      check("net: an answer larger than the other functions' 64 KB reaches the plugin whole", JSON.parse(big.startsWith("{") ? big : "{}").length === 300 * 1024 + 10, big.slice(0, 120));
+      const refusals = [await net(`get ${SITE}/zu-gross.json`), await net(`get ${SITE}/bild.png`), await net(`get ${SITE}/weg`), await net(`get ${SITE}/nach-innen`)];
+      check("net: more than 512 KB, a picture, a status that is not 200 and a redirect to another address are no answer", refusals.every((a) => /^refused: .*no usable answer/.test(a)) && insideHits === 0 && hits.includes("/nach-innen"), `${JSON.stringify(refusals.map((a) => a.slice(0, 40)))} inside ${insideHits}`);
+      check("net: a redirect that stays with the source is followed", JSON.parse(await net(`get ${SITE}/weiter`)).length === 34);
+
+      // Its messages get link previews like a member's; the probe without the network still gets none.
+      const stored = async (id) => (await api("GET", `/api/channels/${general.id}/messages?limit=100`, undefined, owner.token))[1].messages.find((m) => m.id === id);
+      const withPreview = ownerWs.waitNew((e) => e.type === "message.update" && e.message?.plugin?.id === "smoke-net" && e.message.previews?.length === 1, 8000).catch(() => null);
+      await net(`post Update: ${SITE}/seite`);
+      const previewed = await withPreview;
+      check("net: links in the messages of a plugin with the network get a preview", previewed?.message.previews[0]?.title === "Patch 1.2", JSON.stringify(previewed?.message?.previews ?? null));
+      const hitsBefore = hits.length;
+      const [, said] = await cmd(owner.token, `say Auch hier: ${SITE}/seite`, general.id);
+      await sleep(1500);
+      const plainMessage = (await api("GET", `/api/channels/${general.id}/messages?limit=100`, undefined, owner.token))[1].messages.filter((m) => m.plugin?.id === "smoke-probe").at(-1);
+      check("net: a plugin without the network still gets none, and its link is never fetched", said.ok !== false && (plainMessage?.previews ?? []).length === 0 && hits.length === hitsBefore && !!(await stored(plainMessage?.id)), `${JSON.stringify(plainMessage?.previews)} hits ${hits.length - hitsBefore}`);
+
+      const flood = await net(`flood ${SITE}/feed.json`);
+      const floodCount = Number(flood.split(" ")[0]);
+      check("net: thirty requests a minute, then the limit", /^\d+ then .*rate limit/.test(flood) && floodCount > 0 && floodCount <= 30, flood);
+      await new Promise((r) => site.close(r)); site.closeAllConnections?.();
+      await new Promise((r) => inside.close(r));
+    }
+    for (const id of ["smoke-net", "smoke-signed"]) await api("DELETE", `/api/plugins/${id}?messages=delete`, undefined, owner.token);
+    check("net: both are removed again", (await api("GET", "/api/plugins", undefined, owner.token))[1].plugins.every((p) => p.id !== "smoke-net" && p.id !== "smoke-signed"));
+  }
+}
 
 // ---------- Switching off and removing
 const off = ownerWs.waitNew((e) => e.type === "structure" && e.plugins && !e.plugins.commands.some((c) => c.plugin === "smoke-probe"));

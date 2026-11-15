@@ -21,11 +21,14 @@ import { WindowCounter } from "../rateLimits";
 import { loadMessages } from "../routes/messages";
 import { actorOf, loadMembers, loadSettings } from "../state";
 import { visibility } from "../visibility";
-import { CAPABILITY_INFO, apiSupported, checkValues, fieldErrorText, readPluginFile, scopeIds, wireField } from "./manifest";
+import { safeGet } from "@squorli/link-preview";
+import { CAPABILITY_INFO, apiSupported, capabilityText, checkValues, fieldErrorText, readPluginFile, scopeIds, wireField } from "./manifest";
 import { HOST_FUNCTIONS, type HostFunction } from "./prelude";
 import { PluginFailure, PluginRunner, type InvocationContext } from "./runner";
 import { PluginScheduler, type DueJob } from "./scheduler";
-import type { FailureKind } from "./wire";
+import { verifyPluginSignature, type SignatureCheck, type SigningKey } from "./signature";
+import { PLUGIN_SIGNING_KEYS, REVOKED_PLUGIN_HASHES } from "./signingKeys";
+import { MAX_JSON_CHARS, type FailureKind } from "./wire";
 
 /**
  * Plugins the server runs itself (docs/features/plugins.md, 15 November 2026): what is installed, what each may do, and
@@ -38,10 +41,19 @@ import type { FailureKind } from "./wire";
  *    as a reaction rule does, and keeps the role's permission mask; a role that gained permissions since is refused);
  * 3. its limits per minute.
  * A role that carries ADMINISTRATOR is never in a scope.
+ *
+ * **The network** (interface version 2, `net.get`) is the one thing an owner's confirmation does not grant alone: the file
+ * must carry Squorli's signature (signature.ts), the operator must not have switched it off (`PLUGIN_NET`), and a request
+ * goes to the hosts of the manifest only, as one GET through the guarded fetch of the link previews. What stands in the way
+ * of a plugin that is installed already (`gates`) is worked out from the file, the keys and the configuration at every start,
+ * never stored: a signature Squorli took back stops the plugin with the update that brings the list.
  */
 
 type Row = typeof plugins.$inferSelect;
-type Bundled = { id: string; source: string; fileName: string; manifest: PluginManifest };
+type Signed = { key: string; kind: string } | null;
+type Bundled = { id: string; source: string; fileName: string; manifest: PluginManifest; signature: Signed };
+/** Why an installed plugin does not run although it is switched on (its signature, or the operator's `PLUGIN_NET`). */
+type Gate = { code: string; message: string };
 /** Who is at the door: a signed-in member, or the operator at the machine (`squorli plugin`). */
 export type Installer = { userId: string; name: string } | null;
 
@@ -70,7 +82,43 @@ export const MEMBERS_PAGE = 100;
 const ANSWER_BUDGET_CHARS = 56 * 1024;
 export const MESSAGE_MAX = 4000;
 /** Hits per minute and plugin. */
-export const RATE = { calls: 300, roles: 60, messages: 20, storageWrites: 120, logLines: 60 } as const;
+export const RATE = { calls: 300, roles: 60, messages: 20, storageWrites: 120, logLines: 60, net: 30 } as const;
+/** `net.get`: the longest address, the time one request may take, the bytes of its answer and the answer as JSON for the sandbox. */
+export const NET_URL_MAX = 2000;
+export const NET_TIMEOUT_MS = 5000;
+export const NET_BODY_MAX = 512 * 1024;
+export const NET_ANSWER_MAX_CHARS = 1024 * 1024;
+const NET_ACCEPT = "application/json, text/plain;q=0.9, application/xml;q=0.8, text/xml;q=0.8, */*;q=0.5";
+/** What `net.get` reads: text, JSON and XML (feeds). Anything else is not read at all. */
+const NET_TEXT = /^(?:text\/|application\/(?:json|xml|[a-z0-9.-]{1,40}\+(?:json|xml)))/;
+const wantsNet = (manifest: { capabilities: readonly string[] }) => manifest.capabilities.includes("net.fetch");
+
+/**
+ * What keeps a plugin from being installed or from running because of its signature (pure, tested): a signature Squorli
+ * took back stops any plugin; one that asks for the network needs the operator's `PLUGIN_NET` and a valid signature. An
+ * unsigned plugin without the network is not concerned.
+ */
+export function gateCode(manifest: { capabilities: readonly string[] }, status: SignatureCheck["status"], netOn: boolean): keyof typeof GATE_TEXT | null {
+  if (status === "revoked") return "plugin_signature_revoked";
+  if (!wantsNet(manifest)) return null;
+  if (!netOn) return "plugin_net_off";
+  return status === "valid" ? null : "plugin_signature_required";
+}
+
+/**
+ * May `net.get` ask this address (pure, tested; also asked for every redirect)? https on its default port to a host the
+ * manifest names, exactly as named. `testOrigin` (LINK_PREVIEW_TEST_ORIGIN, tests only) is one more origin.
+ */
+export function netAllowed(url: URL, hosts: readonly string[], testOrigin?: string): boolean {
+  if (url.username || url.password) return false;
+  if (testOrigin !== undefined && url.origin === testOrigin) return true;
+  return url.protocol === "https:" && url.port === "" && hosts.includes(url.hostname);
+}
+export const GATE_TEXT = {
+  plugin_signature_revoked: "Squorli took its signature of this plugin version back; it does not run. Install a newer version or remove it.",
+  plugin_net_off: "this server lets no plugin fetch from the internet (PLUGIN_NET=false)",
+  plugin_signature_required: "a plugin that fetches from the internet needs Squorli's signature (https://squorli.com/en/docs/plugins/#signing); this file carries none this server takes",
+} as const;
 
 type Limits = { [K in keyof typeof RATE]: WindowCounter };
 type HostHandler = { needs?: readonly PluginCapability[]; run: (row: Row, ctx: InvocationContext, args: Record<string, unknown>) => Promise<unknown> };
@@ -136,6 +184,9 @@ export type PluginsOptions = {
   /** The folder with the plugins that ship with the server; null = none. */
   bundledDir: string | null;
   idleMs?: number;
+  /** Tests: the keys whose signature counts and the revoked hashes, instead of signingKeys.ts. */
+  signingKeys?: readonly SigningKey[];
+  revoked?: readonly string[];
 };
 
 export class Plugins {
@@ -155,13 +206,24 @@ export class Plugins {
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
   private readonly host: Record<HostFunction, HostHandler>;
+  private readonly keys: readonly SigningKey[];
+  private readonly revoked: readonly string[];
+  /** Per installed plugin, worked out in `reload`: whose signature its file carries, and what keeps it from running. */
+  private signatures = new Map<string, Signed>();
+  private gates = new Map<string, Gate>();
+  /** Set by index.ts once the link previews exist: the messages of a plugin with the network get previews like a member's. */
+  schedulePreview: ((messageId: string) => void) | null = null;
 
   constructor(private readonly opts: PluginsOptions) {
     this.db = opts.db; this.hub = opts.hub; this.log = opts.log; this.config = opts.config;
     this.mode = opts.config.PLUGINS === "operator" ? "operator" : "owner";
+    const testKey = opts.config.PLUGIN_TEST_SIGNING_KEY?.split(":");
+    this.keys = opts.signingKeys ?? [...PLUGIN_SIGNING_KEYS, ...(testKey ? [{ id: testKey[0]!, publicKey: testKey[1]! }] : [])];
+    this.revoked = opts.revoked ?? REVOKED_PLUGIN_HASHES;
     this.runner = new PluginRunner({
       workerFile: opts.workerFile, ...(opts.execArgv ? { execArgv: opts.execArgv } : {}), cpuMs: opts.config.PLUGIN_CPU_MS, memoryMb: opts.config.PLUGIN_MEMORY_MB, ...(opts.idleMs !== undefined ? { idleMs: opts.idleMs } : {}),
       onCall: (id, ctx, fn, args) => this.onCall(id, ctx, fn, args),
+      answerMax: (fn) => (fn === "net.get" ? NET_ANSWER_MAX_CHARS : MAX_JSON_CHARS),
       onFailure: (id, kind, message, event) => { void this.onFailure(id, kind, message, event).catch((err) => this.log.warn({ err }, "Plugin: Fehler nicht vermerkt")); },
       onLifecycle: (id, what, detail) => { if (what === "killed") void this.note(id, "error", `stopped by the watchdog${detail ? ` (${detail})` : ""}`); },
     });
@@ -177,6 +239,12 @@ export class Plugins {
     await this.loadBundled();
     await this.reload();
     for (const row of this.rows.values()) if (this.runnable(row)) this.runner.load(row.id, row.code, row.manifest.apiVersion);
+    for (const row of this.rows.values()) {
+      const gate = this.gates.get(row.id);
+      if (!gate || !row.enabled) continue;
+      await this.note(row.id, "error", `does not run: ${gate.message}`);
+      this.log.warn({ plugin: row.id, reason: gate.code }, "Plugin laeuft nicht");
+    }
     this.stopListening = serverEvents.listen((e) => this.onServerEvent(e));
     await this.scheduler.start();
     this.sweepTimer = setInterval(() => { void this.sweepLogs().catch((err) => this.log.warn({ err }, "Plugin: Protokoll aufraeumen")); }, 3_600_000);
@@ -195,7 +263,24 @@ export class Plugins {
 
   private async reload(): Promise<void> {
     this.rows = new Map((await this.db.select().from(plugins).orderBy(asc(plugins.installedAt))).map((r) => [r.id, r]));
+    this.signatures = new Map();
+    this.gates = new Map();
+    for (const row of this.rows.values()) {
+      if (!row.signedBy && !wantsNet(row.manifest)) continue;
+      const check = this.check(row.source);
+      this.signatures.set(row.id, check.status === "valid" ? { key: check.keyId, kind: check.kind } : null);
+      const gate = this.gateOf(row.manifest, check);
+      if (gate) this.gates.set(row.id, gate);
+    }
     this.surfaceCache = null;
+  }
+
+  private check(source: string): SignatureCheck { return verifyPluginSignature(source, this.keys, this.revoked); }
+
+  /** What keeps a plugin with this manifest and this signature from running; null = nothing. An unsigned plugin without the network is not concerned. */
+  private gateOf(manifest: PluginManifest, check: SignatureCheck): Gate | null {
+    const code = gateCode(manifest, check.status, this.config.PLUGIN_NET);
+    return code ? { code, message: GATE_TEXT[code] } : null;
   }
 
   private async loadBundled(): Promise<void> {
@@ -207,15 +292,21 @@ export class Plugins {
       try {
         const source = await readFile(join(dir, fileName), "utf8");
         const r = readPluginFile(source, fileName);
-        if (r.ok) this.bundled.set(r.manifest.id, { id: r.manifest.id, source, fileName, manifest: r.manifest });
-        else this.log.warn({ fileName, reason: r.message }, "Plugin: mitgeliefertes Plugin nicht lesbar");
+        if (!r.ok) { this.log.warn({ fileName, reason: r.message }, "Plugin: mitgeliefertes Plugin nicht lesbar"); continue; }
+        // One that ships is held to the same rule as an upload: without Squorli's signature it gets no network, so it is not offered.
+        const check = this.check(source);
+        const gate = check.status === "invalid" ? { code: "plugin_signature_invalid", message: check.reason } : this.gateOf(r.manifest, check);
+        if (gate) { if (gate.code !== "plugin_net_off") this.log.warn({ fileName, reason: gate.message }, "Plugin: mitgeliefertes Plugin wird nicht angeboten"); continue; }
+        this.bundled.set(r.manifest.id, { id: r.manifest.id, source, fileName, manifest: r.manifest, signature: check.status === "valid" ? { key: check.keyId, kind: check.kind } : null });
       } catch (err) { this.log.warn({ err, fileName }, "Plugin: mitgeliefertes Plugin nicht lesbar"); }
     }
   }
 
-  private runnable(row: Row): boolean { return row.enabled && row.state === "ok" && apiSupported(row.manifest.apiVersion); }
+  private runnable(row: Row): boolean { return row.enabled && row.state === "ok" && apiSupported(row.manifest.apiVersion) && !this.gates.has(row.id); }
   private stateOf(row: Row): string {
     if (!apiSupported(row.manifest.apiVersion)) return "incompatible";
+    // No state of its own: clients from before know "suspended" and show the reason that comes with it (`lastError`).
+    if (row.enabled && this.gates.has(row.id)) return "suspended";
     if (row.state === "suspended" || row.state === "needs_approval") return row.state;
     return row.enabled ? "running" : "disabled";
   }
@@ -250,16 +341,17 @@ export class Plugins {
   // ---------- Verwaltung > Plugins and `squorli plugin` ----------
 
   private capabilityInfos(manifest: PluginManifest, granted: readonly string[]) {
-    return manifest.capabilities.map((id) => ({ id, text: CAPABILITY_INFO[id].text, risk: CAPABILITY_INFO[id].risk, granted: granted.includes(id) }));
+    return manifest.capabilities.map((id) => ({ id, text: capabilityText(id, manifest), risk: CAPABILITY_INFO[id].risk, granted: granted.includes(id) }));
   }
 
   private info(row: Row, pendingJobs = 0): PluginInfo {
     const m = row.manifest;
+    const gate = row.enabled ? this.gates.get(row.id) : undefined;
     return {
       id: m.id, name: m.name, description: m.description, version: m.version, apiVersion: m.apiVersion, author: m.author ?? null, homepage: m.homepage ?? null,
-      language: row.language, sourceHash: row.sourceHash, enabled: row.enabled, state: this.stateOf(row), lastError: row.lastError, lastErrorAt: row.lastErrorAt?.toISOString() ?? null,
+      language: row.language, sourceHash: row.sourceHash, enabled: row.enabled, state: this.stateOf(row), lastError: gate ? gate.message : row.lastError, lastErrorAt: gate ? null : row.lastErrorAt?.toISOString() ?? null,
       capabilities: this.capabilityInfos(m, row.granted), hasSettings: m.settings.length > 0, views: m.views.map((v) => ({ id: v.id, title: v.title })), commands: m.commands.map((c) => c.name),
-      pendingJobs, installedVia: row.installedVia, installedAt: row.installedAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+      pendingJobs, installedVia: row.installedVia, signature: this.signatures.get(row.id) ?? null, blocked: gate?.code ?? null, installedAt: row.installedAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
     };
   }
 
@@ -269,7 +361,7 @@ export class Plugins {
     for (const b of this.bundled.values()) {
       const installed = this.rows.get(b.id);
       if (installed && installed.manifest.version === b.manifest.version) continue;
-      available.push({ id: b.id, name: b.manifest.name, description: b.manifest.description, version: b.manifest.version, capabilities: this.capabilityInfos(b.manifest, []), installedVersion: installed?.manifest.version ?? null });
+      available.push({ id: b.id, name: b.manifest.name, description: b.manifest.description, version: b.manifest.version, capabilities: this.capabilityInfos(b.manifest, []), installedVersion: installed?.manifest.version ?? null, signature: b.signature });
     }
     return { plugins: [...this.rows.values()].map((r) => this.info(r, jobs.get(r.id) ?? 0)), available, mode: this.mode, max: this.config.PLUGIN_MAX };
   }
@@ -290,6 +382,13 @@ export class Plugins {
     const read = readPluginFile(source, fileName);
     if (!read.ok) throw new PluginError(read.code === "api_too_new" || read.code === "api_too_old" ? 409 : 400, `plugin_${read.code}`, read.message);
     const { manifest, language } = read;
+    // The signature before anything else of the file is looked at: a file changed after it was signed is refused whatever it asks for.
+    const check = this.check(source);
+    if (check.status === "invalid") throw new PluginError(400, "plugin_signature_invalid", check.reason);
+    const gate = this.gateOf(manifest, check);
+    if (gate) throw new PluginError(gate.code === "plugin_signature_required" ? 400 : 409, gate.code, gate.message);
+    const signed = check.status === "valid" ? { signedBy: check.keyId, signedKind: check.kind } : { signedBy: null, signedKind: null };
+    const signedNote = signed.signedBy ? `, signed by Squorli as ${signed.signedKind} with key ${signed.signedBy}` : "";
     const existing = this.rows.get(manifest.id);
     if (!existing && this.rows.size >= this.config.PLUGIN_MAX) throw new PluginError(409, "too_many_plugins", `this server takes at most ${this.config.PLUGIN_MAX} plugins`);
     const prepared = await this.runner.prepare(source, language);
@@ -305,11 +404,11 @@ export class Plugins {
       const asksMore = manifest.capabilities.some((c) => !existing.granted.includes(c));
       const state = existing.enabled && asksMore ? "needs_approval" : existing.state === "needs_approval" && !asksMore ? "ok" : existing.state === "suspended" ? "ok" : existing.state;
       this.runner.unload(manifest.id);
-      await this.db.update(plugins).set({ manifest, source, code: prepared.code, language, sourceHash, settings, scope, state, lastError: null, lastErrorAt: null, installedVia: how, updatedAt: new Date() }).where(eq(plugins.id, manifest.id));
+      await this.db.update(plugins).set({ manifest, source, code: prepared.code, language, sourceHash, settings, scope, state, lastError: null, lastErrorAt: null, installedVia: how, ...signed, updatedAt: new Date() }).where(eq(plugins.id, manifest.id));
       await this.db.update(users).set({ displayName: manifest.name.en }).where(eq(users.publicKey, PLUGIN_USER_KEY_PREFIX + manifest.id));
       this.strikes.delete(manifest.id);
       await this.reload();
-      await this.note(manifest.id, "info", `updated to version ${manifest.version} by ${by?.name ?? "the operator"} (${language}, sha256 ${sourceHash.slice(0, 12)})${state === "needs_approval" ? "; it asks for more than was granted and waits for an owner" : ""}`);
+      await this.note(manifest.id, "info", `updated to version ${manifest.version} by ${by?.name ?? "the operator"} (${language}, sha256 ${sourceHash.slice(0, 12)}${signedNote})${state === "needs_approval" ? "; it asks for more than was granted and waits for an owner" : ""}`);
       const row = this.rowOf(manifest.id);
       if (this.runnable(row)) { this.runner.load(row.id, row.code, row.manifest.apiVersion); this.tell(row.id, "enable", { reason: "updated" }); this.scheduler.poke(); }
       this.broadcastSurface();
@@ -317,9 +416,9 @@ export class Plugins {
     }
 
     const userId = await this.pluginUser(manifest);
-    await this.db.insert(plugins).values({ id: manifest.id, manifest, source, code: prepared.code, language, sourceHash, userId, installedBy: by?.userId ?? null, installedByName: by?.name ?? null, installedVia: how });
+    await this.db.insert(plugins).values({ id: manifest.id, manifest, source, code: prepared.code, language, sourceHash, userId, installedBy: by?.userId ?? null, installedByName: by?.name ?? null, installedVia: how, ...signed });
     await this.reload();
-    await this.note(manifest.id, "info", `installed version ${manifest.version} by ${by?.name ?? "the operator"} (${language}, sha256 ${sourceHash.slice(0, 12)})`);
+    await this.note(manifest.id, "info", `installed version ${manifest.version} by ${by?.name ?? "the operator"} (${language}, sha256 ${sourceHash.slice(0, 12)}${signedNote})`);
     return this.info(this.rowOf(manifest.id));
   }
 
@@ -346,6 +445,8 @@ export class Plugins {
       return this.info(this.rowOf(id));
     }
     if (!apiSupported(row.manifest.apiVersion)) throw new PluginError(409, "plugin_incompatible", "this server does not run the interface version the plugin was written for");
+    const gate = this.gates.get(id);
+    if (gate) throw new PluginError(409, gate.code, gate.message);
     const asked = [...row.manifest.capabilities].sort();
     if (grant !== "all" && (grant === undefined || [...new Set(grant)].sort().join("\n") !== asked.join("\n"))) throw new PluginError(409, "capabilities_changed", undefined, { capabilities: this.capabilityInfos(row.manifest, row.granted) });
     for (const other of this.rows.values()) {
@@ -634,7 +735,7 @@ export class Plugins {
   private limitsOf(id: string): Limits {
     let l = this.limits.get(id);
     if (!l) {
-      l = { calls: new WindowCounter(RATE.calls), roles: new WindowCounter(RATE.roles), messages: new WindowCounter(RATE.messages), storageWrites: new WindowCounter(RATE.storageWrites), logLines: new WindowCounter(RATE.logLines) };
+      l = { calls: new WindowCounter(RATE.calls), roles: new WindowCounter(RATE.roles), messages: new WindowCounter(RATE.messages), storageWrites: new WindowCounter(RATE.storageWrites), logLines: new WindowCounter(RATE.logLines), net: new WindowCounter(RATE.net) };
       this.limits.set(id, l);
     }
     return l;
@@ -768,7 +869,9 @@ export class Plugins {
           const [saved] = await db.insert(messages).values({ channelId, authorId: row.userId, content, plugin }).returning();
           const message = await this.wireMessage(saved!);
           this.hub.broadcastToChannel(channelId, { type: "message.create", message });
-          // No link previews for a plugin's message: the lookup would be a way to make the server fetch addresses.
+          // No link previews for a plugin's message: the lookup would be a way to make the server fetch addresses. A plugin
+          // that holds the network (signed by Squorli, confirmed by the owner) may do that anyway, and its news read better with them.
+          if (row.granted.includes("net.fetch")) this.schedulePreview?.(message.id);
           serverEvents.emit("message.create", { message }, this.origin(row, ctx));
           return { id: message.id, seq: message.seq };
         },
@@ -783,6 +886,7 @@ export class Plugins {
           const [updated] = await db.update(messages).set({ content, editedAt: new Date() }).where(eq(messages.id, msg.id)).returning();
           const message = await this.wireMessage(updated!);
           this.hub.broadcastToChannel(msg.channelId, { type: "message.update", message });
+          if (row.granted.includes("net.fetch")) this.schedulePreview?.(message.id);
           serverEvents.emit("message.update", { message }, this.origin(row, ctx));
           return true;
         },
@@ -868,6 +972,22 @@ export class Plugins {
           .map((j) => ({ key: j.key, name: j.name, dueAt: j.dueAt.toISOString() })),
       },
       "settings.get": { run: async (row) => row.settings },
+      "net.get": {
+        needs: ["net.fetch"],
+        run: async (row, _ctx, args) => {
+          const hosts = row.manifest.network?.hosts ?? [];
+          // Tests play the source on one local origin (as the link previews' smoke test does); never set on a real server.
+          const testOrigin = this.config.LINK_PREVIEW_TEST_ORIGIN ? new URL(this.config.LINK_PREVIEW_TEST_ORIGIN).origin : undefined;
+          const allowed = (url: URL) => netAllowed(url, hosts, testOrigin);
+          let url: URL;
+          try { url = new URL(typeof args.url === "string" && args.url.length <= NET_URL_MAX ? args.url : ""); } catch { throw new Error(`net.get(url) needs an address of up to ${NET_URL_MAX} characters`); }
+          if (!allowed(url)) throw new Error(`net.get: ${url.host || url.protocol} is not among the hosts of the plugin's manifest (https, no port): ${hosts.join(", ")}`);
+          this.take(row.id, "net");
+          const res = await safeGet(url.href, { accept: NET_ACCEPT, maxBytes: (type) => (NET_TEXT.test(type) ? NET_BODY_MAX : 0), cut: () => false, timeoutMs: NET_TIMEOUT_MS, testOrigin, allowHost: allowed });
+          if (!res) throw new Error(`net.get: no usable answer from ${url.host} (not reachable, not status 200, neither text nor JSON nor XML, larger than ${NET_BODY_MAX / 1024} KB, slower than ${NET_TIMEOUT_MS / 1000} s, or sent on to another host)`);
+          return { url: res.url, contentType: res.contentType, text: res.body.toString("utf8") };
+        },
+      },
       "log": {
         run: async (row, _ctx, args) => {
           const level = args.level === "warn" || args.level === "error" ? args.level : "info";

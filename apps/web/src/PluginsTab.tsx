@@ -6,11 +6,11 @@ import { pluginProblem, type PluginProblem } from "./apiErrorText";
 import { useBackClose } from "./backStack";
 import { Icon } from "./Icon";
 import { fmtDateTime, locale, t } from "./i18n";
-import { CapabilityList, PluginDetail, PluginStateBadge, type CapabilityInfo } from "./PluginDetail";
+import { CapabilityList, PluginDetail, PluginSignedBadge, PluginStateBadge, blockedText, type CapabilityInfo } from "./PluginDetail";
 import { PluginChrome, PluginProblemText } from "./PluginFormDialog";
 
 /** The confirmation that is open: which plugin, and the capabilities the owner is shown (and that go out as `grant`). */
-type EnableAsk = { id: string; name: PluginText; capabilities: CapabilityInfo[]; changed: boolean };
+type EnableAsk = { id: string; name: PluginText; capabilities: CapabilityInfo[]; changed: boolean; signature: PluginInfo["signature"] };
 
 /**
  * Verwaltung > Plugins (docs/features/plugins.md; shown with MANAGE_SERVER against a server that runs plugins): the
@@ -49,7 +49,7 @@ export function PluginsTab({ api, server, myUserId }: { api: ServerApi; server: 
     const info = await api.installPlugin({ source: await file.text(), fileName: file.name });
     setNote(t(info.enabled ? "admin.plugins.updatedNote" : "admin.plugins.installedNote", { name: pluginText(info.name, locale), version: info.version }));
   });
-  const askEnable = (p: PluginInfo) => { setProblem(null); setNote(null); setAsk({ id: p.id, name: p.name, capabilities: p.capabilities, changed: false }); };
+  const askEnable = (p: PluginInfo) => { setProblem(null); setNote(null); setAsk({ id: p.id, name: p.name, capabilities: p.capabilities, changed: false, signature: p.signature }); };
   const disable = (p: PluginInfo) => run(() => api.setPluginEnabled(p.id, false));
   /** "Aktivieren": exactly the listed capabilities go out. Another list by now (409) = the confirmation again, with that list. */
   const confirmEnable = async (current: EnableAsk): Promise<PluginProblem | null> => {
@@ -90,11 +90,13 @@ export function PluginsTab({ api, server, myUserId }: { api: ServerApi; server: 
             <li key={p.id} className="plugin-row">
               <span className="user-avatar plugin-avatar" aria-hidden="true"><Icon name="puzzle" /></span>
               <button className="plugin-row-main" onClick={() => setOpenId(p.id)} title={t("admin.plugins.open")}>
-                <span className="plugin-row-name"><strong>{pluginText(p.name, locale)}</strong> <span className="muted small">{p.version}</span> <PluginStateBadge state={p.state} /></span>
+                <span className="plugin-row-name"><strong>{pluginText(p.name, locale)}</strong> <span className="muted small">{p.version}</span> <PluginStateBadge state={p.state} /> <PluginSignedBadge signature={p.signature} /></span>
                 <span className="muted small plugin-row-desc">{pluginText(p.description, locale)}</span>
-                {p.lastError && <span className="small plugin-last-error"><span className="error">{t("admin.plugins.lastError")}</span>{p.lastErrorAt ? ` (${fmtDateTime(p.lastErrorAt)})` : ""}: {p.lastError}</span>}
+                {p.enabled && p.blocked && blockedText(p.blocked)
+                  ? <span className="small plugin-last-error">{blockedText(p.blocked)}</span>
+                  : p.lastError && <span className="small plugin-last-error"><span className="error">{t("admin.plugins.lastError")}</span>{p.lastErrorAt ? ` (${fmtDateTime(p.lastErrorAt)})` : ""}: {p.lastError}</span>}
               </button>
-              {isOwner && p.enabled && (p.state === "needs_approval" || p.state === "suspended") && <button className="small" disabled={busy} onClick={() => askEnable(p)}>{t(p.state === "needs_approval" ? "admin.plugins.approve" : "admin.plugins.restart")}</button>}
+              {isOwner && p.enabled && !p.blocked && (p.state === "needs_approval" || p.state === "suspended") && <button className="small" disabled={busy} onClick={() => askEnable(p)}>{t(p.state === "needs_approval" ? "admin.plugins.approve" : "admin.plugins.restart")}</button>}
               <input type="checkbox" className="switch" role="switch" aria-label={t("admin.plugins.enabledOf", { name: pluginText(p.name, locale) })} title={isOwner ? t("admin.plugins.enabled") : t("admin.plugins.ownerOnly")}
                 checked={p.enabled} disabled={!isOwner || busy || (p.state === "incompatible" && !p.enabled)} onChange={(e) => (e.target.checked ? askEnable(p) : void disable(p))} />
               <button className="icon" title={t("admin.plugins.open")} aria-label={t("admin.plugins.open")} onClick={() => setOpenId(p.id)}><Icon name="chevron-right" /></button>
@@ -131,7 +133,7 @@ function AvailableRow({ plugin, mayInstall, busy, onInstall }: { plugin: PluginA
     <li className="plugin-row plugin-available">
       <span className="user-avatar plugin-avatar" aria-hidden="true"><Icon name="puzzle" /></span>
       <div className="plugin-row-main">
-        <span className="plugin-row-name"><strong>{pluginText(plugin.name, locale)}</strong> <span className="muted small">{plugin.version}</span>{plugin.installedVersion && <span className="muted small"> · {t("admin.plugins.installedVersion", { version: plugin.installedVersion })}</span>}</span>
+        <span className="plugin-row-name"><strong>{pluginText(plugin.name, locale)}</strong> <span className="muted small">{plugin.version}</span>{plugin.installedVersion && <span className="muted small"> · {t("admin.plugins.installedVersion", { version: plugin.installedVersion })}</span>} <PluginSignedBadge signature={plugin.signature} /></span>
         <span className="muted small plugin-row-desc">{pluginText(plugin.description, locale)}</span>
         <details className="plugin-available-caps small"><summary>{t("admin.plugins.capabilitiesAsked", { n: plugin.capabilities.length })}</summary><CapabilityList capabilities={plugin.capabilities} /></details>
       </div>
@@ -163,6 +165,7 @@ function PluginEnableDialog({ ask, onConfirm, onClose }: { ask: EnableAsk; onCon
         <div className="dialog-body stack">
           <h2 id={titleId}>{t("admin.plugins.enableTitle", { name: pluginText(ask.name, locale) })}</h2>
           {ask.changed && <p className="warn-box small">{t("admin.plugins.enableChanged")}</p>}
+          {ask.signature && <p className="small plugin-enable-signed"><PluginSignedBadge signature={ask.signature} /> <span className="muted">{ask.signature.kind === "official" ? t("admin.plugins.signedHint.official") : ask.signature.kind === "reviewed" ? t("admin.plugins.signedHint.reviewed") : t("admin.plugins.signedHint.other")}</span></p>}
           <p className="dialog-text">{t(ask.capabilities.length > 0 ? "admin.plugins.enableText" : "admin.plugins.enableTextNone")}</p>
           {ask.capabilities.length > 0 && <CapabilityList capabilities={ask.capabilities} />}
           <p className="muted small">{t("admin.plugins.enableAlways")}</p>

@@ -18,8 +18,12 @@ import { Iso, Uuid } from "./primitives";
  * and everything a client does goes over REST.
  */
 
-/** The interface version this server offers plugins (`squorli.apiVersion`), and the oldest one it still runs. */
-export const PLUGIN_API_VERSION = 1;
+/**
+ * The interface version this server offers plugins (`squorli.apiVersion`), and the oldest one it still runs. Version 2
+ * (server 0.15.0) added the network: the capability `net.fetch`, the manifest's `network` and `squorli.net.get`. A plugin
+ * that uses none of it stays at version 1 and runs on servers from before.
+ */
+export const PLUGIN_API_VERSION = 2;
 export const PLUGIN_API_MIN = 1;
 
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9-]{2,31}$/;
@@ -32,11 +36,19 @@ export const PLUGIN_COMMANDS_MAX = 20;
 export const PLUGIN_MEMBER_ACTIONS_MAX = 10;
 export const PLUGIN_VIEWS_MAX = 5;
 export const PLUGIN_VIEW_ROWS_MAX = 500;
+/** How many hosts a manifest's `network` may name. */
+export const PLUGIN_NETWORK_HOSTS_MAX = 20;
+/** The interface version from which a manifest may name `network` and the capability `net.fetch`. */
+export const PLUGIN_NETWORK_API_VERSION = 2;
 /** What a slash command's text argument may hold. */
 export const PLUGIN_COMMAND_TEXT_MAX = 2000;
 
-/** What a plugin may ask for. Storage, schedules, the log and its own settings need nothing. */
-export const PLUGIN_CAPABILITIES = ["members.read", "roles.manage", "messages.read", "messages.write"] as const;
+/**
+ * What a plugin may ask for. Storage, schedules, the log and its own settings need nothing. `net.fetch` (interface version
+ * 2) is the only one an owner's confirmation does not grant alone: the server takes it only from a file that carries
+ * Squorli's signature (docs/features/plugins.md).
+ */
+export const PLUGIN_CAPABILITIES = ["members.read", "roles.manage", "messages.read", "messages.write", "net.fetch"] as const;
 export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
 
 /**
@@ -162,6 +174,12 @@ export const ManifestView = z.object({
 
 const unique = (list: readonly string[]) => new Set(list).size === list.length;
 
+/**
+ * A host a plugin may fetch from: a full name in lower case with a top-level domain of letters. No wildcard, no port, no
+ * IP address and no bare name such as `localhost`; the server asks these hosts over https only.
+ */
+export const PluginNetworkHost = z.string().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/, "a host is a full name in lower case, e.g. api.example.org");
+
 export const PluginManifest = z.object({
   id: z.string().regex(PLUGIN_ID_PATTERN),
   name: manifestText(60),
@@ -173,6 +191,11 @@ export const PluginManifest = z.object({
   author: line(80).optional(),
   homepage: z.string().max(300).regex(/^https:\/\/[^\s]+$/).optional(),
   capabilities: z.array(z.enum(PLUGIN_CAPABILITIES)).max(PLUGIN_CAPABILITIES.length).default([]),
+  /**
+   * Interface version 2, together with the capability `net.fetch`: the hosts `squorli.net.get` may ask, and no other. The
+   * owner reads the list before enabling the plugin, and the signature covers it like the rest of the file.
+   */
+  network: z.object({ hosts: z.array(PluginNetworkHost).min(1).max(PLUGIN_NETWORK_HOSTS_MAX) }).strict().optional(),
   settings: z.array(ManifestSettingsField).max(PLUGIN_SETTINGS_FIELDS_MAX).default([]),
   commands: z.array(ManifestCommand).max(PLUGIN_COMMANDS_MAX).default([]),
   memberActions: z.array(ManifestMemberAction).max(PLUGIN_MEMBER_ACTIONS_MAX).default([]),
@@ -180,6 +203,10 @@ export const PluginManifest = z.object({
 }).strict().superRefine((m, ctx) => {
   const issue = (message: string) => ctx.addIssue({ code: "custom", message });
   if (!unique(m.capabilities)) issue("a capability is named twice");
+  const wantsNet = m.capabilities.includes("net.fetch");
+  if (wantsNet !== (m.network !== undefined)) issue('the capability "net.fetch" and "network" with its hosts go together');
+  if ((wantsNet || m.network) && m.apiVersion < PLUGIN_NETWORK_API_VERSION) issue(`the network needs "apiVersion": ${PLUGIN_NETWORK_API_VERSION}`);
+  if (m.network && !unique(m.network.hosts)) issue("a host is named twice");
   if (!unique(m.settings.map((f) => f.key))) issue("two settings fields share a key");
   if (!unique(m.commands.map((c) => c.name))) issue("two commands share a name");
   if (!unique(m.memberActions.map((a) => a.id))) issue("two member actions share an id");
@@ -308,6 +335,12 @@ export const PluginCapabilityInfo = z.object({
   granted: z.boolean(),
 });
 export const PluginViewInfo = z.object({ id: z.string(), title: PluginText });
+/**
+ * Whose signature a plugin file carries: the name of Squorli's key and the kind, "official" (Squorli's own plugin) or
+ * "reviewed" (somebody else's that Squorli read). A plain string like the other wire fields; null = not signed.
+ */
+export const PluginSignatureInfo = z.object({ key: z.string(), kind: z.string() });
+export type PluginSignatureInfo = z.infer<typeof PluginSignatureInfo>;
 
 export const PluginInfo = z.object({
   id: z.string(),
@@ -334,6 +367,13 @@ export const PluginInfo = z.object({
   pendingJobs: z.number().int().nonnegative().default(0),
   /** "upload", "cli" or "bundled". */
   installedVia: z.string(),
+  signature: PluginSignatureInfo.nullable().default(null).catch(null),
+  /**
+   * Why a plugin that is switched on does not run, when the reason is its signature or the operator's switch and not its
+   * failures: "plugin_signature_revoked", "plugin_net_off" or "plugin_signature_required". The state is "suspended" then
+   * (clients from before know that one) and `lastError` holds the reason in the server's words.
+   */
+  blocked: z.string().nullable().default(null).catch(null),
   installedAt: Iso,
   updatedAt: Iso,
 });
@@ -345,6 +385,7 @@ export const PluginAvailable = z.object({
   capabilities: z.array(PluginCapabilityInfo).default([]),
   /** Installed already, in an older version: installing replaces it. */
   installedVersion: z.string().nullable().default(null),
+  signature: PluginSignatureInfo.nullable().default(null).catch(null),
 });
 export type PluginAvailable = z.infer<typeof PluginAvailable>;
 

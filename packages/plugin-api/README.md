@@ -18,6 +18,24 @@ Examples to read and copy:
 - [`apps/server/plugins/birthdays.ts`](../../apps/server/plugins/birthdays.ts): the second one that ships. A slash command
   with a form, a command whose answer only the caller sees, a job that comes back every day, and how a plugin works out
   the local day without time zones in the sandbox.
+- [`apps/server/plugins/game-news.ts`](../../apps/server/plugins/game-news.ts): the third one, and the one that fetches
+  from the internet (interface version 2, `squorli.net.get`). The hosts in its manifest, one request per event, a round
+  that goes on when a source fails, and how text from outside is made harmless before it is posted.
+
+## The network needs Squorli's signature
+
+`squorli.net.get` and the capability `net.fetch` are taken only from a plugin file that carries Squorli's signature as
+its last line. Submit a plugin for it at <https://github.com/danielklessa/squorli-plugins> (a pull request with the file
+and a README that says what each host is for); that repository's `REVIEW.md` lists what is looked at. Before you do, run
+the check the server itself uses, from a clone of this repository:
+
+```
+pnpm install
+pnpm --filter @squorli/server plugin:check path/to/my-plugin.ts
+```
+
+It reads the manifest, removes the types, compiles the file in the sandbox without running it and prints what the
+server would store, or why it would refuse the file.
 
 ## Writing a plugin in TypeScript
 
@@ -51,3 +69,6 @@ or code from npm, is bundled into one `.js` file first.
   tests fail when it is stale (`UPDATE_PLUGIN_REFERENCE=1 pnpm --filter @squorli/server test` rewrites it); the website's
   guide is checked against a copy of it.
 - This folder has no `package.json` on purpose: it is no workspace package and nothing imports it.
+- `tools/plugin-sign.mjs` writes signatures and `apps/server/src/plugins/signature.ts` reads them; the key's public half
+  is `tools/squorli-plugins.pub` and the newest entry of `signingKeys.ts`. Signing happens only in the workflow of the
+  repository squorli-plugins (`docs/features/plugins.md`, `docs/features/release-signing.md`).

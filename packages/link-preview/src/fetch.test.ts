@@ -11,9 +11,12 @@ import { ENOUGH_OVERLAP, safeGet } from "./fetch";
 let server: Server;
 let origin: string;
 const TAIL = "x".repeat(300 * 1024);
+const hits: string[] = [];
 
 beforeAll(async () => {
   server = createServer((req, res) => {
+    hits.push(req.url ?? "");
+    if (req.url === "/redirect") { res.writeHead(302, { location: "/whole" }); res.end(); return; }
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     const pieces = req.url === "/split"
       ? ["<html><head><title>T</title></hea", "d><body>", TAIL]
@@ -54,5 +57,24 @@ describe("safeGet stops at the marker", () => {
     expect(none!.body.length).toBeGreaterThan(TAIL.length);
     const noEnough = await get("/split", false);
     expect(noEnough!.body.length).toBeGreaterThan(TAIL.length);
+  });
+});
+
+describe("safeGet asks allowHost before every request", () => {
+  const options = { accept: "text/html", maxBytes: () => 512 * 1024, cut: () => true, timeoutMs: 5000 };
+
+  it("sends nothing to an address that is not allowed", async () => {
+    hits.length = 0;
+    expect(await safeGet(`${origin}/whole`, { ...options, testOrigin: origin, allowHost: () => false })).toBeNull();
+    expect(hits).toEqual([]);
+  });
+
+  it("does not follow a redirect to an address that is not allowed", async () => {
+    hits.length = 0;
+    expect(await safeGet(`${origin}/redirect`, { ...options, testOrigin: origin, allowHost: (url) => url.pathname !== "/whole" })).toBeNull();
+    expect(hits).toEqual(["/redirect"]);
+    // The same redirect is followed where the target is allowed.
+    const followed = await safeGet(`${origin}/redirect`, { ...options, testOrigin: origin, allowHost: (url) => url.origin === origin });
+    expect(followed!.url).toBe(`${origin}/whole`);
   });
 });

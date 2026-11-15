@@ -61,6 +61,11 @@ This is the part the desktop notes do not have. Check each and write down what a
 - **Environment variables:** `git diff <base>..HEAD -- .env.example apps/server/src/config.ts deploy/compose.yml
   deploy/portainer.yml deploy/windows/templates/env.example`: new ones (with their default), removed or deprecated
   ones, changed defaults. A variable that a Portainer stack must get by hand is worth a line.
+- **Plugins:** copy the hashes of `../squorli-plugins/revoked.json` into `REVOKED_PLUGIN_HASHES`
+  (`apps/server/src/plugins/signingKeys.ts`) when that file changed since the last release; a server learns of a
+  signature Squorli took back only with its update, so a revocation is worth a line in the notes. A changed
+  `apps/server/plugins/game-news.ts` must have gone through the signing workflow of squorli-plugins again (the server's
+  tests fail otherwise); a raised `PLUGIN_API_VERSION` or a new key in `PLUGIN_SIGNING_KEYS` is worth a line too.
 - **Compose or proxy changes** an existing installation needs (`deploy/`): a new port, a changed Caddyfile or LiveKit config.
   The install script's `squorli update` pulls the image only, not new deploy files: say what to download again, if anything.
 - **Installations on Windows** (`git diff <base>..HEAD -- deploy/windows`): `squorli update` there runs the setup of the

@@ -62,6 +62,18 @@ const Env = z.object({
   PLUGIN_MEMORY_MB: z.coerce.number().int().min(16).max(512).default(32),
   PLUGIN_STORAGE_MB: z.coerce.number().positive().max(1024).default(5),
   /**
+   * May plugins fetch from the internet (`squorli.net.get`, interface version 2)? Only a plugin file that carries Squorli's
+   * signature can ask for it at all, and only for the hosts its manifest names. false = such a plugin is not installed and
+   * the one that ships (game news) is not offered; the server then makes no request on a plugin's behalf.
+   */
+  PLUGIN_NET: z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1").prefault("true"),
+  /**
+   * For tests only: one more key whose signature on a plugin file counts, as `<id>:<base64 of the 32-byte public key>`, so
+   * the smoke test can sign its probe plugin. A production start refuses it (`testKeyProblems`): whoever holds that key
+   * could give any plugin the network.
+   */
+  PLUGIN_TEST_SIGNING_KEY: z.string().regex(/^[a-z0-9-]{1,32}:[A-Za-z0-9+/]{43}=$/).optional(),
+  /**
    * The address LiveKit announces for media (its `rtc.node_ip`; in `deploy/compose.yml` the same variable configures
    * LiveKit itself). The setup check probes the media ports there when it is set; otherwise it uses the host of
    * LIVEKIT_PUBLIC_URL when that differs from PUBLIC_DOMAIN, else PUBLIC_DOMAIN (a media node on another machine).
@@ -143,6 +155,13 @@ const Env = z.object({
   LINK_PREVIEW_TEST_ORIGIN: z.string().url().optional(),
 });
 
+/** What stops a production start: the tests' signing key for plugins. Empty outside production. */
+export function testKeyProblems(c: { NODE_ENV: string; PLUGIN_TEST_SIGNING_KEY?: string | undefined }): string[] {
+  return c.NODE_ENV === "production" && c.PLUGIN_TEST_SIGNING_KEY
+    ? ["PLUGIN_TEST_SIGNING_KEY ist nur fuer Tests: mit diesem Schluessel bekaeme jedes Plugin Netzzugriff. Entferne die Zeile aus der .env und starte neu."]
+    : [];
+}
+
 /** The defaults of the plugin variables, as the schema has them (for packages/plugin-api/reference.json, which the guide is held against). */
 export function pluginDefaults(): { PLUGIN_MAX: number; PLUGIN_CPU_MS: number; PLUGIN_MEMORY_MB: number; PLUGIN_STORAGE_MB: number } {
   return Env.pick({ PLUGIN_MAX: true, PLUGIN_CPU_MS: true, PLUGIN_MEMORY_MB: true, PLUGIN_STORAGE_MB: true }).parse({});
@@ -217,7 +236,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`Ungueltige Konfiguration:\n${issues}`);
   }
   const c = parsed.data;
-  const problems = [...placeholderSecretProblems(c), ...rateLimitProblems(c)];
+  const problems = [...placeholderSecretProblems(c), ...rateLimitProblems(c), ...testKeyProblems(c)];
   if (problems.length) throw new Error(`Unsichere Konfiguration:\n${problems.map((p) => `  ${p}`).join("\n")}`);
   const publicOrigin = c.PUBLIC_DOMAIN === "localhost" ? `http://localhost:${c.PORT}` : `https://${c.PUBLIC_DOMAIN}`;
   return {

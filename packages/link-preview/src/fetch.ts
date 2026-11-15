@@ -29,6 +29,13 @@ export type FetchOptions = {
   enough?: (contentType: string, latest: Buffer) => boolean;
   testOrigin?: string | undefined;
   timeoutMs?: number;
+  /**
+   * Asked for the address itself and for the address of every redirect, before anything is sent there; false = no answer.
+   * For a caller that may reach a fixed list of hosts only (a plugin's `net.get`, docs/features/plugins.md): without it a
+   * listed host could send the request on to any public address. It narrows, it never widens: the public-address rule
+   * applies to an allowed host all the same.
+   */
+  allowHost?: (url: URL) => boolean;
 };
 
 const MAX_REDIRECTS = 5;
@@ -86,6 +93,7 @@ export async function safeGet(address: string, options: FetchOptions): Promise<F
       const url = new URL(current);
       if (url.protocol !== "http:" && url.protocol !== "https:") return null;
       if (url.username || url.password) return null;
+      if (options.allowHost && !options.allowHost(url)) return null;
       const exempt = !!options.testOrigin && url.origin === options.testOrigin;
       if (!exempt && (await checkHost(url.hostname)) !== "public") return null;
       const res = await open(url, options.accept, signal, exempt);

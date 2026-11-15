@@ -1,4 +1,4 @@
-import { PLUGIN_API_MIN, PLUGIN_API_VERSION, PLUGIN_CAPABILITIES, PLUGIN_COMMANDS_MAX, PLUGIN_FIELD_TYPES, PLUGIN_FORM_FIELDS_MAX, PLUGIN_MEMBER_ACTIONS_MAX, PLUGIN_SETTINGS_FIELDS_MAX, PLUGIN_SOURCE_MAX_BYTES, PLUGIN_VIEWS_MAX, PLUGIN_VIEW_COLUMN_TYPES, PLUGIN_VIEW_ROWS_MAX, Permission } from "@squorli/protocol";
+import { PLUGIN_API_MIN, PLUGIN_API_VERSION, PLUGIN_CAPABILITIES, PLUGIN_NETWORK_HOSTS_MAX, PLUGIN_COMMANDS_MAX, PLUGIN_FIELD_TYPES, PLUGIN_FORM_FIELDS_MAX, PLUGIN_MEMBER_ACTIONS_MAX, PLUGIN_SETTINGS_FIELDS_MAX, PLUGIN_SOURCE_MAX_BYTES, PLUGIN_VIEWS_MAX, PLUGIN_VIEW_COLUMN_TYPES, PLUGIN_VIEW_ROWS_MAX, Permission } from "@squorli/protocol";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,8 +7,10 @@ import { CAPABILITY_INFO, readPluginFile } from "./manifest";
 import { HOST_FUNCTIONS, PLUGIN_EVENTS } from "./prelude";
 import { EVENT_HOST_CALLS_MAX, EVENT_QUEUE_MAX, EVENT_WALL_MS, PluginRunner } from "./runner";
 import { RETRY_SECONDS } from "./scheduler";
-import { HISTORY_MAX, JOBS_MAX, JOB_PAYLOAD_MAX, LOG_DAYS, LOG_KEEP, LOG_LINE_MAX, MEMBERS_PAGE, MESSAGE_MAX, RATE, STORAGE_KEYS_MAX, STORAGE_KEY_MAX, STRIKES, STRIKE_WINDOW_MS } from "./service";
+import { HISTORY_MAX, JOBS_MAX, JOB_PAYLOAD_MAX, LOG_DAYS, LOG_KEEP, LOG_LINE_MAX, MEMBERS_PAGE, MESSAGE_MAX, NET_BODY_MAX, NET_TIMEOUT_MS, RATE, STORAGE_KEYS_MAX, STORAGE_KEY_MAX, STRIKES, STRIKE_WINDOW_MS } from "./service";
 import { pluginDefaults } from "../config";
+import { verifyPluginSignature } from "./signature";
+import { PLUGIN_SIGNING_KEYS, REVOKED_PLUGIN_HASHES } from "./signingKeys";
 import { MAX_JSON_CHARS } from "./wire";
 
 /**
@@ -53,6 +55,35 @@ describe("the plugins in the repository", () => {
   }
 });
 
+describe("the plugins that ship with the server", () => {
+  const shipped = pluginFiles().filter((f) => f.replace(/\\/g, "/").includes("/apps/server/plugins/"));
+  /**
+   * The server offers a plugin that asks for the network only with Squorli's signature, and it holds the ones in its own
+   * image to that rule too (`loadBundled`). So a change to such a file needs a new signature before it is released: the
+   * file goes through the signing workflow of the repository squorli-plugins and comes back with its last line replaced.
+   *
+   * That workflow signs with this repository's own tool at a commit that is on GitHub already, so the changed, still
+   * unsigned file has to be committed first: an unsigned file is a warning here, and a failure only in the build of a
+   * server release tag (`v1.2.3`; GitLab's CI_COMMIT_TAG, GitHub's GITHUB_REF_NAME). A signature that does not hold (the
+   * file was changed after it was signed and still carries the old line) fails everywhere.
+   */
+  const tag = process.env.CI_COMMIT_TAG ?? (process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined) ?? "";
+  const releaseBuild = /^v\d/.test(tag);
+  for (const file of shipped) {
+    it(`${file.split(/[\\/]/).pop()} carries a signature that holds, where it needs one`, () => {
+      const source = readFileSync(file, "utf8");
+      const read = readPluginFile(source, file.split(/[\\/]/).pop()!);
+      if (!read.ok) throw new Error(read.message);
+      const check = verifyPluginSignature(source, PLUGIN_SIGNING_KEYS, REVOKED_PLUGIN_HASHES);
+      expect(check.status === "none" || check.status === "valid", `signature: ${check.status}`).toBe(true);
+      if (check.status === "valid") expect(check.kind).toBe("official");
+      if (!read.manifest.capabilities.includes("net.fetch") || check.status === "valid") return;
+      if (releaseBuild) expect(check.status, "a shipped plugin that asks for the network must be signed before a release (docs/features/plugins.md)").toBe("valid");
+      else console.warn(`${file.split(/[\\/]/).pop()} asks for the network and is not signed: the server does not offer it. Sign it in squorli-plugins before the next server release (docs/features/plugins.md).`);
+    });
+  }
+});
+
 describe("packages/plugin-api/reference.json", () => {
   it("lists what this server offers plugins", () => {
     const defaults = pluginDefaults();
@@ -74,6 +105,7 @@ describe("packages/plugin-api/reference.json", () => {
         messageChars: MESSAGE_MAX, historyMessages: HISTORY_MAX, membersPage: MEMBERS_PAGE,
         logLineChars: LOG_LINE_MAX, logLinesKept: LOG_KEEP, logDays: LOG_DAYS,
         failuresToSuspend: STRIKES, failureWindowMinutes: STRIKE_WINDOW_MS / 60_000,
+        netHosts: PLUGIN_NETWORK_HOSTS_MAX, netAnswerKb: NET_BODY_MAX / 1024, netTimeoutSeconds: NET_TIMEOUT_MS / 1000,
         sourceKb: PLUGIN_SOURCE_MAX_BYTES / 1024, settingsFields: PLUGIN_SETTINGS_FIELDS_MAX, formFields: PLUGIN_FORM_FIELDS_MAX, commands: PLUGIN_COMMANDS_MAX, memberActions: PLUGIN_MEMBER_ACTIONS_MAX, views: PLUGIN_VIEWS_MAX, viewRows: PLUGIN_VIEW_ROWS_MAX,
       },
     };

@@ -17,7 +17,8 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:suspended": "node scripts/smoke-suspended.mjs",
     "smoke:devices": "node scripts/smoke-devices.mjs",
-    "smoke:plugins": "node scripts/smoke-plugins.mjs"
+    "smoke:plugins": "node scripts/smoke-plugins.mjs",
+    "plugin:check": "tsx src/plugin-check.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

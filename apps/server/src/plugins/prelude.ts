@@ -15,6 +15,7 @@ export const HOST_FUNCTIONS = [
   "storage.get", "storage.set", "storage.delete", "storage.list",
   "schedule.at", "schedule.cancel", "schedule.list",
   "settings.get",
+  "net.get",
   "log",
 ] as const;
 export type HostFunction = (typeof HOST_FUNCTIONS)[number];
@@ -92,6 +93,7 @@ export function preludeSource(apiVersion: number): string {
       list: function () { return call("schedule.list"); }
     }),
     settings: Object.freeze({ get: function () { return call("settings.get"); } }),
+    net: Object.freeze({ get: function (url) { return call("net.get", { url: url }); } }),
     log: log
   };
   Object.defineProperty(globalThis, "squorli", { value: Object.freeze(api), writable: false, configurable: false, enumerable: true });

@@ -95,7 +95,8 @@ All seven decisions made by the user on 25 September 2026 (as proposed): `docs/P
 
 Built on 15 November 2026 and documented in `docs/features/plugins.md` (the sandbox, the interface, Verwaltung > Plugins, `squorli plugin`, the two plugins that ship, the guide for authors on the website); the decisions Claude made while building were confirmed by the user the same day. Released that day as Squorli Server 0.14.0 and desktop app 0.17.0; the website's pages went live with them. Open:
 - **What only real use shows** (the note's "NOT checked"): an installation updated over the internet, the package for Windows, days of running plugins, a plugin written by somebody else.
-- **Later, each possible without breaking version 1:** an author's key with trust on first use, outbound requests through the guarded fetch as a capability, voice events, a list field type.
+- **Later, each possible without breaking a version:** voice events, a list field type.
+- **Signed plugins, the network and the game news plugin (user, 15 November 2026; built that day, `docs/features/plugins.md`, its last section):** interface version 2 with `net.get` for plugins that carry Squorli's signature, the plugin key, submissions by pull request in the repository `squorli-plugins`, the game news plugin (Steam, free games, NVIDIA drivers). **Not released, and open before it can be:** the user sets up the repository on GitHub (environment `signing`, the secret, the rule for `main`; the key exists since 15 November 2026 and its public half is in `apps/server/src/plugins/signingKeys.ts` and `tools/squorli-plugins.pub`); `SERVER_REF` of `squorli-plugins` gets the commit that carries it; `game-news.ts` goes through the signing workflow and comes back signed; the user reads `REVIEW.md` there and the website's texts about submitting. Open after that: AMD and Intel drivers (no source a program can read was found), the workflows' first real runs, a submitted plugin by somebody else.
 
 ---
 

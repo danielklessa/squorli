@@ -496,6 +496,12 @@ export const plugins = pgTable("plugins", {
   installedByName: text("installed_by_name"),
   /** upload (Verwaltung), cli (`squorli plugin add`) or bundled (one that ships with the server). */
   installedVia: text("installed_via").notNull(),
+  /**
+   * Whose signature the file carries (plugins/signature.ts): the name of Squorli's key and "official" or "reviewed"; null =
+   * not signed. Only a signed plugin holds the capability `net.fetch`.
+   */
+  signedBy: text("signed_by"),
+  signedKind: text("signed_kind"),
   installedAt: ts("installed_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });

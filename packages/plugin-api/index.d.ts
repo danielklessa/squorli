@@ -1,12 +1,14 @@
 /**
- * Squorli plugin interface, version 1.
+ * Squorli plugin interface, version 2 (version 1 plus the network: `squorli.net`, the capability `net.fetch` and the
+ * manifest's `network`; a plugin that uses none of it names `"apiVersion": 1` and runs on servers from before 0.15.0 too).
  *
  * This file describes everything a plugin can see: the global `squorli` and the events it listens to. It is the reference
  * for authors; the guide with examples is at https://squorli.com/en/docs/plugins/ (German: /de/docs/plugins/).
  *
  * A plugin is ONE file, JavaScript or TypeScript. It starts with its manifest as JSON in a block comment whose first word
  * is `squorli-plugin`; the code follows. The server runs the file in a sandbox: the JavaScript language and `squorli`,
- * nothing else. There is no `process`, no `require`, no `fetch`, no timers and no `import` of anything.
+ * nothing else. There is no `process`, no `require`, no `fetch`, no timers and no `import` of anything. The one way to
+ * the internet is `squorli.net.get`, for plugins Squorli signed (see `Net`).
  *
  * For a TypeScript plugin, put this file next to yours (or name it in the `files` of a tsconfig) and nothing needs to be
  * imported: `squorli` and the namespace `Squorli` are global. The server only removes the types when it installs the file,
@@ -23,8 +25,9 @@
  *   plugin's settings fields of type `role`, `roles`, `channel` or `channels`.
  *
  * Limits of one event: 200 ms of CPU time, 10 s in all, 50 host calls, 32 MB of memory, 64 KB per argument and per answer
- * (the operator can change the CPU time and the memory). Limits per minute: 300 host calls, 60 role changes, 20 messages, 120
- * storage writes, 60 log lines. Five failures within ten minutes suspend the plugin until an owner switches it on again.
+ * (the operator can change the CPU time and the memory; the answer of `net.get` may be larger). Limits per minute: 300
+ * host calls, 60 role changes, 20 messages, 120 storage writes, 60 log lines, 30 requests to the network. Five failures
+ * within ten minutes suspend the plugin until an owner switches it on again.
  */
 declare namespace Squorli {
   /** A text shown to people: plain English, or English and German. Shown as text, never as markup. */
@@ -188,7 +191,10 @@ declare namespace Squorli {
   interface Messages {
     /** Messages of a channel of the scope, oldest first; `before` = a `seq` to page backwards. At most 50. Needs `messages.read`. */
     history(channelId: string, options?: { before?: number; limit?: number }): Promise<{ messages: Message[]; hasMore: boolean }>;
-    /** Write a message (1 to 4000 characters, Markdown as members write it, no files, no link previews). Needs `messages.write`. */
+    /**
+     * Write a message (1 to 4000 characters, Markdown as members write it, no files). Needs `messages.write`. Links get a
+     * preview only in the messages of a plugin that holds `net.fetch`.
+     */
     send(channelId: string, content: string): Promise<{ id: string; seq: number }>;
     /** Change one of the plugin's own messages. Needs `messages.write`. */
     edit(messageId: string, content: string): Promise<boolean>;
@@ -229,6 +235,31 @@ declare namespace Squorli {
     get(): Promise<Record<string, unknown>>;
   }
 
+  /** What `net.get` answers: the address the answer came from (after redirects), its content type and its text. */
+  interface NetResponse {
+    url: string;
+    /** As the host sent it, in lower case, e.g. "application/json; charset=utf-8". */
+    contentType: string;
+    /** The body read as UTF-8. Parse it yourself: `JSON.parse(text)`. */
+    text: string;
+  }
+
+  /**
+   * The network (interface version 2). Needs the capability `net.fetch`, which the server takes only from a plugin file that
+   * carries Squorli's signature: plugins are submitted for it at https://github.com/danielklessa/squorli-plugins. The
+   * manifest names the hosts under `"network": { "hosts": ["api.example.org"] }`; the owner reads that list before
+   * switching the plugin on, and a request to any other host is refused.
+   */
+  interface Net {
+    /**
+     * One GET over https to a host of the manifest. No headers of your own, no body, no cookies: the address is all a
+     * plugin can send. Resolves with the answer when the host said 200 with text, JSON or XML of at most 512 KB within
+     * 5 seconds; rejects otherwise (also for a redirect that leaves the manifest's hosts), so catch it: a source that is
+     * down must not fail the handler. At most 30 requests a minute, and mind the 10 seconds one event has in all.
+     */
+    get(url: string): Promise<NetResponse>;
+  }
+
   /** Lines in the plugin's log (Verwaltung > Plugins, `squorli plugin log`). `console.log` and friends write here too. */
   interface Log {
     info(...parts: unknown[]): void;
@@ -248,6 +279,7 @@ declare namespace Squorli {
     readonly storage: Storage;
     readonly schedule: Schedule;
     readonly settings: Settings;
+    readonly net: Net;
     readonly log: Log;
   }
 }

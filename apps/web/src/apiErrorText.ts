@@ -69,6 +69,8 @@ const pluginKeys: Record<string, Key> = {
   unknown_command: "plugin.err.unknown_command", unknown_view: "plugin.err.unknown_view", invalid_values: "plugin.err.invalid_values", owner_only: "plugin.err.owner_only",
   forbidden: "plugin.err.forbidden", target_above_you: "plugin.err.target_above_you", self: "plugin.err.self", not_found: "plugin.err.not_found",
   unknown_channel: "voice.joinErr.gone", rate_limited: "err.rateLimited", bad_request: "plugin.err.bad_request",
+  plugin_signature_required: "plugin.err.plugin_signature_required", plugin_signature_invalid: "plugin.err.plugin_signature_invalid",
+  plugin_signature_revoked: "plugin.err.plugin_signature_revoked", plugin_net_off: "plugin.err.plugin_net_off",
 };
 export type PluginProblem = { text: string; detail: string | null };
 export function pluginProblem(err: unknown): PluginProblem {

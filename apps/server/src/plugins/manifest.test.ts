@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CAPABILITY_INFO, apiSupported, checkValues, readPluginFile, scopeIds, wireField } from "./manifest";
+import { CAPABILITY_INFO, apiSupported, capabilityText, checkValues, readPluginFile, scopeIds, wireField } from "./manifest";
 
 const head = (json: string) => `/* squorli-plugin\n${json}\n*/\nsquorli.on("enable", () => {});\n`;
 const minimal = `{ "id": "abc", "name": "A", "description": "B", "version": "1.0.0", "apiVersion": 1 }`;
@@ -31,10 +31,40 @@ describe("readPluginFile", () => {
   });
 
   it("tells a plugin for a later interface apart from a broken one", () => {
-    expect(readPluginFile(head(minimal.replace('"apiVersion": 1', '"apiVersion": 2, "somethingNew": 1')), "abc.js")).toMatchObject({ ok: false, code: "api_too_new" });
+    expect(readPluginFile(head(minimal.replace('"apiVersion": 1', '"apiVersion": 3, "somethingNew": 1')), "abc.js")).toMatchObject({ ok: false, code: "api_too_new" });
     expect(readPluginFile(head(minimal.replace('"apiVersion": 1', '"apiVersion": 0')), "abc.js")).toMatchObject({ ok: false, code: "api_too_old" });
     expect(apiSupported(1)).toBe(true);
-    expect(apiSupported(2)).toBe(false);
+    expect(apiSupported(2)).toBe(true);
+    expect(apiSupported(3)).toBe(false);
+  });
+
+  it("takes the network only whole: interface version 2, the capability and the hosts together", () => {
+    const withNet = (apiVersion: number, rest: string) => head(minimal.replace('"apiVersion": 1', `"apiVersion": ${apiVersion}${rest}`));
+    const good = readPluginFile(withNet(2, ', "capabilities": ["net.fetch"], "network": { "hosts": ["api.example.org", "xn--bcher-kva.example"] }'), "abc.js");
+    expect(good).toMatchObject({ ok: true });
+    expect(good.ok && good.manifest.network?.hosts).toEqual(["api.example.org", "xn--bcher-kva.example"]);
+    // A plugin of version 2 without the network is an ordinary plugin.
+    expect(readPluginFile(withNet(2, ""), "abc.js")).toMatchObject({ ok: true });
+    const refused = [
+      withNet(1, ', "capabilities": ["net.fetch"], "network": { "hosts": ["api.example.org"] }'), // version 1 knows no network
+      withNet(2, ', "capabilities": ["net.fetch"]'), // the capability without hosts
+      withNet(2, ', "network": { "hosts": ["api.example.org"] }'), // hosts without the capability
+      withNet(2, ', "capabilities": ["net.fetch"], "network": { "hosts": [] }'),
+      withNet(2, ', "capabilities": ["net.fetch"], "network": { "hosts": ["api.example.org", "api.example.org"] }'),
+      withNet(2, ', "capabilities": ["net.fetch"], "network": { "hosts": ["api.example.org"], "ports": [8080] }'),
+      ...["*.example.org", "example", "localhost", "127.0.0.1", "[::1]", "API.example.org", "api.example.org:8443", "https://api.example.org", "api.example.org/path", "api..example.org", "-a.example.org", "api.example.org."]
+        .map((host) => withNet(2, `, "capabilities": ["net.fetch"], "network": { "hosts": ["${host}"] }`)),
+      withNet(2, `, "capabilities": ["net.fetch"], "network": { "hosts": [${Array.from({ length: 21 }, (_, i) => `"h${i}.example.org"`).join(",")}] }`),
+    ];
+    for (const source of refused) expect(readPluginFile(source, "abc.js"), source.slice(100, 220)).toMatchObject({ ok: false, code: "bad_manifest" });
+  });
+
+  it("names a plugin's hosts in the sentence the owner reads", () => {
+    const text = capabilityText("net.fetch", { network: { hosts: ["api.example.org", "feeds.example.net"] } });
+    expect(text.en).toContain("api.example.org, feeds.example.net");
+    expect(text.de).toContain("api.example.org, feeds.example.net");
+    expect(capabilityText("members.read", { network: { hosts: ["api.example.org"] } })).toBe(CAPABILITY_INFO["members.read"].text);
+    expect(capabilityText("net.fetch", {})).toBe(CAPABILITY_INFO["net.fetch"].text);
   });
 
   it("reads the plugin that ships with the server", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Message, PLUGIN_SOURCE_MAX_BYTES, parsePluginDate, PluginInstallRequest, PluginManifest, PluginSurface, PluginsResponse, ServerEvent, ServerState, cleanPluginText, pluginText } from "./index";
+import { Message, PLUGIN_NETWORK_HOSTS_MAX, PLUGIN_SOURCE_MAX_BYTES, parsePluginDate, PluginInstallRequest, PluginManifest, PluginSurface, PluginsResponse, ServerEvent, ServerState, cleanPluginText, pluginText } from "./index";
 
 const base = { id: "timed-roles", name: "Timed roles", description: "Gives a role for a time.", version: "1.0.0", apiVersion: 1 };
 
@@ -111,5 +111,35 @@ describe("what clients get (lenient)", () => {
   it("the admin list drops a plugin it cannot read", () => {
     const r = PluginsResponse.parse({ plugins: [{ id: "x" }], available: [], mode: "owner", max: 20 });
     expect(r.plugins).toEqual([]);
+  });
+
+  it("a plugin's signature and what blocks it are optional, and one this app cannot read is none", () => {
+    const info = { id: "p-one", name: { en: "P" }, description: { en: "D" }, version: "1.0.0", apiVersion: 2, language: "js", sourceHash: "00", enabled: true, state: "running", installedVia: "upload", installedAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() };
+    // A server from before signatures names neither field.
+    const before = PluginsResponse.parse({ plugins: [info], available: [{ id: "a-one", name: { en: "A" }, description: { en: "D" }, version: "1.0.0" }], mode: "owner", max: 20 });
+    expect(before.plugins[0]).toMatchObject({ signature: null, blocked: null });
+    expect(before.available[0]!.signature).toBeNull();
+    const signed = PluginsResponse.parse({ plugins: [{ ...info, signature: { key: "2026-11", kind: "reviewed" }, blocked: "plugin_net_off" }], available: [], mode: "owner", max: 20 });
+    expect(signed.plugins[0]).toMatchObject({ signature: { key: "2026-11", kind: "reviewed" }, blocked: "plugin_net_off" });
+    // A kind of a later server is a plain string; a shape this app cannot read costs the mark, never the plugin.
+    const later = PluginsResponse.parse({ plugins: [{ ...info, signature: { key: "2030-01", kind: "partner" } }, { ...info, id: "p-two", signature: "yes", blocked: 5 }], available: [], mode: "owner", max: 20 });
+    expect(later.plugins.map((p) => [p.id, p.signature?.kind ?? null, p.blocked])).toEqual([["p-one", "partner", null], ["p-two", null, null]]);
+  });
+});
+
+describe("the network in a manifest (interface version 2)", () => {
+  const net = { ...base, apiVersion: 2, capabilities: ["net.fetch"], network: { hosts: ["api.example.org"] } };
+  it("takes the capability and its hosts together, from version 2 on", () => {
+    expect(PluginManifest.parse(net).network).toEqual({ hosts: ["api.example.org"] });
+    expect(PluginManifest.parse({ ...base, apiVersion: 2 }).network).toBeUndefined();
+    expect(PluginManifest.safeParse({ ...net, apiVersion: 1 }).success).toBe(false);
+    expect(PluginManifest.safeParse({ ...net, network: undefined }).success).toBe(false);
+    expect(PluginManifest.safeParse({ ...net, capabilities: [] }).success).toBe(false);
+  });
+
+  it("takes full host names only", () => {
+    for (const host of ["*.example.org", "localhost", "10.0.0.1", "api.example.org:443", "API.example.org", "api.example.org/x", "", "a..b.org"]) expect(PluginManifest.safeParse({ ...net, network: { hosts: [host] } }).success, host).toBe(false);
+    expect(PluginManifest.safeParse({ ...net, network: { hosts: Array.from({ length: PLUGIN_NETWORK_HOSTS_MAX + 1 }, (_, i) => `h${i}.example.org`) } }).success).toBe(false);
+    expect(PluginManifest.safeParse({ ...net, network: { hosts: ["a.example.org", "b.example.org"], anything: 1 } }).success).toBe(false);
   });
 });

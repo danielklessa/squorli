@@ -1,5 +1,5 @@
 {
-  "apiVersion": 1,
+  "apiVersion": 2,
   "apiMin": 1,
   "capabilities": [
     {
@@ -32,6 +32,14 @@
       "text": {
         "en": "Write messages under its own name in the channels you pick in its settings, and where a member runs one of its commands.",
         "de": "Unter eigenem Namen Nachrichten schreiben: in den Kanälen, die du in seinen Einstellungen auswählst, und dort, wo ein Mitglied einen seiner Befehle ausführt."
+      }
+    },
+    {
+      "id": "net.fetch",
+      "risk": "low",
+      "text": {
+        "en": "Fetch data from the internet, from fixed addresses only. It can read there, never send anything but the address it asks.",
+        "de": "Daten aus dem Internet abrufen, nur von festen Adressen. Es kann dort lesen und nichts senden außer der Adresse, die es abruft."
       }
     }
   ],
@@ -70,6 +78,7 @@
     "schedule.cancel",
     "schedule.list",
     "settings.get",
+    "net.get",
     "log.info",
     "log.warn",
     "log.error"
@@ -132,7 +141,8 @@
       "roles": 60,
       "messages": 20,
       "storageWrites": 120,
-      "logLines": 60
+      "logLines": 60,
+      "net": 30
     },
     "storageKeys": 10000,
     "storageKeyChars": 128,
@@ -151,6 +161,9 @@
     "logDays": 30,
     "failuresToSuspend": 5,
     "failureWindowMinutes": 10,
+    "netHosts": 20,
+    "netAnswerKb": 512,
+    "netTimeoutSeconds": 5,
     "sourceKb": 256,
     "settingsFields": 30,
     "formFields": 10,

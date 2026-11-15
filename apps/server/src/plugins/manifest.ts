@@ -62,7 +62,23 @@ export const CAPABILITY_INFO: Record<PluginCapability, { text: PluginText; risk:
     risk: "low",
     text: { en: "Write messages under its own name in the channels you pick in its settings, and where a member runs one of its commands.", de: "Unter eigenem Namen Nachrichten schreiben: in den Kanälen, die du in seinen Einstellungen auswählst, und dort, wo ein Mitglied einen seiner Befehle ausführt." },
   },
+  // The sentence without its hosts; `capabilityText` puts the manifest's list in. Only a file Squorli signed gets this far.
+  "net.fetch": {
+    risk: "low",
+    text: { en: "Fetch data from the internet, from fixed addresses only. It can read there, never send anything but the address it asks.", de: "Daten aus dem Internet abrufen, nur von festen Adressen. Es kann dort lesen und nichts senden außer der Adresse, die es abruft." },
+  },
 };
+
+/** A capability's sentence for one plugin: `net.fetch` names the hosts of that plugin's manifest, the others are fixed. */
+export function capabilityText(id: PluginCapability, manifest: Pick<PluginManifest, "network">): PluginText {
+  const hosts = manifest.network?.hosts ?? [];
+  if (id !== "net.fetch" || hosts.length === 0) return CAPABILITY_INFO[id].text;
+  const list = hosts.join(", ");
+  return {
+    en: `Fetch data from these addresses on the internet and no others: ${list}. It can read there, never send anything but the address it asks. Links in its messages get a preview.`,
+    de: `Daten von diesen Adressen im Internet abrufen und von keinen anderen: ${list}. Es kann dort lesen und nichts senden außer der Adresse, die es abruft. Links in seinen Nachrichten bekommen eine Vorschau.`,
+  };
+}
 
 // ---------- Values of fields ----------
 

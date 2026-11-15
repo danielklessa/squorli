@@ -22,6 +22,26 @@ export function PluginStateBadge({ state }: { state: string }) {
   return <span className={`badge plugin-state plugin-state-${known ? state : "other"}`}>{tOr(`admin.plugins.state.${state}`, state)}</span>;
 }
 
+/**
+ * "Von Squorli" / "Von Squorli geprüft": the file carries Squorli's signature and the server checked it (the server says
+ * so, the client believes it as it believes the rest of the list). A kind of a later server shows as "Signiert".
+ */
+export function PluginSignedBadge({ signature }: { signature: PluginInfo["signature"] | undefined }) {
+  if (!signature) return null;
+  const kind = signature.kind === "official" || signature.kind === "reviewed" ? signature.kind : "other";
+  const label = kind === "official" ? t("admin.plugins.signed.official") : kind === "reviewed" ? t("admin.plugins.signed.reviewed") : t("admin.plugins.signed.other");
+  const hint = kind === "official" ? t("admin.plugins.signedHint.official") : kind === "reviewed" ? t("admin.plugins.signedHint.reviewed") : t("admin.plugins.signedHint.other");
+  return <span className="badge plugin-signed" title={hint}><Icon name="badge-check" /> {label}</span>;
+}
+
+/** Why a plugin that is switched on does not run, when it is its signature or the operator's switch; null for a code of a later server. */
+export function blockedText(code: string | null | undefined): string | null {
+  if (code === "plugin_signature_revoked") return t("admin.plugins.blocked.revoked");
+  if (code === "plugin_net_off") return t("admin.plugins.blocked.netOff");
+  if (code === "plugin_signature_required") return t("admin.plugins.blocked.unsigned");
+  return null;
+}
+
 /** A plugin's capabilities in the server's plain words; one that reaches far is marked. `granted` adds what is in force. */
 export function CapabilityList({ capabilities, granted = false }: { capabilities: readonly CapabilityInfo[]; granted?: boolean }) {
   if (capabilities.length === 0) return <p className="muted small">{t("admin.plugins.noCapabilities")}</p>;
@@ -69,6 +89,7 @@ export function PluginDetail({ api, server, me, plugin, isOwner, busy, onBack, o
         <span className="user-avatar plugin-avatar" aria-hidden="true"><Icon name="puzzle" /></span>
         <div className="plugin-title-text"><strong>{name}</strong><span className="muted small">{t("admin.plugins.version", { version: plugin.version })} · {plugin.id}</span></div>
         <PluginStateBadge state={plugin.state} />
+        <PluginSignedBadge signature={plugin.signature} />
         <span className="spacer" />
         <label className="check" title={isOwner ? undefined : t("admin.plugins.ownerOnly")}>
           <input type="checkbox" className="switch" role="switch" checked={plugin.enabled} disabled={!isOwner || busy || (plugin.state === "incompatible" && !plugin.enabled)} onChange={(e) => (e.target.checked ? onEnable() : onDisable())} />
@@ -76,20 +97,24 @@ export function PluginDetail({ api, server, me, plugin, isOwner, busy, onBack, o
         </label>
       </div>
       <p className="plugin-description">{pluginText(plugin.description, locale)}</p>
-      {plugin.enabled && (plugin.state === "needs_approval" || plugin.state === "suspended") && (
+      {plugin.enabled && plugin.blocked && <p className="warn-box">{blockedText(plugin.blocked) ?? plugin.lastError ?? plugin.blocked}</p>}
+      {plugin.enabled && !plugin.blocked && (plugin.state === "needs_approval" || plugin.state === "suspended") && (
         <div className="warn-box stack">
           <span>{t(plugin.state === "needs_approval" ? "admin.plugins.needsApprovalText" : "admin.plugins.suspendedText")}</span>
           {isOwner && <div><button disabled={busy} onClick={onEnable}>{t(plugin.state === "needs_approval" ? "admin.plugins.approve" : "admin.plugins.restart")}</button></div>}
         </div>
       )}
       {plugin.state === "incompatible" && <p className="warn-box">{t("admin.plugins.incompatibleText")}</p>}
-      {plugin.lastError && <p className="small plugin-last-error"><span className="error">{t("admin.plugins.lastError")}</span>{plugin.lastErrorAt ? ` (${fmtDateTime(plugin.lastErrorAt)})` : ""}: <code>{plugin.lastError}</code></p>}
+      {plugin.lastError && !(plugin.blocked && blockedText(plugin.blocked)) && <p className="small plugin-last-error"><span className="error">{t("admin.plugins.lastError")}</span>{plugin.lastErrorAt ? ` (${fmtDateTime(plugin.lastErrorAt)})` : ""}: <code>{plugin.lastError}</code></p>}
       <PluginProblemText problem={problem} />
       <table className="limits-table plugin-meta">
         <tbody>
           {plugin.author && <tr><td>{t("admin.plugins.author")}</td><td>{plugin.author}</td></tr>}
           {plugin.homepage && <tr><td>{t("admin.plugins.homepage")}</td><td>{href ? <a href={href} target="_blank" rel="noreferrer noopener">{plugin.homepage}</a> : <span className="muted">{plugin.homepage}</span>}</td></tr>}
           <tr><td>{t("admin.plugins.installed")}</td><td>{fmtDateTime(plugin.installedAt)} · {tOr(`admin.plugins.via.${plugin.installedVia}`, plugin.installedVia)}{fmtDateTime(plugin.updatedAt) !== fmtDateTime(plugin.installedAt) ? ` · ${t("admin.plugins.updated", { at: fmtDateTime(plugin.updatedAt) })}` : ""}</td></tr>
+          <tr><td>{t("admin.plugins.signature")}</td><td>{plugin.signature
+            ? <>{plugin.signature.kind === "official" ? t("admin.plugins.signedHint.official") : plugin.signature.kind === "reviewed" ? t("admin.plugins.signedHint.reviewed") : t("admin.plugins.signedHint.other")} <span className="muted">{t("admin.plugins.signatureKey", { key: plugin.signature.key })}</span></>
+            : <span className="muted">{t("admin.plugins.unsigned")}</span>}</td></tr>
           <tr><td>{t("admin.plugins.file")}</td><td>{plugin.language === "ts" ? "TypeScript" : plugin.language === "js" ? "JavaScript" : plugin.language} · <code title={plugin.sourceHash}>SHA-256 {plugin.sourceHash.slice(0, 16)}…</code></td></tr>
           {plugin.commands.length > 0 && <tr><td>{t("admin.plugins.commands")}</td><td>{plugin.commands.map((c) => <code key={c} className="plugin-command-name">/{c}</code>)}</td></tr>}
           {plugin.pendingJobs > 0 && <tr><td>{t("admin.plugins.pendingJobs")}</td><td>{plugin.pendingJobs}</td></tr>}

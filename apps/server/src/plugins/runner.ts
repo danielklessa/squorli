@@ -46,6 +46,8 @@ export type RunnerOptions = {
   wallMs?: number;
   onCall: (pluginId: string, ctx: InvocationContext, fn: string, args: unknown) => Promise<unknown>;
   onFailure: (pluginId: string, kind: FailureKind, message: string, event: string) => void;
+  /** How long the answer of one host function may be, as JSON; unset = `MAX_JSON_CHARS` for all (the service widens `net.get`). */
+  answerMax?: (fn: string) => number;
   /** A worker started or stopped: for the plugin's log. */
   onLifecycle?: (pluginId: string, what: "started" | "stopped" | "killed", detail?: string) => void;
 };
@@ -239,7 +241,8 @@ export class PluginRunner {
         try { args = JSON.parse(m.args); } catch { this.post(slot, { t: "result", callId: m.callId, ok: false, error: "squorli: the argument is not JSON" }); return; }
         void this.opts.onCall(slot.id, cur.ctx, m.fn, args).then((value) => {
           const text = value === undefined ? "" : JSON.stringify(value);
-          if (text.length > MAX_JSON_CHARS) this.post(slot, { t: "result", callId: m.callId, ok: false, error: `squorli: the answer of ${m.fn} is larger than ${MAX_JSON_CHARS / 1024} KB` });
+          const max = this.opts.answerMax?.(m.fn) ?? MAX_JSON_CHARS;
+          if (text.length > max) this.post(slot, { t: "result", callId: m.callId, ok: false, error: `squorli: the answer of ${m.fn} is larger than ${max / 1024} KB` });
           else this.post(slot, { t: "result", callId: m.callId, ok: true, value: text });
         }, (err) => this.post(slot, { t: "result", callId: m.callId, ok: false, error: `squorli: ${String((err as Error)?.message ?? err)}` }));
         return;
