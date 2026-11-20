@@ -1111,8 +1111,13 @@ export const en: Messages = {
 
   // ---- Stage
   "stage.poppedOut": "Showing in a pop-out",
+  "stage.ownShareIdle": "Your stream is running; the shared window is in front of you.",
+  "stage.ownShareIdleHint": "The preview is not rendered to save resources.",
   "stage.restoreVideo": "Show here",
   "stage.popupVideoHint": "Video. Double-click or press F for fullscreen.",
+  "stage.switchTitle": "Other streams",
+  "stage.switchTo": "Switch to this stream",
+  "stage.switchHint": "Hold the pointer down here to switch",
   "stage.popupVolume": "Volume",
   "stage.popout": "Open in a separate window",
   "stage.popoutStage": "Open the stage in its own window",

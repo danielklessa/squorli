@@ -47,7 +47,7 @@ export function useStageWindow(client: VoiceClient, available: boolean, title: s
       if (current && isOpen(current)) { current.window.focus(); return; }
       const size = { width: Math.min(1280, window.screen.availWidth), height: Math.max(1, Math.min(800, window.screen.availHeight - 120)) };
       const popup = openPopoutWindow(size, "stage-window-body", window, STAGE_WINDOW);
-      setEntry({ id: "stage", window: popup, document: popup.document });
+      setEntry({ key: 0, id: "stage", window: popup, document: popup.document });
     },
     close,
     /**

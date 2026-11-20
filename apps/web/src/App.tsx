@@ -224,6 +224,9 @@ export function App() {
     });
     return () => platform.screen.setPicker(null);
   }, []);
+  // Desktop app: the shared window is the one in front of the user; the stage and the pop-out then show their own share black with a notice instead of the picture (docs/features/voice-video.md, 20 November 2026).
+  const [ownShareInFront, setOwnShareInFront] = useState(false);
+  useEffect(() => platform.screen.onOwnShareInFront?.(setOwnShareInFront), []);
   // Desktop app: a `squorli://` link from a browser. The store shows the server (or keeps the link until after the login).
   useEffect(() => platform.links.onDeepLink((link) => { setStageOpen(false); setShowBrowser(false); store.openLink(formatDeepLink(link)); }), [store]);
   // A squorli:// link clicked in a chat message: the same path; a client with a home server leaves it to the browser (squorliLinks.ts).
@@ -461,7 +464,7 @@ export function App() {
   const videoWindows = useVideoWindows(voice.tiles.map((tile) => {
     const member = voiceServer?.server?.members.find((member) => member.userId === tile.identity);
     return member ? { ...tile, name: displayNameOf(member) } : tile;
-  }), client, shareViewers);
+  }), client, shareViewers, voice.screenOn && ownShareInFront);
   const voiceChannel = voiceServer?.server?.channels.find((c) => c.id === voice.channelId) ?? null;
   // The whole stage in a window of its own; the main window then shows no stage (`showStage` below).
   const stageWindow = useStageWindow(client, voiceChannel !== null, `${voiceChannel?.name ?? ""} | Squorli`);
@@ -722,7 +725,7 @@ export function App() {
   };
   const reportJoinError = (err: unknown) => { if (!client.state.error) void showNotice({ title: t("voice.errorTitle"), text: joinErrorText(err) }); };
   const stage = (detached: boolean) => voiceChannel && voiceServer?.server && voiceApi ? (
-    <VoiceStage client={client} voice={voice} channel={voiceChannel} members={voiceServer.server.members} myPermissions={permsIn(voiceServer.server, voiceChannel.id)} locked={!!voiceLock}
+    <VoiceStage client={client} voice={voice} channel={voiceChannel} members={voiceServer.server.members} myPermissions={permsIn(voiceServer.server, voiceChannel.id)} locked={!!voiceLock} ownShareIdle={voice.screenOn && ownShareInFront}
       myUserId={voiceServer.userId ?? ""} roster={voiceServer.voice} channels={voiceServer.server.channels} channelPermissions={(id) => permsIn(voiceServer.server!, id)}
       voteKickAllowed={voiceServer.voteKickAllowed} onVoteKick={(userId, channelId) => { if (voiceHost) startVoteKick(voiceHost, channelId, userId); }}
       api={voiceApi} radio={radio} radioStations={voiceServer.server.radioStations} radioTitle={voiceServer.radioTitles[voiceChannel.id] ?? null} playerTile={embedKeyOf(embedSource)} playerOff={playerOff} onDismissPlayerOff={() => setPlayerOffDismissed(videoKey)} playerPopped={playerWindow.win !== null} onRestorePlayer={playerWindow.restore}

@@ -14,7 +14,9 @@ import { AFK_AFTER_MS } from "@squorli/protocol";
  *   rule above decides. Without a detector (`systemIdle` null) only the first two count.
  * - in the desktop app (systemActivity.ts, user's decisions of 20 September 2026): controller input, fed as `touch()`, and
  *   a playing video: watching needs no input, so while one plays the user stays present, but for at most
- *   VIDEO_ACTIVE_MAX_MS since they were last seen (autoplay, a viewer who fell asleep).
+ *   VIDEO_ACTIVE_MAX_MS since they were last seen (autoplay, a viewer who fell asleep);
+ * - a stream watched inside Squorli (20 November 2026): a share or the radio's video in fullscreen, or pinned large in the
+ *   speaker view (`setWatching`, fed by the stage's tiles and the pop-out windows), with the same four-hour limit.
  */
 export const VIDEO_ACTIVE_MAX_MS = 4 * 60 * 60_000;
 /** A video that stopped still counts this long: the gap between two videos of a playlist, an advertisement, buffering. */
@@ -26,6 +28,7 @@ export class ActivityTracker {
   private lastPresent: number;
   private video = false;
   private videoEndedAt: number | null = null;
+  private readonly watched = new Set<string>();
   private systemIdle: boolean | null = null;
   private idleNow = false;
   private readonly listeners = new Set<(idle: boolean) => void>();
@@ -63,11 +66,23 @@ export class ActivityTracker {
     this.check();
   }
 
+  /**
+   * The user watches a stream inside Squorli (user's wish, 20 November 2026: a share or the radio's video in fullscreen, or
+   * pinned large in the speaker view): watching needs no input, so they stay present like with a video in another program,
+   * for at most VIDEO_ACTIVE_MAX_MS since they were last seen. One key per place that shows such a stream (a tile, a pop-out).
+   */
+  setWatching(key: string, on: boolean): void {
+    if (on === this.watched.has(key)) return;
+    if (on) this.watched.add(key); else this.watched.delete(key);
+    this.check();
+  }
+
   /** Re-evaluate; call regularly, because turning idle happens without any event. */
   check(): void {
     const now = this.now();
     if (this.systemIdle === false) this.lastPresent = now;
-    const watching = (this.video || (this.videoEndedAt !== null && now - this.videoEndedAt < VIDEO_GAP_MS)) && now - this.lastPresent < VIDEO_ACTIVE_MAX_MS;
+    const stream = this.video || this.watched.size > 0 || (this.videoEndedAt !== null && now - this.videoEndedAt < VIDEO_GAP_MS);
+    const watching = stream && now - this.lastPresent < VIDEO_ACTIVE_MAX_MS;
     const idle = (this.systemIdle ?? true) && now - this.last >= this.idleMs && !watching;
     if (idle === this.idleNow) return;
     this.idleNow = idle;

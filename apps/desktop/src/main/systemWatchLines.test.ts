@@ -43,3 +43,14 @@ describe("SystemWatchLines key lines", () => {
     expect(lines.push("key 39 1\r\nkey 11d 0\r\nkey zz 1\r\nkey 39\r\nkey 39 2\r\n")).toEqual([{ type: "key", scan: 0x39, down: true }, { type: "key", scan: 0x11d, down: false }]);
   });
 });
+
+describe("SystemWatchLines front lines", () => {
+  it("reads the foreground window with its handle, path and full screen mark, and the empty line as none", () => {
+    const lines = new SystemWatchLines();
+    expect(lines.push("front\t1234\tC:\Games\Some Game\game.exe\t1\nfront\t77\t\t0\nfront\nfront\tabc\tx\t0\n")).toEqual([
+      { type: "front", window: { hwnd: "1234", path: "C:\Games\Some Game\game.exe", fullscreen: true } },
+      { type: "front", window: { hwnd: "77", path: "", fullscreen: false } },
+      { type: "front", window: null },
+    ]);
+  });
+});

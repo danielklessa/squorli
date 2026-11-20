@@ -1,8 +1,9 @@
 import { VideoStatsButton, VideoStatsOverlay } from "./VideoStatsOverlay";
 import { ShareViewers, type ShareViewer } from "./ShareViewers";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { VoiceClient, VideoTile } from "./voice/voiceClient";
+import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { VideoAudioControls } from "./VideoAudioControls";
 import { t } from "./i18n";
@@ -47,7 +48,52 @@ export function FullscreenButton({ target, onError }: { target: () => HTMLElemen
     onClick={(event) => { event.stopPropagation(); void toggle(); }}><Icon name={active ? "minimize" : "maximize"} /></button>;
 }
 
-export type Entry = { id: string; window: Window; document: Document };
+/** Whether `ref`'s element fills its document's screen, followed over `fullscreenchange` (the element's own document: a pop-out has one of its own). */
+export function useIsFullscreen(ref: RefObject<HTMLElement | null>): boolean {
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    const doc = element?.ownerDocument;
+    if (!element || !doc) return;
+    const update = () => setOn(doc.fullscreenElement === element);
+    update(); doc.addEventListener("fullscreenchange", update);
+    return () => doc.removeEventListener("fullscreenchange", update);
+  }, [ref]);
+  return on;
+}
+
+/** Another stream the viewer can switch a fullscreen to (FullscreenSwitch): its live picture where it is received, else the avatar. */
+export type SwitchTarget = { key: string; name: string; avatarUrl?: string | null; tile: VideoTile | null };
+
+/**
+ * While a stream fills the screen (user's wish, 20 November 2026): the channel's other screen shares as a strip that rises
+ * from the bottom edge when the pointer rests there; a click switches the fullscreen to that share. Rendered inside the
+ * fullscreen element (nothing outside it is visible). The strip is mounted only while open: its live previews are video
+ * elements of their own. Closed, a small handle at the bottom says that there are others.
+ */
+export function FullscreenSwitch({ targets, onSwitch }: { targets: readonly SwitchTarget[]; onSwitch: (key: string) => void }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (targets.length === 0) setOpen(false); }, [targets.length]);
+  if (targets.length === 0) return null;
+  return (
+    <div className={`fs-switch${open ? " open" : ""}`} onPointerEnter={() => setOpen(true)} onPointerLeave={() => setOpen(false)}
+      onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
+      {open ? (
+        <div className="fs-switch-strip" role="list" aria-label={t("stage.switchTitle")}>
+          {targets.map((target) => (
+            <button key={target.key} type="button" className="fs-switch-item" role="listitem" title={t("stage.switchTo")} onClick={() => onSwitch(target.key)}>
+              {target.tile ? <TrackVideo tile={target.tile} /> : <Avatar name={target.name} src={target.avatarUrl ?? null} size="large" />}
+              <span className="tile-label"><Icon name="monitor" /> {target.name}</span>
+            </button>
+          ))}
+        </div>
+      ) : <span className="fs-switch-handle"><Icon name="chevron-up" /> {t("stage.switchTitle")} ({targets.length})</span>}
+    </div>
+  );
+}
+
+/** `key`: stable for the window's life; `id`: the tile it shows, which a switch in fullscreen replaces (FullscreenSwitch). */
+export type Entry = { key: number; id: string; window: Window; document: Document };
 export function isOpen(entry: Entry) {
   try { return !entry.window.closed && entry.window.document === entry.document; } catch { return false; }
 }
@@ -73,12 +119,20 @@ export function openPopoutWindow(size: { width: number; height: number }, bodyCl
   } catch { popup.close(); throw new Error(t("stage.popupFailed")); }
 }
 
+/** The own share while the shared window is in front of the user: black and a word instead of the preview (the picture is on the screen anyway,
+ * and not attaching the track spares the compositor; user's wish, 20 November 2026). */
+export function IdleShare() {
+  return <div className="tile-popped share-idle"><Icon name="eye-off" /><span>{t("stage.ownShareIdle")}</span><small>{t("stage.ownShareIdleHint")}</small></div>;
+}
+
 /** Lives at App level so windows survive switching between the stage and text channels. */
 /** `viewers`: who watches the user's own screen share, shown in its pop-out (ShareViewers.tsx). */
-export function useVideoWindows(tiles: VideoTile[], client: VoiceClient, viewers: readonly ShareViewer[] = []) {
+/** `ownShareIdle`: the shared window is in front of the user; their own share's pop-out shows black and a notice instead of the picture (IdleShare). */
+export function useVideoWindows(tiles: VideoTile[], client: VoiceClient, viewers: readonly ShareViewer[] = [], ownShareIdle = false) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
+  const nextKey = useRef(1);
   useEffect(() => {
     const close = () => { for (const entry of entriesRef.current) entry.window.close(); };
     window.addEventListener("pagehide", close);
@@ -106,21 +160,36 @@ export function useVideoWindows(tiles: VideoTile[], client: VoiceClient, viewers
       : settings.width && settings.height ? settings.width / settings.height : 16 / 9;
     const size = fitVideoWindow(ratio, 960, window.screen.availWidth, Math.max(1, window.screen.availHeight - 120));
     const popup = openPopoutWindow(size, "video-window-body", opener);
-    setEntries((old) => [...old.filter((entry) => entry.id !== tile.id), { id: tile.id, window: popup, document: popup.document }]);
+    setEntries((old) => [...old.filter((entry) => entry.id !== tile.id), { key: nextKey.current++, id: tile.id, window: popup, document: popup.document }]);
   };
   const restore = (id: string) => {
     entriesRef.current.find((entry) => entry.id === id)?.window.close();
     setEntries((old) => old.filter((entry) => entry.id !== id));
   };
+  // The window keeps its place and its fullscreen and shows another stream (FullscreenSwitch); a window that already showed that one closes.
+  const switchTo = (key: number, id: string) => {
+    for (const entry of entriesRef.current) if (entry.id === id && entry.key !== key) entry.window.close();
+    setEntries((old) => old.filter((entry) => entry.id !== id || entry.key === key).map((entry) => entry.key === key ? { ...entry, id } : entry));
+  };
   const windows = entries.map((entry) => {
     const tile = tiles.find((tile) => tile.id === entry.id);
-    return tile && isOpen(entry) ? <VideoWindow key={entry.id} entry={entry} tile={tile} client={client} viewers={viewers} onClose={() => restore(entry.id)} /> : null;
+    // The other received shares, for a switch while the window is in fullscreen; a share nobody turned on has no tile here and is not offered.
+    const others = tiles.filter((other) => other.source === "screen" && !other.isLocal && other.id !== entry.id).map((other) => ({ key: other.id, name: other.name, tile: other }));
+    return tile && isOpen(entry) ? <VideoWindow key={entry.key} entry={entry} tile={tile} client={client} viewers={viewers} others={others} idle={ownShareIdle && tile.isLocal && tile.source === "screen"} onSwitch={(id) => switchTo(entry.key, id)} onClose={() => restore(entry.id)} /> : null;
   });
   return { open, windows, restore, poppedIds: new Set(entries.filter(isOpen).map((entry) => entry.id)) };
 }
 
-function VideoWindow({ entry, tile, client, viewers, onClose }: { entry: Entry; tile: VideoTile; client: VoiceClient; viewers: readonly ShareViewer[]; onClose: () => void }) {
+function VideoWindow({ entry, tile, client, viewers, others, idle, onSwitch, onClose }: { entry: Entry; tile: VideoTile; client: VoiceClient; viewers: readonly ShareViewer[]; others: readonly SwitchTarget[]; idle: boolean; onSwitch: (id: string) => void; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
+  // A stream watched in fullscreen keeps the viewer present (activity.ts, user's wish of 20 November 2026): a share or a camera of somebody else.
+  const inFullscreen = useIsFullscreen(ref);
+  const watchKey = tile.isLocal ? null : `fullscreen:${tile.id}`;
+  useEffect(() => {
+    if (!watchKey) return;
+    activity.setWatching(watchKey, inFullscreen);
+    return () => activity.setWatching(watchKey, false);
+  }, [watchKey, inFullscreen]);
   const audioRef = useRef<HTMLDivElement>(null);
   const target = useCallback(() => ref.current, []);
   const volume = client.getVideoAudioVolume(tile.id);
@@ -159,7 +228,7 @@ function VideoWindow({ entry, tile, client, viewers, onClose }: { entry: Entry; 
   return createPortal(<div ref={ref} className={`video-window${focused ? " focused" : ""}${volume !== null ? " has-volume" : ""}`} tabIndex={0} aria-label={t("stage.popupVideoHint")}
     onDoubleClick={() => { void fullscreen(); }} onClick={() => { void client.startAudio(); }}
     onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key.toLowerCase() === "f" || event.key === "Enter")) { event.preventDefault(); void fullscreen(); } }}>
-    <TrackVideo tile={tile} />
+    {idle ? <IdleShare /> : <TrackVideo tile={tile} />}
     <div ref={audioRef} hidden />
     <div className="tile-label" title={tile.name}>
       {tile.source === "screen" && <><Icon name="monitor" /> </>}
@@ -173,6 +242,7 @@ function VideoWindow({ entry, tile, client, viewers, onClose }: { entry: Entry; 
       <FullscreenButton target={target} onError={setError} />
     </div>
     <VideoAudioControls client={client} tile={tile} />
+    {inFullscreen && tile.source === "screen" && <FullscreenSwitch targets={others} onSwitch={onSwitch} />}
     {error && <div className="video-window-notice" role="alert">{error}<button className="icon" title={t("common.dismiss")} onClick={() => setError("")}><Icon name="x" /></button></div>}
     {!client.state.canPlayback && <button className="video-window-notice" onClick={() => { void client.startAudio(); }}>{t("dock.unblockAudio")}</button>}
   </div>, entry.document.body);

@@ -61,7 +61,7 @@ export function mobileAppPlatform(cap: CapacitorGlobal): Platform {
       onDeepLink: () => () => {},
       lookUp: null,
     },
-    screen: { setPicker: () => {} },
+    screen: { setPicker: () => {}, onOwnShareInFront: null },
     window: {
       popoutFeatures, appearance: null, tray: null, autostart: null, ready: () => {}, attention: null, focusPopout: null, frame: null, beforeQuit: null,
       // Android's back: Capacitor would go back in the page's history and end the app at its start, a voice connection with it.

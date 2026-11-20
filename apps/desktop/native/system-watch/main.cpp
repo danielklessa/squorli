@@ -25,6 +25,12 @@
 //                screen), then one line "windows<TAB><request>". The screen share's picker leaves desktop widgets out with
 //                it and knows which window is a game's (docs/features/voice-video.md, 21 September 2026).
 //
+//   front<TAB><hwnd><TAB><path><TAB><fullscreen 0|1>
+//                the foreground window changed (polled every 250 ms): its handle (decimal), its program's full path (UTF-8,
+//                empty when the process does not say) and whether it covers its whole monitor. The app hides the user's own
+//                screen share from them while the shared window is the one in front (docs/features/voice-video.md,
+//                20 November 2026). "front" alone = no foreground window (the desktop, a locked screen).
+//
 //   busy<TAB><request><TAB><state><TAB><fullscreen 0|1>
 //                the answer to "busy": Windows' own notification state (SHQueryUserNotificationState: 1 = not present,
 //                2 = busy with a full screen application, 3 = a Direct3D game in exclusive full screen, 4 = presentation
@@ -326,21 +332,23 @@ void describeWindows(const std::vector<std::string>& parts) {
   if (fwrite(answer.data(), 1, answer.size(), stdout) != answer.size() || fflush(stdout) != 0) ExitProcess(0);
 }
 
+// Whether a window covers its whole monitor (a game or a player in full screen); the desktop and the task bar never count.
+bool coversMonitor(HWND window) {
+  wchar_t name[64] = {};
+  if (!window || GetClassNameW(window, name, 64) <= 0 || wcscmp(name, L"Progman") == 0 || wcscmp(name, L"WorkerW") == 0 || wcscmp(name, L"Shell_TrayWnd") == 0) return false;
+  RECT rect = {};
+  MONITORINFO monitor = {};
+  monitor.cbSize = sizeof(monitor);
+  if (IsIconic(window) || !GetWindowRect(window, &rect) || !GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return false;
+  return rect.left <= monitor.rcMonitor.left && rect.top <= monitor.rcMonitor.top && rect.right >= monitor.rcMonitor.right && rect.bottom >= monitor.rcMonitor.bottom;
+}
+
 // Runs on the thread that reads stdin; one write, like describeWindows.
 void describeBusy(const std::vector<std::string>& parts) {
   if (parts.size() < 2 || parts[1].empty() || parts[1].size() > 20 || parts[1].find_first_not_of("0123456789") != std::string::npos) return;
   QUERY_USER_NOTIFICATION_STATE state = static_cast<QUERY_USER_NOTIFICATION_STATE>(0);
   if (FAILED(SHQueryUserNotificationState(&state))) state = static_cast<QUERY_USER_NOTIFICATION_STATE>(0);
-  bool fullscreen = false;
-  const HWND window = GetForegroundWindow();
-  wchar_t name[64] = {};
-  if (window && GetClassNameW(window, name, 64) > 0 && wcscmp(name, L"Progman") != 0 && wcscmp(name, L"WorkerW") != 0 && wcscmp(name, L"Shell_TrayWnd") != 0) {
-    RECT rect = {};
-    MONITORINFO monitor = {};
-    monitor.cbSize = sizeof(monitor);
-    if (!IsIconic(window) && GetWindowRect(window, &rect) && GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor))
-      fullscreen = rect.left <= monitor.rcMonitor.left && rect.top <= monitor.rcMonitor.top && rect.right >= monitor.rcMonitor.right && rect.bottom >= monitor.rcMonitor.bottom;
-  }
+  const bool fullscreen = coversMonitor(GetForegroundWindow());
   const std::string answer = "busy\t" + parts[1] + "\t" + std::to_string(static_cast<int>(state)) + "\t" + (fullscreen ? "1" : "0") + "\n";
   if (fwrite(answer.data(), 1, answer.size(), stdout) != answer.size() || fflush(stdout) != 0) ExitProcess(0);
 }
@@ -433,6 +441,25 @@ void pollGames(bool forget) {
   reportGame(found);
 }
 
+// --- the foreground window (the own share hidden while the shared window is in front) -----------------------------------------
+HWND lastFront = reinterpret_cast<HWND>(-1);
+bool lastFrontFullscreen = false;
+void pollFront() {
+  const HWND window = GetForegroundWindow();
+  const bool fullscreen = coversMonitor(window);
+  if (window == lastFront && fullscreen == lastFrontFullscreen) return;
+  lastFront = window;
+  lastFrontFullscreen = fullscreen;
+  std::string line = "front";
+  if (window) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(window, &pid);
+    line += "\t" + std::to_string(reinterpret_cast<uintptr_t>(window)) + "\t" + utf8(pid ? pathOfProcess(pid) : L"") + "\t" + (fullscreen ? "1" : "0");
+  }
+  line += "\n";
+  if (fwrite(line.data(), 1, line.size(), stdout) != line.size() || fflush(stdout) != 0) ExitProcess(0);
+}
+
 int ticks = 0;
 LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
   switch (message) {
@@ -449,6 +476,7 @@ LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
       pollXInput(ticks % PROBE_EVERY == 0);
       if (ticks % DISPLAY_EVERY == 0) pollDisplay();
       if (ticks % GAMES_EVERY == 0) pollGames(ticks % FORGET_EVERY == 0);
+      pollFront();
       ticks++;
       return 0;
   }

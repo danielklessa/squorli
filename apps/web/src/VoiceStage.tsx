@@ -1,7 +1,9 @@
 import { VideoStatsButton, VideoStatsOverlay } from "./VideoStatsOverlay";
 import { viewersOf } from "./voice/shareViewers";
 import { ShareViewers } from "./ShareViewers";
-import { FullscreenButton, TrackVideo } from "./VideoWindows";
+import { FullscreenSwitch, IdleShare, TrackVideo, type SwitchTarget } from "./VideoWindows";
+import { toggleVideoFullscreen } from "./videoDisplay";
+import { activity } from "./activity";
 import { VideoAudioControls } from "./VideoAudioControls";
 import { Avatar } from "./Avatar";
 import { Permission, displayNameOf, hasPermission, type Channel, type Member, type RadioStation, type VoiceMember } from "@squorli/protocol";
@@ -51,6 +53,11 @@ type Props = {
   onLeave: () => Promise<void>;
   /** A sticky channel holds the user: leaving is refused with the reason (App.tsx), the button says so. */
   locked?: boolean;
+  /**
+   * The window or screen the user shares is the one in front of them (desktop app, `platform.screen.onOwnShareInFront`): their
+   * own share gets no tile meanwhile, they see the shared thing itself (user's wish, 20 November 2026).
+   */
+  ownShareIdle?: boolean;
   /** `opener`: the window the click happened in (a browser lets only that one open a window). */
   onPopout: (tile: VideoTile, opener?: Window) => void;
   poppedIds: Set<string>;
@@ -90,7 +97,7 @@ type Item = { key: string; participant: StageParticipant; tile: VideoTile | null
  * The tile view can hide participants without video while any video is being sent; that choice is never stored.
  * Receive quality follows the tile size (adaptiveStream in the voice core); here the <video> only has to have the right size.
  */
-export function VoiceStage({ client, voice, channel, members, myPermissions, api, radio, radioStations, radioTitle, playerTile, playerOff, onDismissPlayerOff, playerPopped, onRestorePlayer, onToggleCamera, onToggleBlur, onLeave, locked = false, onPopout, poppedIds, onRestore, detached, onToggleWindow, myUserId, roster, channels, channelPermissions, voteKickAllowed, onVoteKick }: Props) {
+export function VoiceStage({ client, voice, channel, members, myPermissions, api, radio, radioStations, radioTitle, playerTile, playerOff, onDismissPlayerOff, playerPopped, onRestorePlayer, onToggleCamera, onToggleBlur, onLeave, locked = false, ownShareIdle = false, onPopout, poppedIds, onRestore, detached, onToggleWindow, myUserId, roster, channels, channelPermissions, voteKickAllowed, onVoteKick }: Props) {
   // Names from the server's member list (arrives via WS immediately on every rename), not from the LiveKit token,
   // which is only created on joining. Unknown identities (bots, "external") keep the LiveKit name.
   const participants = voice.participants.map((p) => {
@@ -146,6 +153,7 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   // The same source while the user has the radio turned off: nothing plays and nothing is loaded, so a tile tells them that
   // a video runs (user's wish). It is no video: it never takes the focus by itself and does not count for "video only".
   else if (playerOff && channel.radio) items.push({ key: "player:off", participant: null, tile: null, kind: "playerOff", off: false });
+  // The own share's tile stays while the shared window is in front of the user; it then shows black and a notice instead of the picture (`ownShareIdle`, Tile).
   for (const t of voice.tiles.filter((t) => t.source === "screen")) {
     const participant = participants.find((p) => p.identity === t.identity);
     if (participant) items.push({ key: t.id, participant, tile: t, kind: "screen", off: false });
@@ -197,6 +205,64 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
   // das pinning deaktiviert werden"); the tile view is the head's switch.
   const focusOn = (key: string) => { setPinned(key); setLayout("focus"); };
   const togglePin = (key: string) => setPinned(pinned === key ? null : key);
+
+  // Fullscreen (reworked 20 November 2026): the whole stage section fills the screen and shows one tile, `fullscreenKey`,
+  // not the tile's element itself. So a switch to another share (FullscreenSwitch, user's wish: "beim hovern unten eine Liste
+  // mit anderen grade gestreamten Inhalten") is a change of state, without leaving and re-entering fullscreen, and a tile
+  // that moves between the grid, the big place and the strip (which remounts its element) cannot end it. When the user
+  // switched in fullscreen, the stream watched last stays large, pinned, once fullscreen ends.
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [fullscreenKey, setFullscreenKey] = useState<string | null>(null);
+  const fullscreenRef = useRef<string | null>(null);
+  fullscreenRef.current = fullscreenKey;
+  const switched = useRef(false);
+  const enterFullscreen = (key: string) => {
+    const section = sectionRef.current;
+    if (!section) return;
+    setFullscreenKey(key);
+    if (section.ownerDocument.fullscreenElement === section) return;
+    switched.current = false;
+    void toggleVideoFullscreen(section).then((ok) => { if (!ok) { setFullscreenKey(null); client.setNotice(t("stage.fullscreenUnavailable")); } })
+      .catch(() => { setFullscreenKey(null); client.setNotice(t("stage.fullscreenFailed")); });
+  };
+  const exitFullscreen = () => {
+    const doc = sectionRef.current?.ownerDocument;
+    if (doc?.fullscreenElement) void doc.exitFullscreen().catch(() => {}); else setFullscreenKey(null);
+  };
+  const switchFullscreen = (key: string) => {
+    const item = items.find((i) => i.key === key);
+    if (!item) return;
+    if (item.kind === "screen" && item.off) client.setVideoWatching(key, true);
+    switched.current = true;
+    setFullscreenKey(key);
+  };
+  useEffect(() => {
+    const section = sectionRef.current;
+    const doc = section?.ownerDocument;
+    if (!section || !doc) return;
+    const onChange = () => {
+      if (doc.fullscreenElement === section) return;
+      const last = fullscreenRef.current;
+      if (last && switched.current) { setPinned(last); setLayout("focus"); }
+      setFullscreenKey(null);
+    };
+    doc.addEventListener("fullscreenchange", onChange);
+    return () => doc.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const fullscreenItem = fullscreenKey ? items.find((i) => i.key === fullscreenKey) ?? null : null;
+  // The stream it showed is gone, or the user turned it off for themselves: fullscreen ends, an avatar has no business there.
+  useEffect(() => { if (fullscreenKey && (!fullscreenItem || fullscreenItem.participant === null || (fullscreenItem.kind === "screen" && fullscreenItem.off))) exitFullscreen(); });
+  // The channel's other shares, offered for a switch in fullscreen: others' shares that are not in a pop-out window.
+  const shareTargets: SwitchTarget[] = items.flatMap((i) => i.kind === "screen" && i.participant && !i.participant.isLocal && !(i.tile && poppedIds.has(i.tile.id))
+    ? [{ key: i.key, name: i.participant.name, avatarUrl: i.participant.avatarUrl, tile: i.tile }] : []);
+  const targetsFor = (key: string) => shareTargets.filter((target) => target.key !== key);
+
+  // A stream watched keeps the user present (activity.ts, user's wish of 20 November 2026): another's share or the radio's
+  // video pinned large in the speaker view, or another's share or camera in fullscreen. Cameras pinned do not count: the
+  // speaker view pins people all the time.
+  const watched = fullscreenItem ?? (layout === "focus" && pinned && focus?.key === pinned ? focus : null);
+  const watching = !!watched && (watched.kind === "player" || (watched.participant !== null && !watched.participant.isLocal && !watched.off && (watched.kind === "screen" || fullscreenItem !== null)));
+  useEffect(() => { activity.setWatching("stage", watching); return () => activity.setWatching("stage", false); }, [watching]);
 
   // Drag a tile where you want it (user's wish, 4 October 2026): the order lives in the voice client until the room is left
   // (tileOrder.ts), the own tile stays first. A pointer with a threshold and capture, like the server rail; a touch scrolls
@@ -288,8 +354,13 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
     : <PlayerTile key={i.key} big={big} popped={playerPopped} elsewhere={detached} onRestore={onRestorePlayer}
       pin={{ pinned: pinned === i.key, toggle: () => (big ? togglePin(i.key) : focusOn(i.key)) }} />;
 
+  const tileOf = (i: Extract<Item, { participant: StageParticipant }>, big: boolean, pinnedTile: boolean, onClick: () => void, attrs?: HTMLAttributes<HTMLDivElement>, drop?: DropMark) =>
+    <Tile key={i.key} item={i} client={client} viewers={myViewers} idle={ownShareIdle && !!i.tile?.isLocal} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big={big} pinned={pinnedTile} onClick={onClick}
+      {...(attrs ? { attrs } : {})} drop={drop ?? null} fullscreen={fullscreenKey === i.key} onFullscreen={() => (fullscreenKey === i.key ? exitFullscreen() : enterFullscreen(i.key))} switchTargets={targetsFor(i.key)} onSwitch={switchFullscreen} />;
+
   return (
-    <section className="stage">
+    <section className={`stage${fullscreenItem ? " stage-fullscreen" : ""}`} ref={sectionRef}>
+      {fullscreenItem && fullscreenItem.participant !== null && <div className="stage-fs">{tileOf(fullscreenItem, true, pinned === fullscreenItem.key, () => {})}</div>}
       <header className="chat-head">
         <span className="channel-icon"><Icon name="volume-2" /></span><strong>{channel.name}</strong>
         <span className="stage-info" tabIndex={0} title={info} aria-label={info}><Icon name="info" /></span>
@@ -317,18 +388,15 @@ export function VoiceStage({ client, voice, channel, members, myPermissions, api
       ) : layout === "grid" || !focus ? (
         <div className={`stage-grid ${drag?.active ? "reordering" : ""}`} ref={grid.ref}>
           <div className="stage-grid-inner" style={{ gridTemplateColumns: `repeat(${grid.cols}, ${grid.tileWidth}px)` }}>
-            {gridItems.map((i) => i.participant === null ? playerTileOf(i)
-              : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusUnlessDragged(i.key)} attrs={dragAttrs(i.key)} drop={dropOf(i.key)} />)}
+            {gridItems.map((i) => i.participant === null ? playerTileOf(i) : tileOf(i, false, false, () => focusUnlessDragged(i.key), dragAttrs(i.key), dropOf(i.key)))}
           </div>
         </div>
       ) : (
         <div className="stage-focus">
-          <div className="stage-main">{focus.participant === null ? playerTileOf(focus, true)
-            : <Tile item={focus} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} big pinned={pinned === focus.key} onClick={() => togglePin(focus.key)} />}</div>
+          <div className="stage-main">{focus.participant === null ? playerTileOf(focus, true) : tileOf(focus, true, pinned === focus.key, () => togglePin(focus.key))}</div>
           {rest.length > 0 && (
             <div className={`stage-strip ${drag?.active ? "reordering" : ""}`}>
-              {rest.map((i) => i.participant === null ? playerTileOf(i)
-                : <Tile key={i.key} item={i} client={client} viewers={myViewers} onPopout={onPopout} poppedIds={poppedIds} onRestore={onRestore} onMenu={openMenu} pinned={false} onClick={() => focusUnlessDragged(i.key)} attrs={dragAttrs(i.key)} drop={dropOf(i.key)} />)}
+              {rest.map((i) => i.participant === null ? playerTileOf(i) : tileOf(i, false, false, () => focusUnlessDragged(i.key), dragAttrs(i.key), dropOf(i.key)))}
             </div>
           )}
         </div>
@@ -501,10 +569,10 @@ function PlayerOffTile({ big, kind, name, radio, onDismiss }: { big: boolean; ki
   );
 }
 
-function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds, onRestore, onMenu, attrs, drop = null }: { item: Extract<Item, { participant: StageParticipant }>; client: VoiceClient; viewers: StageParticipant[]; big?: boolean; pinned: boolean; attrs?: HTMLAttributes<HTMLDivElement>; drop?: DropMark; onClick: () => void; onPopout: (tile: VideoTile, opener?: Window) => void; poppedIds: Set<string>; onRestore: (id: string) => void; onMenu: (item: Item, event: ReactMouseEvent<HTMLElement>) => void }) {
+/** `fullscreen`: this tile is the one the stage shows in fullscreen (the stage's section is the fullscreen element, see `enterFullscreen`); `switchTargets`: the other shares offered there. */
+function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds, onRestore, onMenu, attrs, drop = null, fullscreen, onFullscreen, switchTargets, onSwitch, idle }: { item: Extract<Item, { participant: StageParticipant }>; client: VoiceClient; viewers: StageParticipant[]; big?: boolean; pinned: boolean; attrs?: HTMLAttributes<HTMLDivElement>; drop?: DropMark; onClick: () => void; onPopout: (tile: VideoTile, opener?: Window) => void; poppedIds: Set<string>; onRestore: (id: string) => void; onMenu: (item: Item, event: ReactMouseEvent<HTMLElement>) => void; fullscreen: boolean; onFullscreen: () => void; switchTargets: readonly SwitchTarget[]; onSwitch: (key: string) => void; idle: boolean }) {
   const { participant: p, tile } = item;
   const ref = useRef<HTMLDivElement>(null);
-  const target = useCallback(() => ref.current, []);
   const [error, setError] = useState("");
   // The viewer's statistics of a share (VideoStatsOverlay.tsx): only of a received one, the own share has no inbound side.
   const [stats, setStats] = useState(false);
@@ -514,21 +582,19 @@ function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds
   // A share shown in fullscreen counts as selected, also from a small tile: its audio plays (voiceClient.setScreenAudioListening).
   const listenId = item.kind === "screen" && tile && !tile.isLocal ? tile.id : null;
   useEffect(() => {
-    const doc = ref.current?.ownerDocument;
-    if (!listenId || !doc) return;
-    const update = () => client.setScreenAudioListening(listenId, "fullscreen", doc.fullscreenElement === ref.current);
-    update(); doc.addEventListener("fullscreenchange", update);
-    return () => { doc.removeEventListener("fullscreenchange", update); client.setScreenAudioListening(listenId, "fullscreen", false); };
-  }, [client, listenId]);
-  const cls = ["tile", item.kind, hasAudioControls ? "has-volume" : "", p.speaking && item.kind === "camera" ? "speaking" : "", big ? "big" : "", tile && !popped ? "" : "avatar", drop ? `drop-${drop}` : ""].join(" ");
-  // Turned off while it fills the screen: leave fullscreen, an avatar has no business there.
-  const watch = (on: boolean) => { const doc = ref.current?.ownerDocument; if (!on && doc?.fullscreenElement === ref.current) void doc?.exitFullscreen().catch(() => {}); client.setVideoWatching(item.key, on); };
+    if (!listenId) return;
+    client.setScreenAudioListening(listenId, "fullscreen", fullscreen);
+    return () => client.setScreenAudioListening(listenId, "fullscreen", false);
+  }, [client, listenId, fullscreen]);
+  const cls = ["tile", item.kind, hasAudioControls ? "has-volume" : "", p.speaking && item.kind === "camera" ? "speaking" : "", big ? "big" : "", idle ? "idle" : "", tile && !popped ? "" : "avatar", drop ? `drop-${drop}` : ""].join(" ");
+  // Turned off while it fills the screen: the stage leaves fullscreen by itself (an avatar has no business there).
+  const watch = (on: boolean) => client.setVideoWatching(item.key, on);
   // A share nobody turned on for themselves: the whole tile is the switch, there is nothing to enlarge yet.
   const shareOff = item.kind === "screen" && item.off;
   return (
-    <div ref={ref} className={cls} {...attrs} onClick={() => { if (shareOff) watch(true); else if (!ref.current?.ownerDocument.fullscreenElement) onClick(); }} onContextMenu={(event) => onMenu(item, event)} title={shareOff ? t("stage.screenOn") : big ? t(pinned ? "stage.unpinTip" : "stage.pinTip") : t("stage.enlarge")}>
+    <div ref={ref} className={cls} {...attrs} onClick={() => { if (shareOff) watch(true); else if (!fullscreen) onClick(); }} onContextMenu={(event) => onMenu(item, event)} title={shareOff ? t("stage.screenOn") : fullscreen ? "" : big ? t(pinned ? "stage.unpinTip" : "stage.pinTip") : t("stage.enlarge")}>
       {shareOff ? <div className="tile-popped"><Icon name="monitor" /><span>{t("stage.shareOffered", { name: p.name })}</span><button className="small" onClick={(event) => { event.stopPropagation(); watch(true); }}><Icon name="eye" /> {t("stage.watch")}</button></div>
-        : popped ? <div className="tile-popped"><Icon name="external-link" /><span>{t("stage.poppedOut")}</span><button className="secondary small" onClick={(event) => { event.stopPropagation(); onRestore(tile!.id); }}>{t("stage.restoreVideo")}</button></div> : tile ? <TrackVideo tile={tile} /> : <Avatar name={p.name} src={p.avatarUrl} size="large" />}
+        : popped ? <div className="tile-popped"><Icon name="external-link" /><span>{t("stage.poppedOut")}</span><button className="secondary small" onClick={(event) => { event.stopPropagation(); onRestore(tile!.id); }}>{t("stage.restoreVideo")}</button></div> : idle ? <IdleShare /> : tile ? <TrackVideo tile={tile} /> : <Avatar name={p.name} src={p.avatarUrl} size="large" />}
       {item.kind === "camera" && item.off && <div className="tile-window-actions" onClick={(event) => event.stopPropagation()}>
         <button className="icon" title={t("stage.cameraOn")} aria-label={t("stage.cameraOn")} onClick={() => watch(true)}><Icon name="eye" /></button>
       </div>}
@@ -537,9 +603,10 @@ function Tile({ item, client, viewers, big, pinned, onClick, onPopout, poppedIds
       {tile && !popped && <div className="tile-window-actions" onClick={(event) => event.stopPropagation()}>
         {canStats && <VideoStatsButton on={stats} onToggle={() => setStats(!stats)} />}
         {!tile.isLocal && <button className="icon" title={t(item.kind === "screen" ? "stage.screenOff" : "stage.cameraOff")} aria-label={t(item.kind === "screen" ? "stage.screenOff" : "stage.cameraOff")} onClick={() => watch(false)}><Icon name="eye-off" /></button>}
-        <button className="icon" title={t("stage.popout")} aria-label={t("stage.popout")} onClick={() => { setError(""); try { onPopout(tile, ref.current?.ownerDocument.defaultView ?? undefined); } catch (error) { setError(error instanceof Error ? error.message : t("stage.popupFailed")); } }}><Icon name="external-link" /></button>
-        <FullscreenButton target={target} onError={setError} />
+        {!fullscreen && <button className="icon" title={t("stage.popout")} aria-label={t("stage.popout")} onClick={() => { setError(""); try { onPopout(tile, ref.current?.ownerDocument.defaultView ?? undefined); } catch (error) { setError(error instanceof Error ? error.message : t("stage.popupFailed")); } }}><Icon name="external-link" /></button>}
+        <button className="icon" title={t(fullscreen ? "stage.exitFullscreen" : "stage.fullscreen")} aria-label={t(fullscreen ? "stage.exitFullscreen" : "stage.fullscreen")} onClick={() => { setError(""); onFullscreen(); }}><Icon name={fullscreen ? "minimize" : "maximize"} /></button>
       </div>}
+      {fullscreen && item.kind === "screen" && <FullscreenSwitch targets={switchTargets} onSwitch={onSwitch} />}
       {error && <div className="tile-window-error" role="alert" onClick={(event) => event.stopPropagation()}>{error}<button className="icon" title={t("common.dismiss")} onClick={() => setError("")}><Icon name="x" /></button></div>}
       <div className="tile-label">
         <span>{item.kind === "screen" && <><Icon name="monitor" /> </>}{p.isLocal ? `${p.name} ${t("members.you")}` : p.name}</span>

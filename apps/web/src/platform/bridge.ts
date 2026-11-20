@@ -157,6 +157,12 @@ export interface DesktopBridge {
   loadScreenPictures(requestId: number): void;
   onScreenAudio(cb: (event: ScreenAudioEvent) => void): () => void;
   stopScreenAudio(): void;
+  /**
+   * Whether the window or screen the user shares is the one in front of them (the shell weighs the foreground window against
+   * the picked source, Windows with the system watch helper): told after every pick and on every change. The client hides the
+   * user's own share from them meanwhile (docs/features/voice-video.md, 20 November 2026). An app from before it has no such member.
+   */
+  onScreenShareFront(cb: (inFront: boolean) => void): () => void;
   /** Output device of the embedded players (Twitch, YouTube), named by its label because device ids differ per origin; null = the system's default. */
   setPlayerOutput(label: string | null): void;
   /**
@@ -274,6 +280,7 @@ export const IPC = {
   screenPickPictures: "squorli:screen-pick-pictures",
   screenAudio: "squorli:screen-audio",
   screenAudioStop: "squorli:screen-audio-stop",
+  screenShareFront: "squorli:screen-share-front",
   playerOutput: "squorli:player-output",
   chatPlayerOutput: "squorli:chat-player-output",
   systemActivity: "squorli:system-activity",

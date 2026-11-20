@@ -1196,9 +1196,22 @@ button.icon.on { color: var(--brand); }
 .tile-stats .dx-network, .tile-stats .dx-sender { color: var(--warn); }
 .tile-stats .dx-decoder { color: var(--danger); }
 .tile-window-error { position: absolute; inset: 3.5rem 0.5rem auto; padding: 0.75rem; border-radius: var(--r); background: var(--bg); color: var(--danger); font-size: 0.875rem; max-height: calc(100% - 4rem); overflow-y: auto; }
-.tile:fullscreen { width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--bg); cursor: default; }
-.tile:fullscreen video { object-fit: contain; }
-.tile:fullscreen .tile-window-actions, .video-window:fullscreen .tile-window-actions { top: 1rem; right: 1rem; }
+/* Fullscreen of a tile (VoiceStage.tsx, 20 November 2026): the stage's section is the fullscreen element and shows one tile in `.stage-fs`; everything else of the stage is hidden meanwhile. */
+.stage.stage-fullscreen > :not(.stage-fs) { display: none; }
+.stage-fs { position: absolute; inset: 0; display: flex; background: var(--bg); }
+.stage-fs .tile { flex: 1; width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--bg); cursor: default; min-width: 0; }
+.stage-fs .tile video { object-fit: contain; }
+.stage-fs .tile-window-actions, .video-window:fullscreen .tile-window-actions { top: 1rem; right: 1rem; }
+/* The switch to another share while a stream fills the screen (FullscreenSwitch in VideoWindows.tsx): a hover zone along the bottom edge; the strip rises out of it. */
+.fs-switch { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-height: 4.5rem; padding-bottom: 0.75rem; z-index: 4; }
+.fs-switch-handle { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.7rem; border-radius: 999px; background: rgba(12,20,36,.55); color: var(--muted); font-size: 0.8rem; opacity: 0.7; pointer-events: none; }
+.fs-switch.open { background: linear-gradient(to top, rgba(12,20,36,.85), rgba(12,20,36,0)); padding-top: 2rem; }
+.fs-switch-strip { display: flex; gap: 0.75rem; max-width: 100%; overflow-x: auto; padding: 0.25rem 1rem; }
+.fs-switch-item { position: relative; flex: none; width: 14rem; aspect-ratio: 16 / 9; padding: 0; border: 2px solid transparent; border-radius: var(--r); background: var(--bg2); overflow: hidden; cursor: pointer; display: grid; place-items: center; color: var(--text); }
+.fs-switch-item:hover, .fs-switch-item:focus-visible { border-color: var(--brand); }
+.fs-switch-item video { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.fs-switch-item .tile-label { pointer-events: none; }
+@media (hover: none) { .fs-switch-handle { opacity: 1; } }
 .video-window-body { margin: 0; height: 100dvh; overflow: hidden; background: #000; }
 /* The whole stage in a window of its own (StageWindow.tsx): the stage fills it; no debug button to leave room for. */
 .stage-window-body { margin: 0; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
@@ -1210,6 +1223,11 @@ button.icon.on { color: var(--brand); }
 .video-window-notice { position: absolute; left: 1rem; right: 1rem; bottom: 1rem; padding: 0.75rem; border-radius: var(--r); background: var(--bg2); color: var(--text); }
 .tile-popped { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem; padding: 1rem 0.5rem 2rem; text-align: center; color: var(--muted); font-size: 0.875rem; }
 .tile-popped > .ic { font-size: 1.5rem; }
+/* The own share while the shared window is in front (IdleShare): black like a dark screen, the notice in the middle, the hint below it. */
+.tile.idle { background: #000; }
+.tile.idle > .share-idle, .video-window > .share-idle { width: 100%; height: 100%; color: var(--text); }
+.share-idle > small { color: var(--muted); font-size: 0.75rem; }
+.stage-strip .share-idle > small { display: none; }
 .stage-strip .tile-popped { gap: 0.125rem; font-size: 0.75rem; padding: 0.25rem 0.25rem 1.5rem; }
 .stage-strip .tile-popped > .ic { display: none; }
 /* Use the stage controls in separate windows, including keyboard and touch access. */

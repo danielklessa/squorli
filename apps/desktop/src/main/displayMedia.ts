@@ -1,8 +1,9 @@
-import { BrowserWindow, desktopCapturer, ipcMain, webContents, type DesktopCapturerSource, type IpcMainEvent, type Session } from "electron";
+import { BrowserWindow, desktopCapturer, ipcMain, webContents, type DesktopCapturerSource, type IpcMainEvent, type Session, type WebContents } from "electron";
 import { IPC, type ScreenPick, type ScreenSource } from "@squorli/web/platform/bridge";
-import { hwndOfHandle, hwndOfSource, isDesktopWidget } from "./captureSource";
+import { hwndOfHandle, hwndOfSource, isDesktopWidget, type WindowInfo } from "./captureSource";
 import type { GameLookup } from "./gameWatch";
 import { PickOffer } from "./pickOffer";
+import { shareInFront, type SharedSource } from "./shareFront";
 import type { SystemWatch } from "./systemWatch";
 import { helperPath, type ScreenAudioCapture } from "./windowAudio";
 
@@ -36,6 +37,21 @@ export function handleDisplayMedia(ses: Session, isClientFrame: (event: IpcMainE
     const p = pick as Partial<ScreenPick> | null;
     waiting.get(requestId)?.(p && typeof p.sourceId === "string" ? { sourceId: p.sourceId, audio: p.audio === true } : null);
   });
+  // The user's own share hidden while the shared window is in front (shareFront.ts, docs/features/voice-video.md, 20 November
+  // 2026): the picked source stays known until the next pick (the shell does not learn when a share ends; the client ignores
+  // the word while it shares nothing), every change of the foreground window is weighed against it and told to the client.
+  let shared: SharedSource | null = null;
+  let client: WebContents | null = null;
+  let told: boolean | null = null;
+  const tellFront = () => {
+    if (!client || client.isDestroyed()) return;
+    const own = { windows: new Set(BrowserWindow.getAllWindows().map((w) => hwndOfHandle(w.getNativeWindowHandle()))), path: process.execPath };
+    const inFront = shareInFront(shared, watch.front(), own);
+    if (inFront === told) return;
+    told = inFront;
+    client.send(IPC.screenShareFront, inFront);
+  };
+  watch.onFront(tellFront);
   // Requests whose thumbnails nobody asked for yet.
   const pictures = new Map<number, () => void>();
   ipcMain.on(IPC.screenPickPictures, (event, requestId: unknown) => {
@@ -63,11 +79,12 @@ export function handleDisplayMedia(ses: Session, isClientFrame: (event: IpcMainE
       };
       const tell = (channel: string) => { if (!answered && !contents.isDestroyed()) contents.send(channel, offer.state()); };
       let found: DesktopCapturerSource[] = [];
+      let infos = new Map<string, WindowInfo>();
+      const infoOf = (id: string) => infos.get(hwndOfSource(id) ?? "");
       const list = async () => {
         try {
           const all = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: NO_THUMBNAIL, fetchWindowIcons: true });
-          const infos = new Map((await watch.describeWindows(all.flatMap((s) => hwndOfSource(s.id) ?? []))).map((info) => [info.hwnd, info]));
-          const infoOf = (id: string) => infos.get(hwndOfSource(id) ?? "");
+          infos = new Map((await watch.describeWindows(all.flatMap((s) => hwndOfSource(s.id) ?? []))).map((info) => [info.hwnd, info]));
           found = all.filter((s) => { const info = infoOf(s.id); return !info || !isDesktopWidget(info); });
           offer.list(found.map((s) => ({
             id: s.id, kind: s.id.startsWith("screen:") ? "screen" : "window", name: s.name,
@@ -101,6 +118,9 @@ export function handleDisplayMedia(ses: Session, isClientFrame: (event: IpcMainE
       answered = true;
       const source = pick ? found.find((s) => s.id === pick.sourceId) : undefined;
       if (!pick || !source) { refuse(); return; }
+      shared = { kind: source.id.startsWith("screen:") ? "screen" : "window", hwnd: hwndOfSource(source.id), path: infoOf(source.id)?.path ?? "" };
+      client = contents; told = null;
+      tellFront();
       const withAudio = pick.audio && audioFor(source.id);
       if (withAudio && native) {
         // The helper's audio reaches the client on its own channel; a helper that does not start leaves the share without audio.

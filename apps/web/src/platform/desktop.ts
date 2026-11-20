@@ -96,7 +96,7 @@ export function desktopPlatform(bridge: DesktopBridge): Platform {
       onDeepLink: (cb) => bridge.onDeepLink((raw) => { const link = parseDeepLink(raw); if (link) cb(link); }),
       lookUp: typeof bridge.lookUpLink === "function" ? (request) => bridge.lookUpLink(request) : null,
     },
-    screen: { setPicker: (next) => { picker = next; } },
+    screen: { setPicker: (next) => { picker = next; }, onOwnShareInFront: info.systemWatch === true && typeof bridge.onScreenShareFront === "function" ? (cb) => bridge.onScreenShareFront(cb) : null },
     window: {
       popoutFeatures,
       appearance: info.materials.length === 0 ? null : {

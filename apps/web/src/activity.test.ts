@@ -66,6 +66,27 @@ describe("ActivityTracker", () => {
     expect(seen).toEqual([true, false]);
   });
 
+  it("stays present while a stream is watched inside Squorli (fullscreen, pinned), per place, with the four-hour limit", () => {
+    const { tracker, seen, at } = setup();
+    tracker.setWatching("fs:alice:screen", true);
+    at(30 * MIN);
+    expect(tracker.idle).toBe(false);
+    tracker.setWatching("stage-pinned", true);
+    tracker.setWatching("fs:alice:screen", false); // the other place still shows a stream
+    at(60 * MIN);
+    expect(tracker.idle).toBe(false);
+    at(VIDEO_ACTIVE_MAX_MS);
+    expect(tracker.idle).toBe(true);
+    tracker.touch();
+    expect(tracker.idle).toBe(false);
+    tracker.setWatching("stage-pinned", false); // the last stream ends: the five minutes decide
+    at(VIDEO_ACTIVE_MAX_MS + 4 * MIN);
+    expect(tracker.idle).toBe(false);
+    at(VIDEO_ACTIVE_MAX_MS + 5 * MIN);
+    expect(tracker.idle).toBe(true);
+    expect(seen).toEqual([true, false, true]);
+  });
+
   it("bridges the gap between two videos, and a video that ended leaves the five minutes to decide", () => {
     const { tracker, at } = setup();
     tracker.setVideoPlaying(true);

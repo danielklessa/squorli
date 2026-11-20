@@ -1112,8 +1112,13 @@ export const de = {
 
   // ---- Stage
   "stage.poppedOut": "Wird im Pop-out angezeigt",
+  "stage.ownShareIdle": "Deine Übertragung läuft, das geteilte Fenster ist bei dir im Vordergrund.",
+  "stage.ownShareIdleHint": "Die Vorschau wird nicht gerendert, um Ressourcen zu sparen.",
   "stage.restoreVideo": "Hier anzeigen",
   "stage.popupVideoHint": "Video. Doppelklick oder F für Vollbild.",
+  "stage.switchTitle": "Andere Übertragungen",
+  "stage.switchTo": "Zu dieser Übertragung wechseln",
+  "stage.switchHint": "Zum Wechseln hier unten den Mauszeiger halten",
   "stage.popupVolume": "Lautstärke",
   "stage.popout": "In eigenem Fenster öffnen",
   "stage.popoutStage": "Bühne in eigenem Fenster öffnen",

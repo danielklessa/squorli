@@ -152,6 +152,12 @@ export interface Platform {
   readonly screen: {
     /** Desktop: the shell has no picker of its own and asks this one; web: ignored (the browser brings its own). */
     setPicker(picker: ScreenPicker | null): void;
+    /**
+     * Whether the window or screen the user shares is the one in front of them: the stage hides their own share meanwhile
+     * (docs/features/voice-video.md, 20 November 2026). The word comes after every pick and on every change, and stays
+     * meaningful only while a share runs. null = nothing of the kind (browser, an app without the helper or older than it).
+     */
+    readonly onOwnShareInFront: null | ((cb: (inFront: boolean) => void) => () => void);
   };
   readonly window: {
     /** Feature string for `window.open` of a video pop-out. */

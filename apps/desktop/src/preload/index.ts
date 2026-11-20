@@ -25,6 +25,7 @@ const bridge: DesktopBridge = {
   loadScreenPictures: (requestId: number) => ipcRenderer.send(IPC.screenPickPictures, requestId),
   onScreenAudio: (cb) => subscribe<ScreenAudioEvent>(IPC.screenAudio, cb),
   stopScreenAudio: () => ipcRenderer.send(IPC.screenAudioStop),
+  onScreenShareFront: (cb) => subscribe<boolean>(IPC.screenShareFront, cb),
   setPlayerOutput: (label: string | null) => ipcRenderer.send(IPC.playerOutput, label),
   setChatPlayerOutput: (label: string | null) => ipcRenderer.send(IPC.chatPlayerOutput, label),
   onSystemActivity: (cb) => { const off = subscribe<SystemActivityEvent>(IPC.systemActivity, cb); ipcRenderer.send(IPC.systemActivityReady); return off; },

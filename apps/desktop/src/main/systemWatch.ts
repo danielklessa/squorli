@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { IPC, type SystemActivityEvent } from "@squorli/web/platform/bridge";
 import type { WindowInfo } from "./captureSource";
 import { keysLine } from "./keyCodes";
-import { SystemWatchLines } from "./systemWatchLines";
+import { SystemWatchLines, type FrontWindow } from "./systemWatchLines";
 import { nativeHelperPath } from "./windowAudio";
 import { inFullscreen } from "./notifications";
 
@@ -36,6 +36,9 @@ export type SystemWatch = {
   describeWindows(hwnds: readonly string[]): Promise<WindowInfo[]>;
   /** Whether a game or another application runs in full screen (notifications.ts `inFullscreen`); null = unknown (no helper, an older one, no answer in time). */
   fullscreenBusy(): Promise<boolean | null>;
+  /** The foreground window as the helper last reported it (null = none, or no helper); `onFront` gets every change, and null when the helper is gone. */
+  front(): FrontWindow | null;
+  onFront(cb: (front: FrontWindow | null) => void): void;
   stop(): void;
 };
 
@@ -45,6 +48,9 @@ export function startSystemWatch(getWindow: () => BrowserWindow | null, isClient
   let keys = keysLine([]);
   let gameListener: (path: string | null) => void = () => {};
   let keyListener: (event: { scan: number; down: boolean } | null) => void = () => {};
+  let front: FrontWindow | null = null;
+  let frontListener: (front: FrontWindow | null) => void = () => {};
+  const setFront = (next: FrontWindow | null) => { front = next; frontListener(next); };
   let stopped = false;
   let restarts = 0;
   let display: boolean | null = null;
@@ -72,13 +78,14 @@ export function startSystemWatch(getWindow: () => BrowserWindow | null, isClient
         if (event.type === "window") { asked.get(event.request)?.found.push(event.info); continue; }
         if (event.type === "windows") { const open = asked.get(event.request); open?.done(open.found); continue; }
         if (event.type === "busy") { busyAsked.get(event.request)?.(inFullscreen(event.state, event.fullscreen)); continue; }
+        if (event.type === "front") { setFront(event.window); continue; }
         if (event.type === "display") display = event.required;
         send(event);
       }
     });
     started.on("error", () => {});
     started.on("exit", () => {
-      if (child === started) { child = null; gameListener(null); keyListener(null); }
+      if (child === started) { child = null; gameListener(null); keyListener(null); setFront(null); }
       if (stopped || restarts >= MAX_RESTARTS) return;
       restarts++;
       setTimeout(run, RESTART_MS);
@@ -92,6 +99,8 @@ export function startSystemWatch(getWindow: () => BrowserWindow | null, isClient
     onGame: (cb) => { gameListener = cb; },
     setKeys: (scans) => { keys = keysLine(scans); child?.stdin?.write(`${keys}\n`); },
     onKey: (cb) => { keyListener = cb; },
+    front: () => front,
+    onFront: (cb) => { frontListener = cb; },
     describeWindows: (hwnds) => new Promise((resolve) => {
       const stdin = child?.stdin;
       const ids = hwnds.filter((hwnd) => /^\d{1,20}$/.test(hwnd));

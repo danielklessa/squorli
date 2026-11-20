@@ -5,7 +5,9 @@ import type { WindowInfo } from "./captureSource";
  * `game`: a watched program came to the front (its executable's path), null = it has ended. `window` / `windows`: the answer
  * to a question about windows (one line per window, then the end of that request). All of them stay in the main process.
  */
-export type SystemWatchLine = SystemActivityEvent | { type: "game"; path: string | null } | { type: "window"; request: number; info: WindowInfo } | { type: "windows"; request: number } | { type: "key"; scan: number; down: boolean } | { type: "busy"; request: number; state: number; fullscreen: boolean };
+export type SystemWatchLine = SystemActivityEvent | { type: "game"; path: string | null } | { type: "window"; request: number; info: WindowInfo } | { type: "windows"; request: number } | { type: "key"; scan: number; down: boolean } | { type: "busy"; request: number; state: number; fullscreen: boolean } | { type: "front"; window: FrontWindow | null };
+/** The foreground window as the helper reports it: its handle (decimal), its program's path ("" when unknown) and whether it covers its monitor. */
+export type FrontWindow = { hwnd: string; path: string; fullscreen: boolean };
 
 /**
  * The system watch helper's output (apps/desktop/native/system-watch) as events: one line each, "input", "display 0|1",
@@ -35,6 +37,12 @@ function parseLine(line: string): SystemWatchLine | null {
   if (line.startsWith("key ")) {
     const m = /^key ([0-9a-f]{1,4}) ([01])$/.exec(line);
     return m ? { type: "key", scan: parseInt(m[1]!, 16), down: m[2] === "1" } : null;
+  }
+  if (line === "front") return { type: "front", window: null };
+  if (line.startsWith("front\t")) {
+    const [, hwnd, path, fullscreen] = line.split("\t");
+    if (!hwnd || !/^\d{1,20}$/.test(hwnd)) return null;
+    return { type: "front", window: { hwnd, path: path ?? "", fullscreen: fullscreen === "1" } };
   }
   if (line.startsWith("busy\t")) {
     const m = /^busy\t(\d{1,15})\t(\d)\t([01])$/.exec(line);
