@@ -1,5 +1,9 @@
 # Verified state
 
+- **Server 0.15.2 and desktop app 0.17.3 (21 November 2026, `docs/MILESTONE-LOG.md`):** the fix of the entry below is all this release carries. After the versions were set: typecheck of all packages, tests, root build (the server's package.json is read at start, so the login's version line follows it). Release notes `apps/server/release-notes/0.15.2.md`, `apps/desktop/release-notes/0.17.3.md`. No migration, no new variable.
+
+- **The volume control usable in fullscreen (21 November 2026, docs/features/voice-video.md section of 20 November; NOT released):** typecheck of all packages; web tests 662; root build (apps/server/public refreshed). Headless Chrome hit test on a static page with the real stylesheet and class names: elementFromPoint at the slider's centre inside a fullscreen tile with the switch strip present returns the slider now (z-index 5 over the strip's 4); with the old stylesheet it returned the strip's hover zone. Not checked: the running client with a real share in fullscreen (the user's test).
+
 - **Server 0.15.1 and desktop app 0.17.2 (21 November 2026, `docs/MILESTONE-LOG.md`):** the code of this release was checked in the two entries below. After the versions were set: typecheck of all packages; tests (protocol 175, web 662, desktop 116, server 317); root build; start check of the built desktop bundle (a scratch profile, `ELECTRON_RUN_AS_NODE` removed): the page `app://squorli/` on the DevTools port, no error on stderr. No migration and no new variable, so `autoUpdateFrom` stays 0.6.0.
 
 - **The own share's tile black with a notice instead of left out (20 November 2026, same evening, `docs/features/voice-video.md` last section; NOT released):** typecheck of all packages; web tests 662; root build; headless Chrome screenshot of a static page with the built CSS: the large tile black with the two lines centred, the strip's small tile without the hint. **Not checked:** in the running client with a real share.

@@ -1202,6 +1202,8 @@ button.icon.on { color: var(--brand); }
 .stage-fs .tile { flex: 1; width: 100%; height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; background: var(--bg); cursor: default; min-width: 0; }
 .stage-fs .tile video { object-fit: contain; }
 .stage-fs .tile-window-actions, .video-window:fullscreen .tile-window-actions { top: 1rem; right: 1rem; }
+/* The volume control lies above the switch strip's hover zone (z-index 4 below), else the strip takes the pointer and the slider cannot be used (user's report, 21 November 2026). */
+.stage-fs .tile-volume, .video-window:fullscreen .tile-volume { right: 1rem; bottom: 1rem; z-index: 5; }
 /* The switch to another share while a stream fills the screen (FullscreenSwitch in VideoWindows.tsx): a hover zone along the bottom edge; the strip rises out of it. */
 .fs-switch { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; min-height: 4.5rem; padding-bottom: 0.75rem; z-index: 4; }
 .fs-switch-handle { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.7rem; border-radius: 999px; background: rgba(12,20,36,.55); color: var(--muted); font-size: 0.8rem; opacity: 0.7; pointer-events: none; }
