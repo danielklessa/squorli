@@ -1,6 +1,6 @@
 # Multi-stage: builds protocol, web client and server. Image: docker build --target app -t squorli/app:local .
 # (compose.yml sets "target" itself.) The directory service has its own repo and image (squorli-directory).
-FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS build
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS build
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
 # Node.js 26 ships no corepack: pnpm in the version package.json names (`packageManager`) comes from npm.
@@ -20,7 +20,7 @@ RUN pnpm --filter @squorli/web build && pnpm --filter @squorli/server build \
  && pnpm --filter @squorli/server --prod deploy --legacy /out
 
 # ---- Chat server (API, WebSocket, web client)
-FROM node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS app
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS app
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /out/dist ./dist
